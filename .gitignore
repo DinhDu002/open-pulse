@@ -1,0 +1,14 @@
+data/
+cl/
+*.db
+*.db-shm
+*.db-wal
+logs/
+node_modules/
+*.pid
+.projects.json.lock
+projects.json
+instincts/
+evolved/
+projects/
+observations.jsonl

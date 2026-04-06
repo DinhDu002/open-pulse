@@ -1,0 +1,20 @@
+{
+  "name": "open-pulse",
+  "version": "2.0.0",
+  "private": true,
+  "description": "Local analytics dashboard for Claude Code — usage metrics, expert system, component lifecycle",
+  "scripts": {
+    "start": "node src/op-server.js",
+    "test": "node --test test/*.test.js",
+    "install-service": "bash scripts/op-install.sh",
+    "uninstall-service": "bash scripts/op-uninstall.sh"
+  },
+  "dependencies": {
+    "better-sqlite3": "^11.0.0",
+    "fastify": "^5.0.0",
+    "@fastify/static": "^8.0.0"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}

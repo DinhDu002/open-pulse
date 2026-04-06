@@ -1,0 +1,10 @@
+{
+  "port": 3827,
+  "ingest_interval_ms": 10000,
+  "cl_sync_interval_ms": 60000,
+  "max_detail_length": 500,
+  "max_prompt_length": 1000,
+  "suggestion_min_confidence_show": 0.7,
+  "suggestion_min_confidence_store": 0.5,
+  "suggestion_expiry_days": 30
+}
