@@ -32,7 +32,6 @@ describe('op-db', () => {
     assert.ok(tables.includes('sessions'));
     assert.ok(tables.includes('collector_errors'));
     assert.ok(tables.includes('cl_projects'));
-    assert.ok(tables.includes('cl_observations'));
     assert.ok(tables.includes('cl_instincts'));
     assert.ok(tables.includes('suggestions'));
     assert.ok(tables.includes('scan_results'));
@@ -129,5 +128,76 @@ describe('op-db', () => {
     });
     const errors = db.prepare('SELECT * FROM collector_errors').all();
     assert.ok(errors.length > 0);
+  });
+
+  it('creates components table', () => {
+    const tables = db.prepare(
+      "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name"
+    ).all().map(r => r.name);
+    assert.ok(tables.includes('components'));
+  });
+
+  it('upsertComponent inserts and updates', () => {
+    const now = '2026-04-07T10:00:00Z';
+    mod.upsertComponent(db, {
+      type: 'skill', name: 'test-skill', source: 'global',
+      plugin: null, project: null, file_path: '/tmp/skills/test-skill',
+      description: 'A test skill', agent_class: null,
+      hook_event: null, hook_matcher: null, hook_command: null,
+      first_seen_at: now, last_seen_at: now,
+    });
+    const row = db.prepare("SELECT * FROM components WHERE name = 'test-skill'").get();
+    assert.ok(row);
+    assert.equal(row.type, 'skill');
+    assert.equal(row.description, 'A test skill');
+
+    // Update: change last_seen_at
+    const later = '2026-04-07T11:00:00Z';
+    mod.upsertComponent(db, {
+      type: 'skill', name: 'test-skill', source: 'global',
+      plugin: null, project: null, file_path: '/tmp/skills/test-skill',
+      description: 'A test skill', agent_class: null,
+      hook_event: null, hook_matcher: null, hook_command: null,
+      first_seen_at: now, last_seen_at: later,
+    });
+    const updated = db.prepare("SELECT * FROM components WHERE name = 'test-skill'").get();
+    assert.equal(updated.last_seen_at, later);
+    assert.equal(updated.first_seen_at, now); // preserved
+  });
+
+  it('deleteComponentsNotSeenSince removes stale rows', () => {
+    const old = '2026-04-07T09:00:00Z';
+    mod.upsertComponent(db, {
+      type: 'skill', name: 'stale-skill', source: 'global',
+      plugin: null, project: null, file_path: '/tmp/skills/stale',
+      description: '', agent_class: null,
+      hook_event: null, hook_matcher: null, hook_command: null,
+      first_seen_at: old, last_seen_at: old,
+    });
+    const cutoff = '2026-04-07T09:30:00Z';
+    mod.deleteComponentsNotSeenSince(db, cutoff);
+    const row = db.prepare("SELECT * FROM components WHERE name = 'stale-skill'").get();
+    assert.equal(row, undefined);
+    const kept = db.prepare("SELECT * FROM components WHERE name = 'test-skill'").get();
+    assert.ok(kept);
+  });
+
+  it('getComponentsByType returns filtered rows', () => {
+    mod.upsertComponent(db, {
+      type: 'agent', name: 'test-agent', source: 'global',
+      plugin: null, project: null, file_path: '/tmp/agents/test-agent.md',
+      description: 'An agent', agent_class: 'configured',
+      hook_event: null, hook_matcher: null, hook_command: null,
+      first_seen_at: '2026-04-07T10:00:00Z', last_seen_at: '2026-04-07T11:00:00Z',
+    });
+    const skills = mod.getComponentsByType(db, 'skill');
+    assert.ok(skills.every(r => r.type === 'skill'));
+    const agents = mod.getComponentsByType(db, 'agent');
+    assert.ok(agents.some(r => r.name === 'test-agent'));
+  });
+
+  it('getAllComponents returns all rows', () => {
+    const all = mod.getAllComponents(db);
+    assert.ok(all.length >= 2); // test-skill + test-agent
   });
 });

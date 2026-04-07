@@ -68,21 +68,9 @@ CREATE TABLE IF NOT EXISTS cl_projects (
   session_count   INTEGER DEFAULT 0
 );
 
-CREATE TABLE IF NOT EXISTS cl_observations (
-  id            INTEGER PRIMARY KEY AUTOINCREMENT,
-  observed_at   TEXT    NOT NULL,
-  project_id    TEXT,
-  session_id    TEXT,
-  category      TEXT,
-  observation   TEXT,
-  raw_context   TEXT
-);
-
-CREATE INDEX IF NOT EXISTS idx_observations_project ON cl_observations (project_id);
-CREATE INDEX IF NOT EXISTS idx_observations_session ON cl_observations (session_id);
-
 CREATE TABLE IF NOT EXISTS cl_instincts (
   id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  instinct_id   TEXT,
   project_id    TEXT,
   category      TEXT,
   pattern       TEXT,
@@ -121,6 +109,28 @@ CREATE TABLE IF NOT EXISTS scan_results (
   issues_medium    INTEGER DEFAULT 0,
   issues_low       INTEGER DEFAULT 0
 );
+
+CREATE TABLE IF NOT EXISTS components (
+  id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  type          TEXT    NOT NULL,
+  name          TEXT    NOT NULL,
+  source        TEXT    NOT NULL,
+  plugin        TEXT,
+  project       TEXT,
+  file_path     TEXT,
+  description   TEXT,
+  agent_class   TEXT,
+  hook_event    TEXT,
+  hook_matcher  TEXT,
+  hook_command  TEXT,
+  first_seen_at TEXT    NOT NULL,
+  last_seen_at  TEXT    NOT NULL
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_components_dedup
+  ON components (type, name, source, COALESCE(plugin, ''), COALESCE(project, ''));
+CREATE INDEX IF NOT EXISTS idx_components_type   ON components (type);
+CREATE INDEX IF NOT EXISTS idx_components_source ON components (source);
 `;
 
 // ---------------------------------------------------------------------------
@@ -142,14 +152,42 @@ function createDb(dbPath) {
   for (const sql of migrations) {
     try { db.exec(sql); } catch { /* column already exists */ }
   }
-  // Migrate: add instinct_id to cl_observations if missing
-  const colCheck = db.prepare(
-    "SELECT COUNT(*) AS cnt FROM pragma_table_info('cl_observations') WHERE name = 'instinct_id'"
+  // Drop legacy cl_observations table (no longer used)
+  db.exec('DROP TABLE IF EXISTS cl_observations');
+  // Migrate: add instinct_id to cl_instincts for dedup
+  const hasInstinctIdCol = db.prepare(
+    "SELECT COUNT(*) AS cnt FROM pragma_table_info('cl_instincts') WHERE name = 'instinct_id'"
   ).get();
-  if (colCheck.cnt === 0) {
-    db.exec('ALTER TABLE cl_observations ADD COLUMN instinct_id INTEGER');
-    db.exec('CREATE INDEX IF NOT EXISTS idx_cl_observations_instinct ON cl_observations(instinct_id)');
+  if (hasInstinctIdCol.cnt === 0) {
+    db.exec('ALTER TABLE cl_instincts ADD COLUMN instinct_id TEXT');
+    db.exec('DELETE FROM cl_instincts');  // stale duplicates; repopulated by syncAll on startup
   }
+  // Always ensure unique index exists (fresh DBs have column from SCHEMA, migrated DBs from ALTER)
+  db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_instincts_dedup ON cl_instincts(project_id, instinct_id)');
+
+  // Migrate: dedup cl_projects by directory, add unique index
+  const dupes = db.prepare(`
+    SELECT directory, GROUP_CONCAT(project_id) AS pids, COUNT(*) AS cnt
+    FROM cl_projects
+    WHERE directory IS NOT NULL
+    GROUP BY directory
+    HAVING cnt > 1
+  `).all();
+  for (const dup of dupes) {
+    const pids = dup.pids.split(',');
+    // Keep the row with latest last_seen_at
+    const keeper = db.prepare(
+      `SELECT project_id FROM cl_projects WHERE directory = ? ORDER BY last_seen_at DESC LIMIT 1`
+    ).get(dup.directory);
+    const keepId = keeper.project_id;
+    const removeIds = pids.filter(p => p !== keepId);
+    for (const oldId of removeIds) {
+      db.prepare('UPDATE cl_instincts SET project_id = ? WHERE project_id = ?').run(keepId, oldId);
+      db.prepare('DELETE FROM cl_projects WHERE project_id = ?').run(oldId);
+    }
+  }
+  db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_projects_directory ON cl_projects(directory) WHERE directory IS NOT NULL');
+
   return db;
 }
 
@@ -254,6 +292,17 @@ function logError(db, err) {
 // ---------------------------------------------------------------------------
 
 function upsertClProject(db, proj) {
+  // If directory already exists under a different project_id, migrate instincts and remove old row
+  if (proj.directory) {
+    const old = db.prepare(
+      'SELECT project_id FROM cl_projects WHERE directory = ? AND project_id != ?'
+    ).get(proj.directory, proj.project_id);
+    if (old) {
+      db.prepare('UPDATE cl_instincts SET project_id = ? WHERE project_id = ?')
+        .run(proj.project_id, old.project_id);
+      db.prepare('DELETE FROM cl_projects WHERE project_id = ?').run(old.project_id);
+    }
+  }
   db.prepare(`
     INSERT INTO cl_projects (project_id, name, directory, first_seen_at, last_seen_at, session_count)
     VALUES (@project_id, @name, @directory, @first_seen_at, @last_seen_at, @session_count)
@@ -266,27 +315,18 @@ function upsertClProject(db, proj) {
 }
 
 // ---------------------------------------------------------------------------
-// Observations
-// ---------------------------------------------------------------------------
-
-function insertObservation(db, obs) {
-  db.prepare(`
-    INSERT INTO cl_observations (observed_at, project_id, session_id, category, observation, raw_context)
-    VALUES (@observed_at, @project_id, @session_id, @category, @observation, @raw_context)
-  `).run(obs);
-}
-
-// ---------------------------------------------------------------------------
 // Instincts
 // ---------------------------------------------------------------------------
 
 function upsertInstinct(db, inst) {
   db.prepare(`
     INSERT INTO cl_instincts
-      (project_id, category, pattern, confidence, seen_count, first_seen, last_seen, instinct)
+      (instinct_id, project_id, category, pattern, confidence, seen_count, first_seen, last_seen, instinct)
     VALUES
-      (@project_id, @category, @pattern, @confidence, @seen_count, @first_seen, @last_seen, @instinct)
-    ON CONFLICT DO UPDATE SET
+      (@instinct_id, @project_id, @category, @pattern, @confidence, @seen_count, @first_seen, @last_seen, @instinct)
+    ON CONFLICT(project_id, instinct_id) DO UPDATE SET
+      category   = excluded.category,
+      pattern    = excluded.pattern,
       confidence = excluded.confidence,
       seen_count = seen_count + 1,
       last_seen  = excluded.last_seen,
@@ -371,47 +411,38 @@ function getScanHistory(db, limit) {
 }
 
 // ---------------------------------------------------------------------------
-// Learning API — Observations
+// Components
 // ---------------------------------------------------------------------------
 
-function queryObservations(db, { project, category, from, to, instinct_id, search, page, perPage } = {}) {
-  const conditions = [];
-  const params = {};
-
-  if (project) { conditions.push('project_id = @project'); params.project = project; }
-  if (category) { conditions.push('category = @category'); params.category = category; }
-  if (from) { conditions.push('observed_at >= @from'); params.from = from; }
-  if (to) { conditions.push('observed_at <= @to'); params.to = to; }
-  if (instinct_id != null) { conditions.push('instinct_id = @instinct_id'); params.instinct_id = instinct_id; }
-  if (search) { conditions.push('observation LIKE @search'); params.search = `%${search}%`; }
-
-  const where = conditions.length ? 'WHERE ' + conditions.join(' AND ') : '';
-  const total = db.prepare(`SELECT COUNT(*) AS cnt FROM cl_observations ${where}`).get(params).cnt;
-
-  const p = Math.max(1, page || 1);
-  const pp = Math.min(50, Math.max(1, perPage || 20));
-  const offset = (p - 1) * pp;
-
-  const items = db.prepare(
-    `SELECT * FROM cl_observations ${where} ORDER BY observed_at DESC LIMIT @limit OFFSET @offset`
-  ).all({ ...params, limit: pp, offset });
-
-  return { items, total, page: p, per_page: pp };
+function upsertComponent(db, comp) {
+  db.prepare(`
+    INSERT INTO components
+      (type, name, source, plugin, project, file_path, description, agent_class,
+       hook_event, hook_matcher, hook_command, first_seen_at, last_seen_at)
+    VALUES
+      (@type, @name, @source, @plugin, @project, @file_path, @description, @agent_class,
+       @hook_event, @hook_matcher, @hook_command, @first_seen_at, @last_seen_at)
+    ON CONFLICT(type, name, source, COALESCE(plugin, ''), COALESCE(project, '')) DO UPDATE SET
+      file_path    = excluded.file_path,
+      description  = excluded.description,
+      agent_class  = excluded.agent_class,
+      hook_event   = excluded.hook_event,
+      hook_matcher = excluded.hook_matcher,
+      hook_command = excluded.hook_command,
+      last_seen_at = excluded.last_seen_at
+  `).run(comp);
 }
 
-function getObservation(db, id) {
-  return db.prepare('SELECT * FROM cl_observations WHERE id = ?').get(id) || null;
+function deleteComponentsNotSeenSince(db, cutoff) {
+  db.prepare('DELETE FROM components WHERE last_seen_at < ?').run(cutoff);
 }
 
-function queryObservationActivity(db, days) {
-  const d = days || 30;
-  return db.prepare(`
-    SELECT date(observed_at) AS date, COUNT(*) AS count
-    FROM cl_observations
-    WHERE observed_at >= datetime('now', '-' || ? || ' days')
-    GROUP BY date(observed_at)
-    ORDER BY date ASC
-  `).all(d);
+function getComponentsByType(db, type) {
+  return db.prepare('SELECT * FROM components WHERE type = ? ORDER BY name').all(type);
+}
+
+function getAllComponents(db) {
+  return db.prepare('SELECT * FROM components ORDER BY type, name').all();
 }
 
 // ---------------------------------------------------------------------------
@@ -471,16 +502,21 @@ function getInstinctStats(db) {
   return { byDomain, confidenceDistribution: rawDist };
 }
 
-function getInstinctObservations(db, instinctId) {
-  return db.prepare(
-    'SELECT * FROM cl_observations WHERE instinct_id = ? ORDER BY observed_at DESC'
-  ).all(instinctId);
-}
-
-function getInstinctSuggestions(db, instinctId) {
+function getInstinctSuggestions(db, id) {
+  const inst = db.prepare('SELECT instinct_id FROM cl_instincts WHERE id = ?').get(id);
+  if (!inst || !inst.instinct_id) return [];
   return db.prepare(
     'SELECT * FROM suggestions WHERE instinct_id = ? ORDER BY created_at DESC'
-  ).all(String(instinctId));
+  ).all(inst.instinct_id);
+}
+
+function getInstinct(db, id) {
+  return db.prepare(
+    `SELECT i.*, p.name AS project_name
+     FROM cl_instincts i
+     LEFT JOIN cl_projects p ON p.project_id = i.project_id
+     WHERE i.id = ?`
+  ).get(id) || null;
 }
 
 function updateInstinct(db, id, { confidence }) {
@@ -504,17 +540,13 @@ function getProjectSummary(db, projectId) {
     'SELECT COUNT(*) AS cnt FROM cl_instincts WHERE project_id = ?'
   ).get(projectId).cnt;
 
-  const observation_count = db.prepare(
-    'SELECT COUNT(*) AS cnt FROM cl_observations WHERE project_id = ?'
-  ).get(projectId).cnt;
-
   const suggRows = db.prepare(`
     SELECT
       SUM(CASE WHEN status = 'pending'   THEN 1 ELSE 0 END) AS pending,
       SUM(CASE WHEN status = 'approved'  THEN 1 ELSE 0 END) AS approved,
       SUM(CASE WHEN status = 'dismissed' THEN 1 ELSE 0 END) AS dismissed
     FROM suggestions s
-    JOIN cl_instincts i ON s.instinct_id = CAST(i.id AS TEXT)
+    JOIN cl_instincts i ON s.instinct_id = i.instinct_id
     WHERE i.project_id = ?
   `).get(projectId);
 
@@ -524,7 +556,7 @@ function getProjectSummary(db, projectId) {
     dismissed: suggRows.dismissed || 0,
   };
 
-  return { ...project, instinct_count, observation_count, suggestion_counts };
+  return { ...project, instinct_count, suggestion_counts };
 }
 
 function getProjectTimeline(db, projectId, weeks) {
@@ -549,21 +581,12 @@ function getProjectTimeline(db, projectId, weeks) {
 function queryLearningActivity(db, days) {
   const d = days || 30;
   return db.prepare(`
-    SELECT date, SUM(count) AS count
-    FROM (
-      SELECT date(observed_at) AS date, COUNT(*) AS count
-      FROM cl_observations
-      WHERE observed_at >= datetime('now', '-' || ? || ' days')
-      GROUP BY date(observed_at)
-      UNION ALL
-      SELECT date(last_seen) AS date, COUNT(*) AS count
-      FROM cl_instincts
-      WHERE last_seen >= datetime('now', '-' || ? || ' days')
-      GROUP BY date(last_seen)
-    ) combined
-    GROUP BY date
+    SELECT date(last_seen) AS date, COUNT(*) AS count
+    FROM cl_instincts
+    WHERE last_seen >= datetime('now', '-' || ? || ' days')
+    GROUP BY date(last_seen)
     ORDER BY date ASC
-  `).all(d, d);
+  `).all(d);
 }
 
 function queryLearningRecent(db, limit) {
@@ -607,7 +630,6 @@ module.exports = {
   updateSessionEnd,
   logError,
   upsertClProject,
-  insertObservation,
   upsertInstinct,
   insertSuggestion,
   insertSuggestionBatch,
@@ -616,12 +638,13 @@ module.exports = {
   insertScanResult,
   getLatestScan,
   getScanHistory,
-  queryObservations,
-  getObservation,
-  queryObservationActivity,
+  upsertComponent,
+  deleteComponentsNotSeenSince,
+  getComponentsByType,
+  getAllComponents,
   queryInstinctsFiltered,
+  getInstinct,
   getInstinctStats,
-  getInstinctObservations,
   getInstinctSuggestions,
   updateInstinct,
   deleteInstinct,
