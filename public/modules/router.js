@@ -7,11 +7,12 @@ const ROUTES = {
   inventory: () => import('./inventory.js'),
   expert: () => import('./expert.js'),
   learning: () => import('./learning.js'),
+  knowledge: () => import('./knowledge.js'),
   settings: () => import('./settings.js'),
 };
 
 // Pages that hide the period selector
-const NO_PERIOD = new Set(['settings', 'learning']);
+const NO_PERIOD = new Set(['settings', 'learning', 'knowledge']);
 
 let currentModule = null;
 let currentPeriod = '30d';
