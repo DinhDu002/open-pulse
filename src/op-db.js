@@ -131,6 +131,43 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_components_dedup
   ON components (type, name, source, COALESCE(plugin, ''), COALESCE(project, ''));
 CREATE INDEX IF NOT EXISTS idx_components_type   ON components (type);
 CREATE INDEX IF NOT EXISTS idx_components_source ON components (source);
+
+CREATE TABLE IF NOT EXISTS kg_nodes (
+  id          TEXT PRIMARY KEY,
+  type        TEXT NOT NULL,
+  name        TEXT NOT NULL,
+  properties  TEXT DEFAULT '{}',
+  created_at  TEXT NOT NULL,
+  updated_at  TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_kg_nodes_type ON kg_nodes(type);
+
+CREATE TABLE IF NOT EXISTS kg_edges (
+  source_id     TEXT NOT NULL REFERENCES kg_nodes(id),
+  target_id     TEXT NOT NULL REFERENCES kg_nodes(id),
+  relationship  TEXT NOT NULL,
+  weight        REAL DEFAULT 1.0,
+  properties    TEXT DEFAULT '{}',
+  valid_from    TEXT,
+  valid_to      TEXT,
+  PRIMARY KEY (source_id, target_id, relationship)
+);
+CREATE INDEX IF NOT EXISTS idx_kg_edges_source ON kg_edges(source_id);
+CREATE INDEX IF NOT EXISTS idx_kg_edges_target ON kg_edges(target_id);
+CREATE INDEX IF NOT EXISTS idx_kg_edges_rel    ON kg_edges(relationship);
+
+CREATE TABLE IF NOT EXISTS kg_vault_hashes (
+  project_id    TEXT NOT NULL,
+  file_path     TEXT NOT NULL,
+  content_hash  TEXT NOT NULL,
+  generated_at  TEXT NOT NULL,
+  PRIMARY KEY (project_id, file_path)
+);
+
+CREATE TABLE IF NOT EXISTS kg_sync_state (
+  key   TEXT PRIMARY KEY,
+  value TEXT NOT NULL
+);
 `;
 
 // ---------------------------------------------------------------------------
@@ -148,6 +185,8 @@ function createDb(dbPath) {
     'ALTER TABLE events ADD COLUMN tool_response TEXT',
     'ALTER TABLE events ADD COLUMN seq_num INTEGER',
     'ALTER TABLE suggestions ADD COLUMN instinct_id TEXT',
+    'ALTER TABLE suggestions ADD COLUMN category TEXT',
+    'ALTER TABLE suggestions ADD COLUMN action_data TEXT',
   ];
   for (const sql of migrations) {
     try { db.exec(sql); } catch { /* column already exists */ }
@@ -187,6 +226,7 @@ function createDb(dbPath) {
     }
   }
   db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_projects_directory ON cl_projects(directory) WHERE directory IS NOT NULL');
+  db.exec('CREATE INDEX IF NOT EXISTS idx_suggestions_category ON suggestions(category)');
 
   return db;
 }
@@ -339,42 +379,40 @@ function upsertInstinct(db, inst) {
 // ---------------------------------------------------------------------------
 
 function withSuggestionDefaults(sugg) {
-  return { instinct_id: null, ...sugg };
+  return { instinct_id: null, category: null, action_data: null, ...sugg };
 }
 
+const SUGGESTION_INSERT_SQL = `
+  INSERT INTO suggestions (id, created_at, type, confidence, description, evidence, instinct_id, status, category, action_data)
+  VALUES (@id, @created_at, @type, @confidence, @description, @evidence, @instinct_id, @status, @category, @action_data)
+  ON CONFLICT(id) DO UPDATE SET
+    confidence  = excluded.confidence,
+    description = excluded.description,
+    evidence    = excluded.evidence,
+    instinct_id = excluded.instinct_id,
+    category    = excluded.category,
+    action_data = excluded.action_data
+`;
+
 function insertSuggestion(db, sugg) {
-  db.prepare(`
-    INSERT INTO suggestions (id, created_at, type, confidence, description, evidence, instinct_id, status)
-    VALUES (@id, @created_at, @type, @confidence, @description, @evidence, @instinct_id, @status)
-    ON CONFLICT(id) DO UPDATE SET
-      confidence  = excluded.confidence,
-      description = excluded.description,
-      evidence    = excluded.evidence,
-      instinct_id = excluded.instinct_id
-  `).run(withSuggestionDefaults(sugg));
+  db.prepare(SUGGESTION_INSERT_SQL).run(withSuggestionDefaults(sugg));
 }
 
 function insertSuggestionBatch(db, suggestions) {
-  const insert = db.prepare(`
-    INSERT INTO suggestions (id, created_at, type, confidence, description, evidence, instinct_id, status)
-    VALUES (@id, @created_at, @type, @confidence, @description, @evidence, @instinct_id, @status)
-    ON CONFLICT(id) DO UPDATE SET
-      confidence  = excluded.confidence,
-      description = excluded.description,
-      evidence    = excluded.evidence,
-      instinct_id = excluded.instinct_id
-  `);
+  const insert = db.prepare(SUGGESTION_INSERT_SQL);
   const tx = db.transaction((rows) => {
     for (const row of rows) insert.run(withSuggestionDefaults(row));
   });
   tx(suggestions);
 }
 
-function querySuggestions(db, status) {
-  if (status) {
-    return db.prepare('SELECT * FROM suggestions WHERE status = ? ORDER BY created_at DESC').all(status);
-  }
-  return db.prepare('SELECT * FROM suggestions ORDER BY created_at DESC').all();
+function querySuggestions(db, status, category) {
+  const conditions = [];
+  const params = [];
+  if (status) { conditions.push('status = ?'); params.push(status); }
+  if (category) { conditions.push('category = ?'); params.push(category); }
+  const where = conditions.length ? 'WHERE ' + conditions.join(' AND ') : '';
+  return db.prepare(`SELECT * FROM suggestions ${where} ORDER BY created_at DESC`).all(...params);
 }
 
 function updateSuggestionStatus(db, id, status, resolvedBy) {
@@ -449,7 +487,14 @@ function getAllComponents(db) {
 // Learning API — Instincts (filtered)
 // ---------------------------------------------------------------------------
 
-function queryInstinctsFiltered(db, { domain, source, project, category, confidence_min, confidence_max, search, page, perPage } = {}) {
+const INSTINCT_SORT_PRESETS = {
+  confidence: 'confidence DESC, seen_count DESC, last_seen DESC',
+  recent:     'last_seen DESC',
+  seen:       'seen_count DESC, last_seen DESC',
+  newest:     'first_seen DESC',
+};
+
+function queryInstinctsFiltered(db, { domain, source, project, category, confidence_min, confidence_max, search, sort, page, perPage } = {}) {
   const conditions = [];
   const params = {};
 
@@ -472,8 +517,10 @@ function queryInstinctsFiltered(db, { domain, source, project, category, confide
   const pp = Math.min(50, Math.max(1, perPage || 20));
   const offset = (p - 1) * pp;
 
+  const orderBy = INSTINCT_SORT_PRESETS[sort] || INSTINCT_SORT_PRESETS.confidence;
+
   const items = db.prepare(
-    `SELECT * FROM cl_instincts ${where} ORDER BY last_seen DESC LIMIT @limit OFFSET @offset`
+    `SELECT * FROM cl_instincts ${where} ORDER BY ${orderBy} LIMIT @limit OFFSET @offset`
   ).all({ ...params, limit: pp, offset });
 
   return { items, total, page: p, per_page: pp };
@@ -617,6 +664,157 @@ function queryLearningRecent(db, limit) {
 }
 
 // ---------------------------------------------------------------------------
+// Knowledge Graph
+// ---------------------------------------------------------------------------
+
+function upsertKgNode(db, node) {
+  const now = new Date().toISOString();
+  db.prepare(`
+    INSERT INTO kg_nodes (id, type, name, properties, created_at, updated_at)
+    VALUES (@id, @type, @name, @properties, @now, @now)
+    ON CONFLICT(id) DO UPDATE SET
+      type       = excluded.type,
+      name       = excluded.name,
+      properties = excluded.properties,
+      updated_at = @now
+  `).run({ ...node, now });
+}
+
+function upsertKgNodeBatch(db, nodes) {
+  const stmt = db.prepare(`
+    INSERT INTO kg_nodes (id, type, name, properties, created_at, updated_at)
+    VALUES (@id, @type, @name, @properties, @now, @now)
+    ON CONFLICT(id) DO UPDATE SET
+      type       = excluded.type,
+      name       = excluded.name,
+      properties = excluded.properties,
+      updated_at = @now
+  `);
+  const now = new Date().toISOString();
+  const tx = db.transaction((rows) => {
+    for (const row of rows) stmt.run({ ...row, now });
+  });
+  tx(nodes);
+}
+
+function getKgNode(db, id) {
+  return db.prepare('SELECT * FROM kg_nodes WHERE id = ?').get(id) || null;
+}
+
+function upsertKgEdge(db, edge) {
+  const now = new Date().toISOString();
+  db.prepare(`
+    INSERT INTO kg_edges (source_id, target_id, relationship, weight, properties, valid_from, valid_to)
+    VALUES (@source_id, @target_id, @relationship, @weight, @properties, @valid_from, @valid_to)
+    ON CONFLICT(source_id, target_id, relationship) DO UPDATE SET
+      weight     = kg_edges.weight + excluded.weight,
+      properties = excluded.properties,
+      valid_to   = excluded.valid_to
+  `).run({
+    properties: '{}', valid_from: now, valid_to: null,
+    ...edge,
+  });
+}
+
+function upsertKgEdgeBatch(db, edges) {
+  const stmt = db.prepare(`
+    INSERT INTO kg_edges (source_id, target_id, relationship, weight, properties, valid_from, valid_to)
+    VALUES (@source_id, @target_id, @relationship, @weight, @properties, @valid_from, @valid_to)
+    ON CONFLICT(source_id, target_id, relationship) DO UPDATE SET
+      weight     = kg_edges.weight + excluded.weight,
+      properties = excluded.properties,
+      valid_to   = excluded.valid_to
+  `);
+  const now = new Date().toISOString();
+  const tx = db.transaction((rows) => {
+    for (const row of rows) stmt.run({
+      properties: '{}', valid_from: now, valid_to: null,
+      ...row,
+    });
+  });
+  tx(edges);
+}
+
+function getKgEdges(db, nodeId) {
+  return db.prepare(
+    'SELECT * FROM kg_edges WHERE source_id = ? AND valid_to IS NULL'
+  ).all(nodeId);
+}
+
+function getKgGraph(db, { type } = {}) {
+  const conditions = [];
+  const params = {};
+  if (type) { conditions.push('n.type = @type'); params.type = type; }
+  const where = conditions.length ? 'WHERE ' + conditions.join(' AND ') : '';
+
+  const nodes = db.prepare(`SELECT * FROM kg_nodes n ${where}`).all(params);
+  const nodeIds = new Set(nodes.map(n => n.id));
+
+  const edges = db.prepare(
+    'SELECT * FROM kg_edges WHERE valid_to IS NULL'
+  ).all().filter(e => nodeIds.has(e.source_id) || nodeIds.has(e.target_id));
+
+  return { nodes, edges };
+}
+
+function getKgNodeDetail(db, id) {
+  const node = db.prepare('SELECT * FROM kg_nodes WHERE id = ?').get(id);
+  if (!node) return null;
+  const outgoing = db.prepare(
+    'SELECT * FROM kg_edges WHERE source_id = ? AND valid_to IS NULL'
+  ).all(id);
+  const incoming = db.prepare(
+    'SELECT * FROM kg_edges WHERE target_id = ? AND valid_to IS NULL'
+  ).all(id);
+  return { ...node, outgoing, incoming };
+}
+
+function upsertKgVaultHash(db, { project_id, file_path, content_hash }) {
+  const now = new Date().toISOString();
+  db.prepare(`
+    INSERT INTO kg_vault_hashes (project_id, file_path, content_hash, generated_at)
+    VALUES (@project_id, @file_path, @content_hash, @now)
+    ON CONFLICT(project_id, file_path) DO UPDATE SET
+      content_hash = excluded.content_hash,
+      generated_at = @now
+  `).run({ project_id, file_path, content_hash, now });
+}
+
+function getKgVaultHash(db, project_id, file_path) {
+  const row = db.prepare(
+    'SELECT content_hash FROM kg_vault_hashes WHERE project_id = ? AND file_path = ?'
+  ).get(project_id, file_path);
+  return row ? row.content_hash : null;
+}
+
+function getKgVaultHashes(db, project_id) {
+  return db.prepare(
+    'SELECT file_path, content_hash FROM kg_vault_hashes WHERE project_id = ?'
+  ).all(project_id);
+}
+
+function setKgSyncState(db, key, value) {
+  db.prepare(`
+    INSERT INTO kg_sync_state (key, value) VALUES (@key, @value)
+    ON CONFLICT(key) DO UPDATE SET value = excluded.value
+  `).run({ key, value });
+}
+
+function getKgSyncState(db, key) {
+  const row = db.prepare('SELECT value FROM kg_sync_state WHERE key = ?').get(key);
+  return row ? row.value : null;
+}
+
+function getKgStatus(db) {
+  const nodeCount = db.prepare('SELECT COUNT(*) AS c FROM kg_nodes').get().c;
+  const edgeCount = db.prepare('SELECT COUNT(*) AS c FROM kg_edges WHERE valid_to IS NULL').get().c;
+  const lastSync = getKgSyncState(db, 'last_sync_at');
+  const lastVaultGen = getKgSyncState(db, 'last_vault_gen_at');
+  const lastEnrich = getKgSyncState(db, 'last_enrich_at');
+  return { nodeCount, edgeCount, lastSync, lastVaultGen, lastEnrich };
+}
+
+// ---------------------------------------------------------------------------
 // Exports
 // ---------------------------------------------------------------------------
 
@@ -652,4 +850,18 @@ module.exports = {
   getProjectTimeline,
   queryLearningActivity,
   queryLearningRecent,
+  upsertKgNode,
+  upsertKgNodeBatch,
+  getKgNode,
+  upsertKgEdge,
+  upsertKgEdgeBatch,
+  getKgEdges,
+  getKgGraph,
+  getKgNodeDetail,
+  upsertKgVaultHash,
+  getKgVaultHash,
+  getKgVaultHashes,
+  setKgSyncState,
+  getKgSyncState,
+  getKgStatus,
 };
