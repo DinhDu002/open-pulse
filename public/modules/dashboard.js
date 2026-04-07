@@ -20,12 +20,13 @@ let modelChart = null;
 let skillsChart = null;
 let agentsChart = null;
 let toolsChart = null;
+let learningChart = null;
 
 function destroyCharts() {
-  [costChart, modelChart, skillsChart, agentsChart, toolsChart].forEach(c => {
+  [costChart, modelChart, skillsChart, agentsChart, toolsChart, learningChart].forEach(c => {
     if (c) c.destroy();
   });
-  costChart = modelChart = skillsChart = agentsChart = toolsChart = null;
+  costChart = modelChart = skillsChart = agentsChart = toolsChart = learningChart = null;
 }
 
 // ── Chart defaults ────────────────────────────────────────────────────────────
@@ -144,6 +145,143 @@ function renderRankingChart(canvas, items, labelKey, valueKey, color) {
   });
 }
 
+// ── Learning Widget ───────────────────────────────────────────────────────────
+
+function makeEl(tag, attrs, text) {
+  const el = document.createElement(tag);
+  if (attrs) {
+    Object.entries(attrs).forEach(([k, v]) => {
+      if (k === 'style') el.style.cssText = v;
+      else el.setAttribute(k, v);
+    });
+  }
+  if (text != null) el.textContent = text;
+  return el;
+}
+
+function makeStatCard(label, id) {
+  const card = makeEl('div', { class: 'stat-card' });
+  card.appendChild(makeEl('div', { class: 'stat-label' }, label));
+  card.appendChild(makeEl('div', { class: 'stat-value', id }, '—'));
+  return card;
+}
+
+function makeRecentRow(item) {
+  const row = makeEl('div', { style: 'display:flex;align-items:center;gap:0.5rem;padding:0.4rem 0;border-bottom:1px solid #2a2d3a;' });
+  const badgeClass = item.kind === 'instinct' ? 'badge workflow' : 'badge pending';
+  const badge = makeEl('span', { class: badgeClass, style: 'flex-shrink:0;font-size:0.7rem;padding:2px 6px;' }, item.kind || '');
+  const href = item.kind === 'instinct'
+    ? '#learning/instincts/' + String(item.id || '')
+    : '#learning/suggestions';
+  const link = makeEl('a', { href, style: 'flex:1;color:var(--text);text-decoration:none;font-size:0.85rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;' });
+  link.title = item.title || '';
+  link.textContent = item.title || '—';
+  const conf = makeEl('span', { style: 'color:var(--muted);font-size:0.8rem;flex-shrink:0;' },
+    item.confidence != null ? Number(item.confidence).toFixed(2) : '');
+  row.appendChild(badge);
+  row.appendChild(link);
+  row.appendChild(conf);
+  return row;
+}
+
+function renderLearningWidget(container) {
+  const section = makeEl('div', { class: 'card', style: 'margin-top:1.5rem;' });
+
+  // Header row
+  const header = makeEl('div', { class: 'card-title', style: 'display:flex;justify-content:space-between;align-items:center;' });
+  header.appendChild(makeEl('span', null, 'Learning'));
+  header.appendChild(makeEl('a', { href: '#learning', style: 'font-size:0.8rem;color:var(--accent);text-decoration:none;' }, 'View all \u2192'));
+  section.appendChild(header);
+
+  // Stat cards grid
+  const statsGrid = makeEl('div', { class: 'stat-grid', style: 'grid-template-columns:repeat(4,1fr);margin-bottom:1rem;' });
+  statsGrid.appendChild(makeStatCard('Instincts', 'op-ls-instincts'));
+  statsGrid.appendChild(makeStatCard('Obs. Today', 'op-ls-obs'));
+  statsGrid.appendChild(makeStatCard('Projects', 'op-ls-projects'));
+  statsGrid.appendChild(makeStatCard('Pending', 'op-ls-pending'));
+  section.appendChild(statsGrid);
+
+  // Mini chart container
+  const chartWrap = makeEl('div', { class: 'chart-wrap', style: 'height:100px;margin-bottom:1rem;' });
+  chartWrap.appendChild(makeEl('canvas', { id: 'op-chart-learning' }));
+  section.appendChild(chartWrap);
+
+  // Recent list placeholder
+  const recentEl = makeEl('div', { id: 'op-learning-recent' });
+  section.appendChild(recentEl);
+
+  container.appendChild(section);
+
+  Promise.all([
+    get('/instincts?per_page=1'),
+    get('/observations/activity?days=1'),
+    get('/instincts/projects'),
+    get('/suggestions?status=pending'),
+    get('/learning/activity?days=7'),
+    get('/learning/recent?limit=5'),
+  ]).then(function([instinctsRes, obsToday, projects, suggestions, activity, recent]) {
+    // Populate stat cards
+    const totalInstincts = instinctsRes && instinctsRes.total != null
+      ? instinctsRes.total
+      : (Array.isArray(instinctsRes) ? instinctsRes.length : '—');
+    const obsCount = Array.isArray(obsToday) ? obsToday.reduce((s, d) => s + (d.count || 0), 0) : '—';
+    const projectCount = Array.isArray(projects) ? projects.length : '—';
+    const pendingCount = Array.isArray(suggestions) ? suggestions.length : '—';
+
+    const elInstincts = document.getElementById('op-ls-instincts');
+    const elObs = document.getElementById('op-ls-obs');
+    const elProjects = document.getElementById('op-ls-projects');
+    const elPending = document.getElementById('op-ls-pending');
+    if (elInstincts) elInstincts.textContent = totalInstincts;
+    if (elObs) elObs.textContent = obsCount;
+    if (elProjects) elProjects.textContent = projectCount;
+    if (elPending) elPending.textContent = pendingCount;
+
+    // Mini bar chart
+    const canvas = document.getElementById('op-chart-learning');
+    if (canvas && Array.isArray(activity)) {
+      const ctx = canvas.getContext('2d');
+      learningChart = new Chart(ctx, {
+        type: 'bar',
+        data: {
+          labels: activity.map(d => d.date),
+          datasets: [{
+            data: activity.map(d => d.count || 0),
+            backgroundColor: '#6c5ce7',
+            borderRadius: 3,
+          }],
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: { legend: { display: false } },
+          scales: {
+            x: { grid: { color: '#2a2d3a' }, ticks: { font: { size: 10 }, maxTicksLimit: 7 } },
+            y: { grid: { color: '#2a2d3a' }, ticks: { font: { size: 10 }, stepSize: 1 } },
+          },
+        },
+      });
+    }
+
+    // Recent list
+    const recentContainer = document.getElementById('op-learning-recent');
+    if (recentContainer) {
+      recentContainer.textContent = '';
+      if (Array.isArray(recent) && recent.length > 0) {
+        recent.forEach(item => recentContainer.appendChild(makeRecentRow(item)));
+      } else {
+        recentContainer.appendChild(makeEl('div', { style: 'color:var(--muted);font-size:0.85rem;padding:0.5rem 0;' }, 'No recent learning activity.'));
+      }
+    }
+  }).catch(function() {
+    const recentContainer = document.getElementById('op-learning-recent');
+    if (recentContainer) {
+      recentContainer.textContent = '';
+      recentContainer.appendChild(makeEl('div', { style: 'color:var(--muted);font-size:0.85rem;padding:0.5rem 0;' }, 'CL data unavailable.'));
+    }
+  });
+}
+
 // ── Mount / Unmount ───────────────────────────────────────────────────────────
 
 export function mount(el, { period } = {}) {
@@ -225,6 +363,8 @@ export function mount(el, { period } = {}) {
     errDiv.textContent = 'Failed to load dashboard: ' + err.message;
     el.prepend(errDiv);
   });
+
+  renderLearningWidget(el);
 }
 
 export function unmount() {
