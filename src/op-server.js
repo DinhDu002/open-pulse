@@ -494,13 +494,14 @@ function syncComponentsWithDb(db) {
     });
   }
 
-  // UPSERT all disk items
-  for (const item of diskItems) {
-    upsertComponent(db, { ...item, first_seen_at: now, last_seen_at: now });
-  }
-
-  // DELETE items no longer on disk
-  deleteComponentsNotSeenSince(db, now);
+  // UPSERT all disk items + DELETE stale items — atomically
+  const syncTx = db.transaction(() => {
+    for (const item of diskItems) {
+      upsertComponent(db, { ...item, first_seen_at: now, last_seen_at: now });
+    }
+    deleteComponentsNotSeenSince(db, now);
+  });
+  syncTx();
 
   // COMPUTE ETag
   const stats = db.prepare(
@@ -812,8 +813,9 @@ function buildApp(opts = {}) {
     const { period } = request.query;
     const since = periodToDate(period);
 
-    // ETag check
-    if (request.headers['if-none-match'] === `"${componentETag}"`) {
+    // ETag check (includes period so different periods don't share cache)
+    const requestETag = `${componentETag}:${period || 'all'}`;
+    if (request.headers['if-none-match'] === `"${requestETag}"`) {
       reply.code(304);
       return;
     }
@@ -827,7 +829,7 @@ function buildApp(opts = {}) {
     const components = getComponentsByType(db, singularType);
 
     if (singularType === 'hook') {
-      reply.header('etag', `"${componentETag}"`);
+      reply.header('etag', `"${requestETag}"`);
       return components.map(c => ({
         name: c.name,
         event: c.hook_event,
@@ -838,7 +840,7 @@ function buildApp(opts = {}) {
     }
 
     if (singularType === 'rule') {
-      reply.header('etag', `"${componentETag}"`);
+      reply.header('etag', `"${requestETag}"`);
       return components.map(c => ({
         name: c.name,
         type: 'rule',
@@ -868,7 +870,7 @@ function buildApp(opts = {}) {
         count: usage.count,
         last_used: usage.last_used,
         status: usage.count > 0 ? 'active' : 'unused',
-        origin: c.description ? 'custom' : 'custom',
+        origin: 'custom',
         plugin: c.plugin || null,
         project: c.project || 'global',
       };
@@ -898,7 +900,7 @@ function buildApp(opts = {}) {
     }
 
     items.sort((a, b) => b.count - a.count);
-    reply.header('etag', `"${componentETag}"`);
+    reply.header('etag', `"${requestETag}"`);
     return items;
   });
 
