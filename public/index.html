@@ -578,6 +578,58 @@
       word-break: break-word;
     }
 
+    .invocation-user-prompt {
+      font-size: 12px;
+      color: var(--text-muted);
+      margin-top: 4px;
+      line-height: 1.5;
+      padding: 6px 8px;
+      background: rgba(108, 92, 231, 0.06);
+      border-radius: 4px;
+      border-left: 2px solid var(--accent);
+      word-break: break-word;
+    }
+
+    .badge-trigger {
+      font-size: 10px;
+      padding: 2px 6px;
+      border-radius: 3px;
+      background: rgba(108, 92, 231, 0.15);
+      color: var(--accent);
+    }
+
+    .pagination {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 12px;
+      padding: 16px 0 8px;
+      border-top: 1px solid var(--border);
+      margin-top: 8px;
+    }
+    .pagination button {
+      background: var(--card-bg);
+      border: 1px solid var(--border);
+      color: var(--text);
+      padding: 6px 14px;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 13px;
+      transition: all 0.15s;
+    }
+    .pagination button:hover:not(:disabled) {
+      border-color: var(--accent);
+      color: var(--accent);
+    }
+    .pagination button:disabled {
+      opacity: 0.4;
+      cursor: not-allowed;
+    }
+    .page-info {
+      font-size: 13px;
+      color: var(--text-muted);
+    }
+
     /* ── Navigation ── */
     .header-left { display: flex; align-items: center; gap: 24px; }
     nav { display: flex; gap: 4px; }
@@ -594,6 +646,11 @@
     .badge-skill { background: #00b89440; color: var(--success); }
     .badge-agent { background: #fdcb6e40; color: var(--warning); }
     .badge-rule { background: #e1705540; color: var(--danger); }
+    .badge-agent-configured { background: rgba(0, 184, 148, 0.15); color: var(--success); }
+    .badge-agent-builtin { background: rgba(139, 143, 163, 0.15); color: var(--text-muted); }
+    .badge-origin { background: rgba(108, 92, 231, 0.12); color: var(--accent); }
+    .badge-project-global { background: rgba(139, 143, 163, 0.15); color: var(--text-muted); }
+    .badge-project { background: rgba(0, 184, 148, 0.15); color: var(--success); }
 
     /* ── Buttons ── */
     .btn { padding: 6px 16px; border-radius: 6px; border: 1px solid var(--border); background: transparent; color: var(--text-muted); font-size: 13px; cursor: pointer; transition: all 0.15s; }
@@ -623,6 +680,39 @@
     .timeline-label { font-size: 11px; color: var(--text-muted); }
     .timeline-name { font-weight: 600; font-size: 13px; }
     .timeline-detail { font-size: 12px; color: var(--text-muted); font-family: 'SF Mono', monospace; margin-top: 4px; word-break: break-all; }
+
+    /* ── Learning page ── */
+    .learning-layout { display: flex; gap: 0; min-height: 70vh; }
+    .learning-sidebar {
+      width: 200px; flex-shrink: 0; border-right: 1px solid var(--border);
+      padding: 1rem 0; display: flex; flex-direction: column;
+    }
+    .learning-sidebar a {
+      display: block; padding: 0.6rem 1.2rem; color: var(--text-muted);
+      text-decoration: none; border-left: 3px solid transparent;
+    }
+    .learning-sidebar a.active { color: var(--accent); border-left-color: var(--accent); background: rgba(108,92,231,0.08); }
+    .learning-sidebar a:hover { color: var(--text); background: rgba(255,255,255,0.03); }
+    .learning-sidebar .sidebar-stats { margin-top: auto; padding: 1rem 1.2rem; border-top: 1px solid var(--border); font-size: 0.8rem; color: var(--text-muted); }
+    .learning-sidebar .sidebar-stats div { margin-bottom: 0.3rem; }
+    .learning-sidebar .sidebar-stats span { color: var(--text); font-weight: 600; }
+    .learning-main { flex: 1; padding: 1.2rem; min-width: 0; }
+    .learning-footer { padding: 0.6rem 1.2rem; border-top: 1px solid var(--border); font-size: 0.75rem; color: var(--text-muted); display: flex; gap: 1.5rem; }
+    .learning-breadcrumb { font-size: 0.85rem; margin-bottom: 1rem; color: var(--text-muted); }
+    .learning-breadcrumb a { color: var(--accent); text-decoration: none; }
+    .confidence-bar { display: inline-block; width: 60px; height: 8px; background: var(--border); border-radius: 4px; overflow: hidden; vertical-align: middle; }
+    .confidence-bar .fill { height: 100%; border-radius: 4px; }
+    .badge { display: inline-block; padding: 0.15rem 0.5rem; border-radius: 3px; font-size: 0.75rem; background: var(--border); color: var(--text); }
+    .badge.workflow { background: rgba(108,92,231,0.2); color: #a29bfe; }
+    .badge.testing { background: rgba(0,184,148,0.2); color: #55efc4; }
+    .badge.security { background: rgba(225,112,85,0.2); color: #fab1a0; }
+    .badge.approved { background: rgba(0,184,148,0.2); color: var(--success); }
+    .badge.dismissed { background: rgba(225,112,85,0.2); color: var(--danger); }
+    .badge.pending { background: rgba(253,203,110,0.2); color: var(--warning); }
+    .obs-activity-chart { height: 120px; margin-bottom: 1rem; }
+    .chart-toggle { cursor: pointer; color: var(--accent); font-size: 0.85rem; margin-bottom: 0.5rem; }
+    .filter-row { display: flex; flex-wrap: wrap; gap: 0.6rem; margin-bottom: 1rem; }
+    .filter-row select, .filter-row input { background: var(--surface); border: 1px solid var(--border); color: var(--text); padding: 0.4rem 0.6rem; border-radius: 4px; font-size: 0.85rem; }
   </style>
 </head>
 <body>
@@ -634,6 +724,7 @@
         <a href="#sessions">Sessions</a>
         <a href="#inventory">Inventory</a>
         <a href="#expert">Expert</a>
+        <a href="#learning">Learning</a>
         <a href="#settings">Settings</a>
       </nav>
     </div>
