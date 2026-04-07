@@ -1,4 +1,4 @@
-import { get } from './api.js';
+import { get, getWithETag } from './api.js';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -10,6 +10,10 @@ function fmtTime(ts) {
 // ── Tab state ─────────────────────────────────────────────────────────────────
 
 const TABS = ['skills', 'agents', 'hooks', 'rules'];
+
+let pollInterval = null;
+let currentETag = null;
+let inDetailView = false;
 
 // ── Tab: Skills / Agents ──────────────────────────────────────────────────────
 
@@ -67,6 +71,27 @@ function makeItemTable(items, cols, onRowClick) {
   return wrap;
 }
 
+function highlightKeywords(text, keywords) {
+  const span = document.createElement('span');
+  if (!text || !keywords || keywords.length === 0) {
+    span.textContent = text || '';
+    return span;
+  }
+  const escaped = keywords.map(k => k.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+  const regex = new RegExp(`\\b(${escaped.join('|')})`, 'gi');
+  let last = 0;
+  for (const match of text.matchAll(regex)) {
+    if (match.index > last) span.appendChild(document.createTextNode(text.slice(last, match.index)));
+    const b = document.createElement('strong');
+    b.style.color = 'var(--accent)';
+    b.textContent = match[0];
+    span.appendChild(b);
+    last = match.index + match[0].length;
+  }
+  if (last < text.length) span.appendChild(document.createTextNode(text.slice(last)));
+  return span;
+}
+
 function statusBadge(item) {
   const badge = document.createElement('span');
   const isActive = item.lastUsed || item.invocations > 0 || item.count > 0;
@@ -75,9 +100,27 @@ function statusBadge(item) {
   return badge;
 }
 
+function pluginBadge(item) {
+  if (!item.plugin) return document.createTextNode('');
+  const badge = document.createElement('span');
+  badge.className = 'badge badge-origin';
+  badge.textContent = item.plugin;
+  return badge;
+}
+
+function projectBadge(item) {
+  const proj = item.project || 'global';
+  const badge = document.createElement('span');
+  badge.className = proj === 'global' ? 'badge badge-project-global' : 'badge badge-project';
+  badge.textContent = proj;
+  return badge;
+}
+
 function renderSkillsTab(el, items, onSelect) {
   const cols = [
     { label: 'Name', render: i => i.name || i.skill || '—' },
+    { label: 'Plugin', render: pluginBadge, center: true },
+    { label: 'Project', render: projectBadge, center: true },
     { label: 'Usage', key: 'count', center: true },
     { label: 'Last Used', render: i => fmtTime(i.lastUsed) },
     { label: 'Status', render: statusBadge },
@@ -85,9 +128,20 @@ function renderSkillsTab(el, items, onSelect) {
   el.appendChild(makeItemTable(items, cols, onSelect));
 }
 
+function agentClassBadge(item) {
+  const badge = document.createElement('span');
+  const isConfigured = item.agent_class === 'configured';
+  badge.className = `badge badge-agent-${isConfigured ? 'configured' : 'builtin'}`;
+  badge.textContent = isConfigured ? 'configured' : 'built-in';
+  return badge;
+}
+
 function renderAgentsTab(el, items, onSelect) {
   const cols = [
     { label: 'Name', render: i => i.name || i.agent || '—' },
+    { label: 'Type', render: agentClassBadge, center: true },
+    { label: 'Plugin', render: pluginBadge, center: true },
+    { label: 'Project', render: projectBadge, center: true },
     { label: 'Usage', key: 'count', center: true },
     { label: 'Last Used', render: i => fmtTime(i.lastUsed) },
     { label: 'Status', render: statusBadge },
@@ -108,6 +162,7 @@ function renderHooksTab(el, items) {
       code.textContent = i.matcher || i.match || '—';
       return code;
     }},
+    { label: 'Project', render: projectBadge, center: true },
   ];
   el.appendChild(makeItemTable(items, cols, null));
 }
@@ -141,6 +196,9 @@ function renderRulesTab(el, items) {
 
       li.appendChild(badge);
       li.appendChild(name);
+      if (rule.project) {
+        li.appendChild(projectBadge(rule));
+      }
       ul.appendChild(li);
     });
     card.appendChild(ul);
@@ -151,7 +209,83 @@ function renderRulesTab(el, items) {
 
 // ── Detail overlay ────────────────────────────────────────────────────────────
 
-function renderItemDetail(el, item, type, onBack) {
+function renderInvocationRows(container, history, keywords) {
+  history.forEach(h => {
+    const row = document.createElement('div');
+    row.style.cssText = 'padding:8px 0; border-bottom:1px solid var(--border);';
+
+    const topLine = document.createElement('div');
+    topLine.style.cssText = 'display:flex; align-items:center; gap:8px; flex-wrap:wrap;';
+
+    const time = document.createElement('span');
+    time.className = 'timeline-label';
+    time.textContent = fmtTime(h.timestamp || h.at);
+    topLine.appendChild(time);
+
+    row.appendChild(topLine);
+
+    // Detail line
+    const detail = h.detail || '';
+    if (detail) {
+      const detailEl = document.createElement('div');
+      detailEl.className = 'invocation-prompt';
+      detailEl.textContent = detail;
+      row.appendChild(detailEl);
+    }
+
+    // User prompt with highlighted keywords + trigger badge inside
+    if (h.user_prompt) {
+      const promptEl = document.createElement('div');
+      promptEl.className = 'invocation-user-prompt';
+      if (h.triggered_by) {
+        const trigBadge = document.createElement('span');
+        trigBadge.className = 'badge badge-trigger';
+        const typeLabel = h.triggered_by.type === 'skill_invoke' ? 'skill' : 'agent';
+        trigBadge.textContent = '\u2190 ' + typeLabel + ': ' + h.triggered_by.name;
+        promptEl.appendChild(trigBadge);
+        promptEl.appendChild(document.createTextNode(' '));
+      }
+      promptEl.appendChild(highlightKeywords(h.user_prompt, keywords));
+      row.appendChild(promptEl);
+    } else if (h.triggered_by) {
+      // No user_prompt but has trigger — show badge standalone
+      const trigBadge = document.createElement('div');
+      trigBadge.className = 'badge badge-trigger';
+      trigBadge.style.marginTop = '4px';
+      const typeLabel = h.triggered_by.type === 'skill_invoke' ? 'skill' : 'agent';
+      trigBadge.textContent = '\u2190 ' + typeLabel + ': ' + h.triggered_by.name;
+      row.appendChild(trigBadge);
+    }
+
+    container.appendChild(row);
+  });
+}
+
+function renderPagination(container, page, totalPages, onPageChange) {
+  if (totalPages <= 1) return;
+
+  const pager = document.createElement('div');
+  pager.className = 'pagination';
+
+  const prevBtn = document.createElement('button');
+  prevBtn.textContent = '← Prev';
+  prevBtn.disabled = page <= 1;
+  prevBtn.addEventListener('click', () => onPageChange(page - 1));
+
+  const info = document.createElement('span');
+  info.className = 'page-info';
+  info.textContent = 'Page ' + page + ' / ' + totalPages;
+
+  const nextBtn = document.createElement('button');
+  nextBtn.textContent = 'Next →';
+  nextBtn.disabled = page >= totalPages;
+  nextBtn.addEventListener('click', () => onPageChange(page + 1));
+
+  pager.append(prevBtn, info, nextBtn);
+  container.appendChild(pager);
+}
+
+function renderItemDetail(el, item, type, onBack, { onPageChange } = {}) {
   el.textContent = '';
 
   const header = document.createElement('div');
@@ -170,20 +304,8 @@ function renderItemDetail(el, item, type, onBack) {
   header.appendChild(title);
   el.appendChild(header);
 
-  // Keywords
-  const keywords = item.keywords || item.triggers || [];
-  if (keywords.length > 0) {
-    const kw = document.createElement('div');
-    kw.className = 'keywords-bar';
-    kw.style.marginBottom = '20px';
-    keywords.forEach(k => {
-      const badge = document.createElement('span');
-      badge.className = 'keyword-badge';
-      badge.textContent = k;
-      kw.appendChild(badge);
-    });
-    el.appendChild(kw);
-  }
+  // Keywords (used for inline highlighting in user prompts, not displayed separately)
+  const keywords = item.keywords || [];
 
   // Description
   if (item.description) {
@@ -193,33 +315,51 @@ function renderItemDetail(el, item, type, onBack) {
     el.appendChild(desc);
   }
 
+  // Triggers section (what this item triggers)
+  const triggers = item.triggers || [];
+  if (triggers.length > 0) {
+    const trigCard = document.createElement('div');
+    trigCard.className = 'card';
+    const trigTitle = document.createElement('div');
+    trigTitle.className = 'card-title';
+    trigTitle.textContent = 'Triggers';
+    trigCard.appendChild(trigTitle);
+
+    triggers.forEach(t => {
+      const row = document.createElement('div');
+      row.style.cssText = 'padding:6px 0; display:flex; align-items:center; gap:8px; border-bottom:1px solid var(--border);';
+      const badge = document.createElement('span');
+      badge.className = 'badge ' + (t.event_type === 'skill_invoke' ? 'badge-skill' : 'badge-agent');
+      badge.textContent = t.event_type === 'skill_invoke' ? 'skill' : 'agent';
+      const nameEl = document.createElement('span');
+      nameEl.textContent = t.name;
+      const count = document.createElement('span');
+      count.className = 'text-muted';
+      count.textContent = '(' + t.count + '\u00d7)';
+      row.append(badge, nameEl, count);
+      trigCard.appendChild(row);
+    });
+    el.appendChild(trigCard);
+  }
+
   // Invocation history
-  const history = item.history || item.recentUses || [];
-  if (history.length > 0) {
+  const history = item.invocations || [];
+  const total = item.total || history.length;
+  const page = item.page || 1;
+  const perPage = item.per_page || 10;
+  const totalPages = Math.ceil(total / perPage);
+
+  if (total > 0) {
     const histCard = document.createElement('div');
     histCard.className = 'card';
 
     const histTitle = document.createElement('div');
     histTitle.className = 'card-title';
-    histTitle.textContent = 'Recent Invocations';
+    histTitle.textContent = 'Invocations (' + total + ')';
     histCard.appendChild(histTitle);
 
-    history.slice(0, 10).forEach(h => {
-      const row = document.createElement('div');
-      row.style.cssText = 'padding:8px 0; border-bottom:1px solid var(--border);';
-
-      const time = document.createElement('div');
-      time.className = 'timeline-label';
-      time.textContent = fmtTime(h.timestamp || h.at);
-
-      const prompt = document.createElement('div');
-      prompt.className = 'invocation-prompt';
-      prompt.textContent = h.prompt || h.input || h.reason || '';
-
-      row.appendChild(time);
-      row.appendChild(prompt);
-      histCard.appendChild(row);
-    });
+    renderInvocationRows(histCard, history, keywords);
+    renderPagination(histCard, page, totalPages, onPageChange);
 
     el.appendChild(histCard);
   } else {
@@ -259,7 +399,7 @@ export function mount(el, { period } = {}) {
   el.appendChild(tabsEl);
   el.appendChild(content);
 
-  function loadTab(tab) {
+  function loadTab(tab, isRefresh = false) {
     content.textContent = '';
     const sp = document.createElement('div');
     sp.className = 'empty-state';
@@ -274,17 +414,44 @@ export function mount(el, { period } = {}) {
     else if (tab === 'hooks') apiPath = '/inventory/hooks';
     else if (tab === 'rules') apiPath = '/inventory/rules';
 
-    get(apiPath).then(data => {
+    const fetchFn = isRefresh
+      ? () => getWithETag(apiPath, currentETag)
+      : () => get(apiPath).then(data => ({ data, etag: null, notModified: false }));
+
+    fetchFn().then(result => {
+      if (result.notModified) return; // ETag matched, nothing changed
+
+      const data = result.data;
+      if (result.etag) currentETag = result.etag;
+
       content.textContent = '';
       const items = Array.isArray(data) ? data : (data.items || data[tab] || []);
 
       if (tab === 'skills') {
         renderSkillsTab(content, items, item => {
-          renderItemDetail(content, item, 'skill', () => loadTab('skills'));
+          inDetailView = true;
+          function loadDetail(pg) {
+            const url = '/inventory/skills/' + encodeURIComponent(item.name) + '?period=' + p + '&page=' + pg;
+            get(url).then(detail => {
+              renderItemDetail(content, detail, 'skill', () => { inDetailView = false; loadTab('skills'); }, {
+                onPageChange: loadDetail,
+              });
+            });
+          }
+          loadDetail(1);
         });
       } else if (tab === 'agents') {
         renderAgentsTab(content, items, item => {
-          renderItemDetail(content, item, 'agent', () => loadTab('agents'));
+          inDetailView = true;
+          function loadDetail(pg) {
+            const url = '/inventory/agents/' + encodeURIComponent(item.name) + '?period=' + p + '&page=' + pg;
+            get(url).then(detail => {
+              renderItemDetail(content, detail, 'agent', () => { inDetailView = false; loadTab('agents'); }, {
+                onPageChange: loadDetail,
+              });
+            });
+          }
+          loadDetail(1);
         });
       } else if (tab === 'hooks') {
         renderHooksTab(content, items);
@@ -302,8 +469,20 @@ export function mount(el, { period } = {}) {
   }
 
   loadTab(activeTab);
+
+  // Start polling every 60s with ETag
+  if (pollInterval) clearInterval(pollInterval);
+  pollInterval = setInterval(() => {
+    if (inDetailView) return;
+    loadTab(activeTab, true);
+  }, 60000);
 }
 
 export function unmount() {
-  // Nothing to clean up
+  if (pollInterval) {
+    clearInterval(pollInterval);
+    pollInterval = null;
+  }
+  inDetailView = false;
+  currentETag = null;
 }
