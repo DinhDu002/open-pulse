@@ -557,6 +557,185 @@ describe('queryLearningRecent', () => {
 });
 
 // ---------------------------------------------------------------------------
+// HTTP endpoint tests for instincts API
+// ---------------------------------------------------------------------------
+
+describe('HTTP: /api/instincts', () => {
+  let app;
+  let httpInstinctId;
+  const HTTP_INST_DIR = path.join(os.tmpdir(), `op-inst-http-test-${Date.now()}`);
+
+  before(async () => {
+    fs.mkdirSync(path.join(HTTP_INST_DIR, 'data'), { recursive: true });
+    fs.mkdirSync(path.join(HTTP_INST_DIR, 'cl', 'projects'), { recursive: true });
+    fs.mkdirSync(path.join(HTTP_INST_DIR, 'cl', 'instincts', 'personal'), { recursive: true });
+    fs.mkdirSync(path.join(HTTP_INST_DIR, '.claude', 'skills'), { recursive: true });
+    fs.mkdirSync(path.join(HTTP_INST_DIR, '.claude', 'agents'), { recursive: true });
+    fs.mkdirSync(path.join(HTTP_INST_DIR, '.claude', 'rules'), { recursive: true });
+
+    process.env.OPEN_PULSE_DB = path.join(HTTP_INST_DIR, 'test.db');
+    process.env.OPEN_PULSE_DIR = HTTP_INST_DIR;
+    process.env.OPEN_PULSE_CLAUDE_DIR = path.join(HTTP_INST_DIR, '.claude');
+
+    // op-server caches require — delete so new env vars take effect
+    delete require.cache[require.resolve('../src/op-server')];
+    delete require.cache[require.resolve('../src/op-db')];
+    const { buildApp } = require('../src/op-server');
+    app = buildApp({ disableTimers: true });
+    await app.ready();
+
+    // Seed test data
+    const httpDb = createDb(path.join(HTTP_INST_DIR, 'test.db'));
+    upsertClProject(httpDb, {
+      project_id: 'inst-proj',
+      name: 'Instinct Project',
+      directory: '/inst-proj',
+      first_seen_at: '2024-01-01T00:00:00Z',
+      last_seen_at: '2024-01-10T00:00:00Z',
+      session_count: 3,
+    });
+    upsertInstinct(httpDb, {
+      project_id: 'inst-proj',
+      category: 'workflow',
+      pattern: 'Always plan before coding',
+      confidence: 0.8,
+      seen_count: 5,
+      first_seen: '2024-01-01T00:00:00Z',
+      last_seen: '2024-01-10T00:00:00Z',
+      instinct: 'Planning is essential',
+    });
+    upsertInstinct(httpDb, {
+      project_id: 'inst-proj',
+      category: 'testing',
+      pattern: 'Write tests first',
+      confidence: 0.3,
+      seen_count: 2,
+      first_seen: '2024-01-02T00:00:00Z',
+      last_seen: '2024-01-09T00:00:00Z',
+      instinct: 'TDD approach works',
+    });
+    httpInstinctId = httpDb.prepare('SELECT id FROM cl_instincts ORDER BY id LIMIT 1').get().id;
+    httpDb.close();
+  });
+
+  after(async () => {
+    if (app) await app.close();
+    fs.rmSync(HTTP_INST_DIR, { recursive: true, force: true });
+    delete process.env.OPEN_PULSE_DB;
+    delete process.env.OPEN_PULSE_DIR;
+    delete process.env.OPEN_PULSE_CLAUDE_DIR;
+    delete require.cache[require.resolve('../src/op-server')];
+    delete require.cache[require.resolve('../src/op-db')];
+  });
+
+  test('GET /api/instincts returns paginated result', async () => {
+    const res = await app.inject({ method: 'GET', url: '/api/instincts' });
+    assert.equal(res.statusCode, 200);
+    const body = JSON.parse(res.body);
+    assert.ok('items' in body, 'body should have items');
+    assert.ok('total' in body, 'body should have total');
+    assert.ok('page' in body, 'body should have page');
+    assert.ok('per_page' in body, 'body should have per_page');
+    assert.ok(Array.isArray(body.items));
+    assert.ok(body.total >= 2);
+  });
+
+  test('GET /api/instincts filters by domain (category)', async () => {
+    const res = await app.inject({ method: 'GET', url: '/api/instincts?domain=workflow' });
+    assert.equal(res.statusCode, 200);
+    const body = JSON.parse(res.body);
+    assert.ok(body.items.every(r => r.category === 'workflow'));
+  });
+
+  test('GET /api/instincts filters by confidence_min', async () => {
+    const res = await app.inject({ method: 'GET', url: '/api/instincts?confidence_min=0.5' });
+    assert.equal(res.statusCode, 200);
+    const body = JSON.parse(res.body);
+    assert.ok(body.items.every(r => r.confidence >= 0.5));
+  });
+
+  test('GET /api/instincts filters by search', async () => {
+    const res = await app.inject({ method: 'GET', url: '/api/instincts?search=plan' });
+    assert.equal(res.statusCode, 200);
+    const body = JSON.parse(res.body);
+    assert.ok(body.items.length >= 1);
+    assert.ok(body.items.every(r =>
+      r.pattern.toLowerCase().includes('plan') || (r.instinct || '').toLowerCase().includes('plan')
+    ));
+  });
+
+  test('GET /api/instincts/stats returns byDomain and confidenceDistribution', async () => {
+    const res = await app.inject({ method: 'GET', url: '/api/instincts/stats' });
+    assert.equal(res.statusCode, 200);
+    const body = JSON.parse(res.body);
+    assert.ok('byDomain' in body);
+    assert.ok('confidenceDistribution' in body);
+    assert.ok(Array.isArray(body.byDomain));
+    assert.ok(Array.isArray(body.confidenceDistribution));
+  });
+
+  test('GET /api/instincts/:id/observations returns array', async () => {
+    const res = await app.inject({ method: 'GET', url: `/api/instincts/${httpInstinctId}/observations` });
+    assert.equal(res.statusCode, 200);
+    const body = JSON.parse(res.body);
+    assert.ok(Array.isArray(body));
+  });
+
+  test('GET /api/instincts/:id/suggestions returns array', async () => {
+    const res = await app.inject({ method: 'GET', url: `/api/instincts/${httpInstinctId}/suggestions` });
+    assert.equal(res.statusCode, 200);
+    const body = JSON.parse(res.body);
+    assert.ok(Array.isArray(body));
+  });
+
+  test('PUT /api/instincts/:id updates confidence', async () => {
+    const res = await app.inject({
+      method: 'PUT',
+      url: `/api/instincts/${httpInstinctId}`,
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ confidence: 0.55 }),
+    });
+    assert.equal(res.statusCode, 200);
+    const body = JSON.parse(res.body);
+    assert.equal(body.success, true);
+    assert.equal(body.id, httpInstinctId);
+
+    // Verify the update via list endpoint
+    const listRes = await app.inject({ method: 'GET', url: `/api/instincts?confidence_min=0.5&confidence_max=0.6` });
+    const list = JSON.parse(listRes.body);
+    assert.ok(list.items.some(r => r.id === httpInstinctId));
+  });
+
+  test('DELETE /api/instincts/:id deletes the instinct', async () => {
+    // Seed a fresh instinct to delete
+    const tmpDb = createDb(path.join(HTTP_INST_DIR, 'test.db'));
+    upsertInstinct(tmpDb, {
+      project_id: 'inst-proj',
+      category: 'delete-me',
+      pattern: 'To be deleted via HTTP',
+      confidence: 0.5,
+      seen_count: 1,
+      first_seen: '2024-01-01T00:00:00Z',
+      last_seen: '2024-01-01T00:00:00Z',
+      instinct: 'Delete test body',
+    });
+    const deleteId = tmpDb.prepare("SELECT id FROM cl_instincts WHERE pattern = 'To be deleted via HTTP' LIMIT 1").get().id;
+    tmpDb.close();
+
+    const res = await app.inject({ method: 'DELETE', url: `/api/instincts/${deleteId}` });
+    assert.equal(res.statusCode, 200);
+    const body = JSON.parse(res.body);
+    assert.equal(body.success, true);
+    assert.equal(body.id, deleteId);
+
+    // Verify gone
+    const listRes = await app.inject({ method: 'GET', url: '/api/instincts?search=To+be+deleted+via+HTTP' });
+    const list = JSON.parse(listRes.body);
+    assert.equal(list.total, 0);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // HTTP endpoint tests for observations API
 // ---------------------------------------------------------------------------
 

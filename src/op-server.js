@@ -19,6 +19,12 @@ const {
   queryObservations,
   getObservation,
   queryObservationActivity,
+  queryInstinctsFiltered,
+  getInstinctStats,
+  getInstinctObservations,
+  getInstinctSuggestions,
+  updateInstinct,
+  deleteInstinct,
 } = require('./op-db');
 const { ingestAll } = require('./op-ingest');
 const { createComponent, deleteComponent, previewComponent } = require('./op-actions');
@@ -894,11 +900,20 @@ function buildApp(opts = {}) {
 
   // ── Instincts ───────────────────────────────────────────────────────────
 
-  app.get('/api/instincts', async () => {
-    return db.prepare(
-      `SELECT id, project_id, category, pattern, confidence, seen_count, first_seen, last_seen, instinct
-       FROM cl_instincts ORDER BY project_id, category, confidence DESC`
-    ).all();
+  app.get('/api/instincts', async (request) => {
+    const { domain, source, project, confidence_min, confidence_max, search, page, per_page } = request.query;
+    return queryInstinctsFiltered(db, {
+      domain, source, project,
+      confidence_min: confidence_min != null ? parseFloat(confidence_min) : undefined,
+      confidence_max: confidence_max != null ? parseFloat(confidence_max) : undefined,
+      search,
+      page: Math.max(1, parseInt(page) || 1),
+      perPage: Math.min(50, Math.max(1, parseInt(per_page) || 20)),
+    });
+  });
+
+  app.get('/api/instincts/stats', async () => {
+    return getInstinctStats(db);
   });
 
   app.get('/api/instincts/projects', async () => {
@@ -943,6 +958,36 @@ function buildApp(opts = {}) {
     } catch {
       return { log: [] };
     }
+  });
+
+  app.get('/api/instincts/:id/observations', async (request, reply) => {
+    const id = parseInt(request.params.id);
+    if (isNaN(id)) return reply.code(400).send({ error: 'invalid id' });
+    return getInstinctObservations(db, id);
+  });
+
+  app.get('/api/instincts/:id/suggestions', async (request, reply) => {
+    const id = parseInt(request.params.id);
+    if (isNaN(id)) return reply.code(400).send({ error: 'invalid id' });
+    return getInstinctSuggestions(db, id);
+  });
+
+  app.put('/api/instincts/:id', async (request, reply) => {
+    const id = parseInt(request.params.id);
+    if (isNaN(id)) return reply.code(400).send({ error: 'invalid id' });
+    const { confidence } = request.body || {};
+    if (confidence == null || typeof confidence !== 'number') {
+      return reply.code(400).send({ error: 'confidence (number) required' });
+    }
+    updateInstinct(db, id, { confidence });
+    return { success: true, id };
+  });
+
+  app.delete('/api/instincts/:id', async (request, reply) => {
+    const id = parseInt(request.params.id);
+    if (isNaN(id)) return reply.code(400).send({ error: 'invalid id' });
+    deleteInstinct(db, id);
+    return { success: true, id };
   });
 
   // ── Observations ─────────────────────────────────────────────────────────
