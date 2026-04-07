@@ -30,11 +30,14 @@ const {
   deleteComponentsNotSeenSince,
   getComponentsByType,
   getAllComponents,
+  getKgStatus, getKgGraph, getKgNodeDetail,
 } = require('./op-db');
+const { syncGraph } = require('./op-knowledge-graph');
+const { generateAllVaults } = require('./op-vault-generator');
 const { ingestAll } = require('./op-ingest');
-const { createComponent, deleteComponent, previewComponent } = require('./op-actions');
 const { findInstinctFile, updateConfidence, archiveInstinct } = require('./op-instinct-updater');
 const { runRetention } = require('./op-retention');
+const { execFile } = require('child_process');
 
 // ---------------------------------------------------------------------------
 // Paths (environment-configurable with sensible defaults)
@@ -264,7 +267,7 @@ function getKnownSkills() {
   const skillsDir = path.join(CLAUDE_DIR, 'skills');
   try {
     return fs.readdirSync(skillsDir, { withFileTypes: true })
-      .filter(e => e.isDirectory())
+      .filter(e => e.isDirectory() || e.isSymbolicLink())
       .map(e => e.name);
   } catch {
     return [];
@@ -534,15 +537,18 @@ function runScan(db) {
     db.prepare("SELECT DISTINCT name FROM events WHERE event_type = 'agent_spawn'").all().map(r => r.name)
   );
 
-  const unusedSkills = skills.filter(s => !usedSkills.has(s));
+  const usedSkillNames = [...usedSkills];
+  const unusedSkills = skills.filter(s =>
+    !usedSkills.has(s) && !usedSkillNames.some(u => u.startsWith(s + ':'))
+  );
   const unusedAgents = agents.filter(a => !usedAgents.has(a));
 
   const issues = [];
   for (const s of unusedSkills) {
-    issues.push({ level: 'low', message: `Unused skill: ${s}` });
+    issues.push({ severity: 'low', message: `Unused skill: ${s}` });
   }
   for (const a of unusedAgents) {
-    issues.push({ level: 'low', message: `Unused agent: ${a}` });
+    issues.push({ severity: 'low', message: `Unused agent: ${a}` });
   }
 
   const report = {
@@ -558,7 +564,7 @@ function runScan(db) {
 
   const issuesBySeverity = { critical: 0, high: 0, medium: 0, low: 0 };
   for (const issue of issues) {
-    if (issue.level in issuesBySeverity) issuesBySeverity[issue.level]++;
+    if (issue.severity in issuesBySeverity) issuesBySeverity[issue.severity]++;
   }
 
   insertScanResult(db, {
@@ -623,6 +629,25 @@ function buildApp(opts = {}) {
     timers.push(setInterval(() => {
       try { runRetention(db, retentionOpts); } catch { /* non-critical */ }
     }, ONE_DAY_MS));
+
+    // Suggestion analysis: handled by external agent script (launchd 3 AM daily)
+    // Manual trigger available via POST /api/suggestions/analyze
+
+    // Knowledge graph sync timer
+    timers.push(setInterval(() => {
+      try {
+        syncGraph(db, {
+          sessionLookbackDays: config.knowledge_session_lookback_days ?? 30,
+          instinctMinConfidence: config.knowledge_instinct_min_confidence ?? 0.3,
+          minTriggerCount: config.knowledge_pattern_min_occurrences ?? 5,
+        });
+      } catch { /* non-critical */ }
+    }, config.knowledge_graph_interval_ms || 300000));
+
+    // Vault generation timer
+    timers.push(setInterval(() => {
+      try { generateAllVaults(db); } catch { /* non-critical */ }
+    }, config.knowledge_vault_interval_ms || 900000));
   }
 
   // ── Health ──────────────────────────────────────────────────────────────
@@ -1037,12 +1062,12 @@ function buildApp(opts = {}) {
   // ── Instincts ───────────────────────────────────────────────────────────
 
   app.get('/api/instincts', async (request) => {
-    const { domain, source, project, confidence_min, confidence_max, search, page, per_page } = request.query;
+    const { domain, source, project, confidence_min, confidence_max, search, sort, page, per_page } = request.query;
     return queryInstinctsFiltered(db, {
       domain, source, project,
       confidence_min: confidence_min != null ? parseFloat(confidence_min) : undefined,
       confidence_max: confidence_max != null ? parseFloat(confidence_max) : undefined,
-      search,
+      search, sort,
       page: Math.max(1, parseInt(page) || 1),
       perPage: Math.min(50, Math.max(1, parseInt(per_page) || 20)),
     });
@@ -1143,6 +1168,45 @@ function buildApp(opts = {}) {
     return { success: true, id };
   });
 
+  app.put('/api/instincts/:id/validate', async (request, reply) => {
+    const id = parseInt(request.params.id);
+    if (isNaN(id)) return reply.code(400).send({ error: 'invalid id' });
+    const inst = db.prepare('SELECT instinct_id FROM cl_instincts WHERE id = ?').get(id);
+    if (!inst) return reply.code(404).send({ error: 'not found' });
+    const filePath = findInstinctFile(REPO_DIR, inst.instinct_id);
+    if (!filePath) return reply.code(404).send({ error: 'instinct file not found on disk' });
+    try {
+      const result = updateConfidence(filePath, +0.15);
+      db.prepare('UPDATE cl_instincts SET confidence = ? WHERE id = ?').run(result.confidence, id);
+      return { success: true, id, confidence: result.confidence };
+    } catch (err) {
+      return reply.code(500).send({ error: 'Failed to update: ' + err.message });
+    }
+  });
+
+  app.put('/api/instincts/:id/reject', async (request, reply) => {
+    const id = parseInt(request.params.id);
+    if (isNaN(id)) return reply.code(400).send({ error: 'invalid id' });
+    const inst = db.prepare('SELECT instinct_id FROM cl_instincts WHERE id = ?').get(id);
+    if (!inst) return reply.code(404).send({ error: 'not found' });
+    const filePath = findInstinctFile(REPO_DIR, inst.instinct_id);
+    if (!filePath) return reply.code(404).send({ error: 'instinct file not found on disk' });
+    try {
+      const result = updateConfidence(filePath, -0.2);
+      let archived = false;
+      if (result.dismiss_count >= 3) {
+        archiveInstinct(filePath);
+        archived = true;
+        db.prepare('DELETE FROM cl_instincts WHERE id = ?').run(id);
+      } else {
+        db.prepare('UPDATE cl_instincts SET confidence = ? WHERE id = ?').run(result.confidence, id);
+      }
+      return { success: true, id, confidence: result.confidence, dismiss_count: result.dismiss_count, archived };
+    } catch (err) {
+      return reply.code(500).send({ error: 'Failed to update: ' + err.message });
+    }
+  });
+
   // ── Projects ─────────────────────────────────────────────────────────────
 
   app.get('/api/projects/:id/summary', async (request, reply) => {
@@ -1171,60 +1235,43 @@ function buildApp(opts = {}) {
   // ── Suggestions ─────────────────────────────────────────────────────────
 
   app.get('/api/suggestions', async (request) => {
-    const { status, project } = request.query;
-    if (project) {
-      const sql = `SELECT s.* FROM suggestions s
-        JOIN cl_instincts i ON s.instinct_id = i.instinct_id
-        WHERE i.project_id = ?` + (status ? ' AND s.status = ?' : '') +
-        ' ORDER BY s.created_at DESC';
-      return status ? db.prepare(sql).all(project, status) : db.prepare(sql).all(project);
-    }
-    return querySuggestions(db, status || null);
+    const { status, category } = request.query;
+    return querySuggestions(db, status || null, category || null);
+  });
+
+  app.post('/api/suggestions/analyze', async (request, reply) => {
+    const config = loadConfig();
+    const agentScript = path.join(REPO_DIR, 'scripts', 'op-suggestion-agent.js');
+    const timeout = config.suggestion_agent_timeout_ms || 180000;
+
+    return new Promise((resolve) => {
+      execFile(process.execPath, [agentScript], {
+        cwd: REPO_DIR,
+        timeout,
+        env: { ...process.env, OPEN_PULSE_DIR: REPO_DIR, OP_SKIP_COLLECT: '1' },
+        maxBuffer: 1024 * 1024,
+      }, (error, stdout, stderr) => {
+        if (error) {
+          reply.code(500);
+          resolve({ error: 'Suggestion agent failed', detail: (stderr || error.message).slice(-500) });
+        } else {
+          try { resolve(JSON.parse(stdout)); }
+          catch { resolve({ generated: 0, raw: stdout.slice(0, 500) }); }
+        }
+      });
+    });
   });
 
   app.put('/api/suggestions/:id/approve', async (request) => {
     const { id } = request.params;
     updateSuggestionStatus(db, id, 'approved', 'user');
-
-    // Feedback loop: boost source instinct confidence
-    const suggestion = db.prepare('SELECT instinct_id FROM suggestions WHERE id = ?').get(id);
-    let instinct_updated = null;
-    if (suggestion?.instinct_id) {
-      const filePath = findInstinctFile(REPO_DIR, suggestion.instinct_id);
-      if (filePath) {
-        try {
-          const result = updateConfidence(filePath, +0.15);
-          instinct_updated = { id: suggestion.instinct_id, confidence: result.confidence };
-        } catch { /* instinct file update failed — non-critical */ }
-      }
-    }
-
-    return { success: true, id, status: 'approved', instinct_updated };
+    return { success: true, id, status: 'approved' };
   });
 
   app.put('/api/suggestions/:id/dismiss', async (request) => {
     const { id } = request.params;
     updateSuggestionStatus(db, id, 'dismissed', 'user');
-
-    // Feedback loop: reduce source instinct confidence, archive if 3+ dismissals
-    const suggestion = db.prepare('SELECT instinct_id FROM suggestions WHERE id = ?').get(id);
-    let instinct_updated = null;
-    if (suggestion?.instinct_id) {
-      const filePath = findInstinctFile(REPO_DIR, suggestion.instinct_id);
-      if (filePath) {
-        try {
-          const result = updateConfidence(filePath, -0.2);
-          instinct_updated = { id: suggestion.instinct_id, confidence: result.confidence };
-          if (result.dismiss_count >= 3) {
-            const archivePath = archiveInstinct(filePath);
-            instinct_updated.archived = true;
-            instinct_updated.archive_path = archivePath;
-          }
-        } catch { /* instinct file update failed — non-critical */ }
-      }
-    }
-
-    return { success: true, id, status: 'dismissed', instinct_updated };
+    return { success: true, id, status: 'dismissed' };
   });
 
   // ── Scanner ─────────────────────────────────────────────────────────────
@@ -1240,20 +1287,6 @@ function buildApp(opts = {}) {
 
   app.get('/api/scanner/latest', async () => {
     return getLatestScan(db) || null;
-  });
-
-  // ── Actions ─────────────────────────────────────────────────────────────
-
-  app.post('/api/actions/create-component', async (request) => {
-    return createComponent(request.body, CLAUDE_DIR);
-  });
-
-  app.delete('/api/actions/delete-component', async (request) => {
-    return deleteComponent(request.body, CLAUDE_DIR);
-  });
-
-  app.get('/api/actions/preview-component', async (request) => {
-    return previewComponent(request.query, CLAUDE_DIR);
   });
 
   // ── Config ──────────────────────────────────────────────────────────────
@@ -1279,6 +1312,74 @@ function buildApp(opts = {}) {
     } catch (err) {
       return { success: false, error: err.message };
     }
+  });
+
+  // --- Knowledge Graph API ---
+
+  app.get('/api/knowledge/status', async () => {
+    return getKgStatus(db);
+  });
+
+  app.get('/api/knowledge/projects', async () => {
+    const projects = db.prepare('SELECT * FROM cl_projects').all();
+    return projects.map(p => {
+      const vaultCount = db.prepare(
+        'SELECT COUNT(*) AS c FROM kg_vault_hashes WHERE project_id = ?'
+      ).get(p.project_id).c;
+      return { ...p, vault_file_count: vaultCount };
+    });
+  });
+
+  app.get('/api/knowledge/graph', async (request) => {
+    const { type } = request.query;
+    return getKgGraph(db, { type });
+  });
+
+  app.get('/api/knowledge/node/:id', async (request) => {
+    const { id } = request.params;
+    const decoded = decodeURIComponent(id);
+    const detail = getKgNodeDetail(db, decoded);
+    if (!detail) return { error: 'Node not found' };
+    return detail;
+  });
+
+  app.post('/api/knowledge/sync', async () => {
+    const result = syncGraph(db, {
+      sessionLookbackDays: config.knowledge_session_lookback_days ?? 30,
+      instinctMinConfidence: config.knowledge_instinct_min_confidence ?? 0.3,
+      minTriggerCount: config.knowledge_pattern_min_occurrences ?? 5,
+    });
+    return result;
+  });
+
+  app.post('/api/knowledge/generate', async (request) => {
+    const { project } = request.query || {};
+    if (project) {
+      const { generateVault } = require('./op-vault-generator');
+      return generateVault(db, project);
+    }
+    return generateAllVaults(db);
+  });
+
+  app.post('/api/knowledge/enrich', async () => {
+    try {
+      const { enrichNodes } = require('./op-knowledge-enricher');
+      const result = await enrichNodes(db, {});
+      return result;
+    } catch (err) {
+      return { error: err.message };
+    }
+  });
+
+  app.get('/api/knowledge/config', async () => {
+    return {
+      knowledge_graph_interval_ms: config.knowledge_graph_interval_ms ?? 300000,
+      knowledge_vault_interval_ms: config.knowledge_vault_interval_ms ?? 900000,
+      knowledge_enrich_enabled: config.knowledge_enrich_enabled ?? false,
+      knowledge_pattern_min_occurrences: config.knowledge_pattern_min_occurrences ?? 5,
+      knowledge_session_lookback_days: config.knowledge_session_lookback_days ?? 30,
+      knowledge_instinct_min_confidence: config.knowledge_instinct_min_confidence ?? 0.3,
+    };
   });
 
   // ── Cleanup on close ───────────────────────────────────────────────────

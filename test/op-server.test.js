@@ -88,22 +88,13 @@ describe('op-server', () => {
     assert.ok(Array.isArray(JSON.parse(res.body)));
   });
 
-  it('PUT /api/suggestions/:id/approve boosts instinct confidence', async () => {
-    // Create an instinct file
-    const instinctDir = path.join(TEST_DIR, 'cl', 'instincts', 'personal');
-    fs.mkdirSync(instinctDir, { recursive: true });
-    fs.writeFileSync(
-      path.join(instinctDir, 'test-boost.md'),
-      '---\nid: test-boost\nconfidence: 0.6\ndomain: workflow\n---\n\nTest instinct body',
-    );
-
-    // Insert a suggestion linked to this instinct
+  it('PUT /api/suggestions/:id/approve sets status', async () => {
     const dbMod = require('../src/op-db');
     const db = dbMod.createDb(process.env.OPEN_PULSE_DB);
     dbMod.insertSuggestion(db, {
       id: 'sugg-approve-1', created_at: '2026-04-06T10:00:00Z',
       type: 'hook', confidence: 0.6, description: 'test suggestion',
-      evidence: '["instinct:test-boost"]', instinct_id: 'test-boost', status: 'pending',
+      evidence: '[]', instinct_id: null, status: 'pending',
     });
     db.close();
 
@@ -111,30 +102,15 @@ describe('op-server', () => {
     assert.equal(res.statusCode, 200);
     const body = JSON.parse(res.body);
     assert.equal(body.status, 'approved');
-    assert.ok(body.instinct_updated, 'should report instinct update');
-    assert.equal(body.instinct_updated.id, 'test-boost');
-    assert.equal(body.instinct_updated.confidence, 0.75);
-
-    // Verify the file was actually updated
-    const content = fs.readFileSync(path.join(instinctDir, 'test-boost.md'), 'utf8');
-    assert.ok(content.includes('0.75'));
-    assert.ok(content.includes('user_validated'));
   });
 
-  it('PUT /api/suggestions/:id/dismiss reduces instinct confidence', async () => {
-    const instinctDir = path.join(TEST_DIR, 'cl', 'instincts', 'personal');
-    fs.mkdirSync(instinctDir, { recursive: true });
-    fs.writeFileSync(
-      path.join(instinctDir, 'test-reduce.md'),
-      '---\nid: test-reduce\nconfidence: 0.7\ndomain: testing\n---\n\nTest instinct body',
-    );
-
+  it('PUT /api/suggestions/:id/dismiss sets status', async () => {
     const dbMod = require('../src/op-db');
     const db = dbMod.createDb(process.env.OPEN_PULSE_DB);
     dbMod.insertSuggestion(db, {
       id: 'sugg-dismiss-1', created_at: '2026-04-06T10:00:00Z',
       type: 'rule', confidence: 0.7, description: 'test suggestion',
-      evidence: '["instinct:test-reduce"]', instinct_id: 'test-reduce', status: 'pending',
+      evidence: '[]', instinct_id: null, status: 'pending',
     });
     db.close();
 
@@ -142,39 +118,6 @@ describe('op-server', () => {
     assert.equal(res.statusCode, 200);
     const body = JSON.parse(res.body);
     assert.equal(body.status, 'dismissed');
-    assert.ok(body.instinct_updated);
-    assert.equal(body.instinct_updated.confidence, 0.5);
-  });
-
-  it('PUT dismiss 3x archives the instinct', async () => {
-    const instinctDir = path.join(TEST_DIR, 'cl', 'instincts', 'personal');
-    fs.mkdirSync(instinctDir, { recursive: true });
-    fs.writeFileSync(
-      path.join(instinctDir, 'test-archive.md'),
-      '---\nid: test-archive\nconfidence: 0.9\ndismiss_count: 2\ndomain: workflow\n---\n\nWill be archived',
-    );
-
-    const dbMod = require('../src/op-db');
-    const db = dbMod.createDb(process.env.OPEN_PULSE_DB);
-    dbMod.insertSuggestion(db, {
-      id: 'sugg-archive-1', created_at: '2026-04-06T10:00:00Z',
-      type: 'hook', confidence: 0.9, description: 'test',
-      evidence: '["instinct:test-archive"]', instinct_id: 'test-archive', status: 'pending',
-    });
-    db.close();
-
-    const res = await app.inject({ method: 'PUT', url: '/api/suggestions/sugg-archive-1/dismiss' });
-    const body = JSON.parse(res.body);
-    assert.ok(body.instinct_updated.archived, 'should be archived after 3rd dismiss');
-
-    // Original file should be gone
-    assert.ok(!fs.existsSync(path.join(instinctDir, 'test-archive.md')));
-
-    // Archive dir should exist
-    const archiveDir = path.join(TEST_DIR, 'cl', 'instincts', 'archive');
-    assert.ok(fs.existsSync(archiveDir), 'archive dir should exist');
-    const archived = fs.readdirSync(archiveDir);
-    assert.ok(archived.some(f => f.startsWith('test-archive')), 'archived file should exist');
   });
 
   it('GET /api/inventory/agents includes agent_class', async () => {
@@ -434,5 +377,49 @@ describe('op-server', () => {
     assert.ok(trig, 'should find code-reviewer in triggers');
     assert.equal(trig.event_type, 'agent_spawn');
     assert.ok(trig.count >= 1);
+  });
+
+  describe('knowledge graph API', () => {
+    it('GET /api/knowledge/status returns stats', async () => {
+      const res = await app.inject({ method: 'GET', url: '/api/knowledge/status' });
+      assert.equal(res.statusCode, 200);
+      const body = JSON.parse(res.payload);
+      assert.ok('nodeCount' in body);
+      assert.ok('edgeCount' in body);
+    });
+
+    it('GET /api/knowledge/projects returns project list', async () => {
+      const res = await app.inject({ method: 'GET', url: '/api/knowledge/projects' });
+      assert.equal(res.statusCode, 200);
+      const body = JSON.parse(res.payload);
+      assert.ok(Array.isArray(body));
+    });
+
+    it('GET /api/knowledge/graph returns nodes and edges', async () => {
+      const res = await app.inject({ method: 'GET', url: '/api/knowledge/graph' });
+      assert.equal(res.statusCode, 200);
+      const body = JSON.parse(res.payload);
+      assert.ok('nodes' in body);
+      assert.ok('edges' in body);
+    });
+
+    it('POST /api/knowledge/sync triggers graph sync', async () => {
+      const res = await app.inject({ method: 'POST', url: '/api/knowledge/sync' });
+      assert.equal(res.statusCode, 200);
+      const body = JSON.parse(res.payload);
+      assert.ok('nodes' in body);
+    });
+
+    it('POST /api/knowledge/generate triggers vault generation', async () => {
+      const res = await app.inject({ method: 'POST', url: '/api/knowledge/generate' });
+      assert.equal(res.statusCode, 200);
+    });
+
+    it('GET /api/knowledge/config returns config values', async () => {
+      const res = await app.inject({ method: 'GET', url: '/api/knowledge/config' });
+      assert.equal(res.statusCode, 200);
+      const body = JSON.parse(res.payload);
+      assert.ok('knowledge_graph_interval_ms' in body);
+    });
   });
 });
