@@ -374,12 +374,17 @@ function syncGraph(db, opts = {}) {
     properties: JSON.stringify(n.properties || {}),
   }));
 
-  const dbEdges = allEdges.map(e => ({
-    source_id: e.source_id,
-    target_id: e.target_id,
-    relationship: e.relationship,
-    weight: e.weight,
-  }));
+  // Filter edges: only keep those where both source and target exist as nodes
+  // (FK enforcement is ON, so referencing non-existent nodes would fail)
+  const nodeIds = new Set(dbNodes.map(n => n.id));
+  const dbEdges = allEdges
+    .filter(e => nodeIds.has(e.source_id) && nodeIds.has(e.target_id))
+    .map(e => ({
+      source_id: e.source_id,
+      target_id: e.target_id,
+      relationship: e.relationship,
+      weight: e.weight,
+    }));
 
   // Upsert into DB
   if (dbNodes.length > 0) {
