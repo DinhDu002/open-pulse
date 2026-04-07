@@ -16,12 +16,9 @@ const {
   getScanHistory,
   upsertClProject,
   upsertInstinct,
-  queryObservations,
-  getObservation,
-  queryObservationActivity,
   queryInstinctsFiltered,
+  getInstinct,
   getInstinctStats,
-  getInstinctObservations,
   getInstinctSuggestions,
   updateInstinct,
   deleteInstinct,
@@ -29,6 +26,10 @@ const {
   getProjectTimeline,
   queryLearningActivity,
   queryLearningRecent,
+  upsertComponent,
+  deleteComponentsNotSeenSince,
+  getComponentsByType,
+  getAllComponents,
 } = require('./op-db');
 const { ingestAll } = require('./op-ingest');
 const { createComponent, deleteComponent, previewComponent } = require('./op-actions');
@@ -43,6 +44,8 @@ const REPO_DIR   = process.env.OPEN_PULSE_DIR       || path.join(__dirname, '..'
 const CLAUDE_DIR = process.env.OPEN_PULSE_CLAUDE_DIR || path.join(os.homedir(), '.claude');
 const DB_PATH    = process.env.OPEN_PULSE_DB         || path.join(REPO_DIR, 'open-pulse.db');
 const CONFIG_PATH = path.join(REPO_DIR, 'config.json');
+
+let componentETag = '';
 
 // ---------------------------------------------------------------------------
 // Config
@@ -369,7 +372,8 @@ function syncInstinctsToDb(db) {
           const now = new Date().toISOString();
 
           upsertInstinct(db, {
-            project_id: meta.project_id || (scope === 'global' ? null : projectId),
+            instinct_id: meta.id || file.replace(/\.(md|yaml)$/, ''),
+            project_id: meta.project_id || (scope === 'global' ? '' : projectId),
             category: meta.domain || meta.category || 'unknown',
             pattern: meta.trigger || file.replace(/\.(md|yaml)$/, ''),
             confidence: parseFloat(meta.confidence) || 0.5,
@@ -384,8 +388,8 @@ function syncInstinctsToDb(db) {
   };
 
   // Global instincts via <repo>/cl/ paths
-  syncDir(path.join(REPO_DIR, 'cl', 'instincts', 'personal'), 'global', null);
-  syncDir(path.join(REPO_DIR, 'cl', 'instincts', 'inherited'), 'global', null);
+  syncDir(path.join(REPO_DIR, 'cl', 'instincts', 'personal'), 'global', '');
+  syncDir(path.join(REPO_DIR, 'cl', 'instincts', 'inherited'), 'global', '');
 
   // Per-project instincts
   const projectsDir = path.join(REPO_DIR, 'cl', 'projects');
@@ -403,6 +407,113 @@ function syncAll(db) {
     syncProjectsToDb(db);
     syncInstinctsToDb(db);
   } catch { /* non-critical */ }
+}
+
+// ---------------------------------------------------------------------------
+// Component sync: filesystem → components table
+// ---------------------------------------------------------------------------
+
+let _syncDb = null;
+
+function syncComponentsWithDb(db) {
+  const now = new Date().toISOString();
+  const diskItems = [];
+
+  // Global skills
+  for (const name of getKnownSkills()) {
+    const filePath = path.join(CLAUDE_DIR, 'skills', name, 'SKILL.md');
+    const meta = readItemMetaFromFile(filePath);
+    diskItems.push({
+      type: 'skill', name, source: 'global', plugin: null, project: null,
+      file_path: filePath, description: meta.description, agent_class: null,
+      hook_event: null, hook_matcher: null, hook_command: null,
+    });
+  }
+
+  // Global agents
+  for (const name of getKnownAgents()) {
+    const filePath = path.join(CLAUDE_DIR, 'agents', name + '.md');
+    const meta = readItemMetaFromFile(filePath);
+    diskItems.push({
+      type: 'agent', name, source: 'global', plugin: null, project: null,
+      file_path: filePath, description: meta.description, agent_class: 'configured',
+      hook_event: null, hook_matcher: null, hook_command: null,
+    });
+  }
+
+  // Global rules
+  for (const name of getKnownRules()) {
+    const filePath = path.join(CLAUDE_DIR, 'rules', name + '.md');
+    const meta = readItemMetaFromFile(filePath);
+    diskItems.push({
+      type: 'rule', name, source: 'global', plugin: null, project: null,
+      file_path: filePath, description: meta.description, agent_class: null,
+      hook_event: null, hook_matcher: null, hook_command: null,
+    });
+  }
+
+  // Hooks (global + project)
+  for (const hook of getKnownHooks()) {
+    const isProject = hook.project && hook.project !== 'global';
+    diskItems.push({
+      type: 'hook', name: hook.name, source: isProject ? 'project' : 'global',
+      plugin: null, project: hook.project || null,
+      file_path: null, description: null, agent_class: null,
+      hook_event: hook.event, hook_matcher: hook.matcher, hook_command: hook.command,
+    });
+  }
+
+  // Plugin components (skills + agents)
+  for (const pItem of getPluginComponents('skills')) {
+    const meta = readItemMetaFromFile(pItem.filePath);
+    diskItems.push({
+      type: 'skill', name: pItem.qualifiedName, source: 'plugin',
+      plugin: pItem.plugin, project: pItem.projects.join(', '),
+      file_path: pItem.filePath, description: meta.description, agent_class: null,
+      hook_event: null, hook_matcher: null, hook_command: null,
+    });
+  }
+  for (const pItem of getPluginComponents('agents')) {
+    const meta = readItemMetaFromFile(pItem.filePath);
+    diskItems.push({
+      type: 'agent', name: pItem.qualifiedName, source: 'plugin',
+      plugin: pItem.plugin, project: pItem.projects.join(', '),
+      file_path: pItem.filePath, description: meta.description, agent_class: 'configured',
+      hook_event: null, hook_matcher: null, hook_command: null,
+    });
+  }
+
+  // Project agents
+  for (const projAgent of getProjectAgents()) {
+    const meta = readItemMetaFromFile(projAgent.filePath);
+    diskItems.push({
+      type: 'agent', name: projAgent.name, source: 'project',
+      plugin: null, project: projAgent.project,
+      file_path: projAgent.filePath, description: meta.description, agent_class: 'configured',
+      hook_event: null, hook_matcher: null, hook_command: null,
+    });
+  }
+
+  // UPSERT all disk items
+  for (const item of diskItems) {
+    upsertComponent(db, { ...item, first_seen_at: now, last_seen_at: now });
+  }
+
+  // DELETE items no longer on disk
+  deleteComponentsNotSeenSince(db, now);
+
+  // COMPUTE ETag
+  const stats = db.prepare(
+    'SELECT COUNT(*) AS cnt, MAX(last_seen_at) AS latest FROM components'
+  ).get();
+  componentETag = crypto
+    .createHash('md5')
+    .update(`${stats.cnt}:${stats.latest || ''}`)
+    .digest('hex');
+}
+
+function syncComponents() {
+  if (_syncDb) syncComponentsWithDb(_syncDb);
 }
 
 // ---------------------------------------------------------------------------
@@ -477,6 +588,8 @@ function buildApp(opts = {}) {
 
   // Initial sync
   syncAll(db);
+  _syncDb = db;
+  try { syncComponentsWithDb(db); } catch { /* non-critical */ }
 
   const app = Fastify({ logger: false });
 
@@ -494,7 +607,10 @@ function buildApp(opts = {}) {
       try { ingestAll(db, dataDir); } catch { /* non-critical */ }
     }, config.ingest_interval_ms || 10000));
 
-    timers.push(setInterval(() => syncAll(db), config.cl_sync_interval_ms || 60000));
+    timers.push(setInterval(() => {
+      syncAll(db);
+      try { syncComponentsWithDb(db); } catch { /* non-critical */ }
+    }, config.cl_sync_interval_ms || 60000));
 
     // Retention: run once on startup, then daily
     const retentionOpts = {
@@ -691,28 +807,48 @@ function buildApp(opts = {}) {
 
   // ── Inventory ───────────────────────────────────────────────────────────
 
-  app.get('/api/inventory/:type', async (request) => {
+  app.get('/api/inventory/:type', async (request, reply) => {
     const { type } = request.params;
     const { period } = request.query;
     const since = periodToDate(period);
 
-    if (type === 'hooks') {
-      return getKnownHooks();  // already includes project field
+    // ETag check
+    if (request.headers['if-none-match'] === `"${componentETag}"`) {
+      reply.code(304);
+      return;
     }
 
-    if (type === 'rules') {
-      return getKnownRules().map(name => ({ name, type: 'rule', project: 'global' }));
+    const singularType = type.replace(/s$/, '');
+    const validTypes = ['skill', 'agent', 'hook', 'rule'];
+    if (!validTypes.includes(singularType)) {
+      return { error: 'Invalid type. Use skills, agents, hooks, or rules.' };
     }
 
-    const eventTypeMap = { skills: 'skill_invoke', agents: 'agent_spawn' };
-    const eventType = eventTypeMap[type];
-    if (!eventType) return { error: 'Invalid type. Use skills, agents, hooks, or rules.' };
+    const components = getComponentsByType(db, singularType);
 
-    const knownItems = type === 'skills' ? getKnownSkills() : getKnownAgents();
-    const pluginItems = getPluginComponents(type);
-    const pluginMap = new Map(pluginItems.map(p => [p.qualifiedName, p]));
-    const projAgents = type === 'agents' ? getProjectAgents() : [];
-    const projAgentMap = new Map(projAgents.map(a => [a.name, a]));
+    if (singularType === 'hook') {
+      reply.header('etag', `"${componentETag}"`);
+      return components.map(c => ({
+        name: c.name,
+        event: c.hook_event,
+        matcher: c.hook_matcher,
+        command: c.hook_command,
+        project: c.project || 'global',
+      }));
+    }
+
+    if (singularType === 'rule') {
+      reply.header('etag', `"${componentETag}"`);
+      return components.map(c => ({
+        name: c.name,
+        type: 'rule',
+        project: c.project || 'global',
+      }));
+    }
+
+    // Skills and agents: join with events for usage counts
+    const eventTypeMap = { skill: 'skill_invoke', agent: 'agent_spawn' };
+    const eventType = eventTypeMap[singularType];
 
     const conditions = ['event_type = @eventType'];
     if (since) conditions.push('timestamp >= @since');
@@ -720,70 +856,49 @@ function buildApp(opts = {}) {
 
     const usageRows = db.prepare(
       `SELECT name, COUNT(*) as count, MAX(timestamp) as last_used
-       FROM events ${where} GROUP BY name ORDER BY count DESC`
+       FROM events ${where} GROUP BY name`
     ).all({ eventType, since: since || undefined });
 
-    const seen = new Set();
-    const items = [];
+    const usageMap = new Map(usageRows.map(r => [r.name, r]));
 
-    for (const row of usageRows) {
-      seen.add(row.name);
-      const pInfo = pluginMap.get(row.name);
-      const meta = pInfo
-        ? readItemMetaFromFile(pInfo.filePath)
-        : readItemMeta(type, row.name);
-      const { plugin } = parseQualifiedName(row.name);
+    const items = components.map(c => {
+      const usage = usageMap.get(c.name) || { count: 0, last_used: null };
       const item = {
-        name: row.name,
-        count: row.count,
-        last_used: row.last_used,
-        status: 'active',
-        origin: meta.origin,
-        plugin: plugin || null,
-        project: pInfo ? pInfo.projects.join(', ') : 'global',
+        name: c.name,
+        count: usage.count,
+        last_used: usage.last_used,
+        status: usage.count > 0 ? 'active' : 'unused',
+        origin: c.description ? 'custom' : 'custom',
+        plugin: c.plugin || null,
+        project: c.project || 'global',
       };
-      if (type === 'agents') {
-        item.agent_class = knownItems.includes(row.name) ? 'configured' : 'built-in';
+      if (singularType === 'agent') {
+        item.agent_class = c.agent_class || 'built-in';
       }
-      items.push(item);
-    }
+      return item;
+    });
 
-    for (const name of knownItems) {
-      if (!seen.has(name)) {
-        const meta = readItemMeta(type, name);
-        const item = { name, count: 0, last_used: null, status: 'unused', origin: meta.origin, plugin: null, project: 'global' };
-        if (type === 'agents') item.agent_class = 'configured';
-        items.push(item);
-      }
-    }
-
-    for (const pItem of pluginItems) {
-      if (!seen.has(pItem.qualifiedName)) {
-        const meta = readItemMetaFromFile(pItem.filePath);
-        const item = {
-          name: pItem.qualifiedName,
-          count: 0, last_used: null, status: 'unused',
-          origin: meta.origin, plugin: pItem.plugin,
-          project: pItem.projects.join(', '),
-        };
-        if (type === 'agents') item.agent_class = 'configured';
-        items.push(item);
+    // Also include "built-in" agents from events that aren't on disk
+    if (singularType === 'agent') {
+      const knownNames = new Set(components.map(c => c.name));
+      for (const [name, usage] of usageMap) {
+        if (!knownNames.has(name)) {
+          items.push({
+            name,
+            count: usage.count,
+            last_used: usage.last_used,
+            status: 'active',
+            origin: 'custom',
+            plugin: parseQualifiedName(name).plugin,
+            project: 'global',
+            agent_class: 'built-in',
+          });
+        }
       }
     }
 
-    for (const projAgent of projAgents) {
-      if (!seen.has(projAgent.name)) {
-        const meta = readItemMetaFromFile(projAgent.filePath);
-        items.push({
-          name: projAgent.name,
-          count: 0, last_used: null, status: 'unused',
-          origin: meta.origin, plugin: null,
-          project: projAgent.project,
-          agent_class: 'configured',
-        });
-      }
-    }
-
+    items.sort((a, b) => b.count - a.count);
+    reply.header('etag', `"${componentETag}"`);
     return items;
   });
 
@@ -798,7 +913,13 @@ function buildApp(opts = {}) {
     const eventType = eventTypeMap[type];
     if (!eventType) return { error: 'Invalid type' };
 
-    const meta = readItemMeta(type, name);
+    const singularType = type.replace(/s$/, '');
+    const comp = db.prepare(
+      'SELECT * FROM components WHERE type = ? AND name = ?'
+    ).get(singularType, name);
+    const meta = comp
+      ? { description: comp.description || '', origin: 'custom' }
+      : readItemMeta(type, name);
 
     const conditions = ['event_type = @eventType', 'name = @name'];
     if (since) conditions.push('timestamp >= @since');
@@ -881,18 +1002,27 @@ function buildApp(opts = {}) {
   // ── Unused ──────────────────────────────────────────────────────────────
 
   app.get('/api/unused', async () => {
-    const usedSkills = new Set(
-      db.prepare("SELECT DISTINCT name FROM events WHERE event_type = 'skill_invoke'").all().map(r => r.name)
-    );
-    const usedAgents = new Set(
-      db.prepare("SELECT DISTINCT name FROM events WHERE event_type = 'agent_spawn'").all().map(r => r.name)
-    );
+    const unused_skills = db.prepare(`
+      SELECT c.name FROM components c
+      LEFT JOIN events e ON e.name = c.name AND e.event_type = 'skill_invoke'
+      WHERE c.type = 'skill'
+      GROUP BY c.id
+      HAVING COUNT(e.id) = 0
+    `).all().map(r => r.name);
 
-    return {
-      unused_skills: getKnownSkills().filter(s => !usedSkills.has(s)),
-      unused_agents: getKnownAgents().filter(a => !usedAgents.has(a)),
-      unused_rules: getKnownRules(),
-    };
+    const unused_agents = db.prepare(`
+      SELECT c.name FROM components c
+      LEFT JOIN events e ON e.name = c.name AND e.event_type = 'agent_spawn'
+      WHERE c.type = 'agent'
+      GROUP BY c.id
+      HAVING COUNT(e.id) = 0
+    `).all().map(r => r.name);
+
+    const unused_rules = db.prepare(
+      "SELECT name FROM components WHERE type = 'rule'"
+    ).all().map(r => r.name);
+
+    return { unused_skills, unused_agents, unused_rules };
   });
 
   // ── Errors ──────────────────────────────────────────────────────────────
@@ -923,7 +1053,6 @@ function buildApp(opts = {}) {
   app.get('/api/instincts/projects', async () => {
     const rows = db.prepare(`
       SELECT p.project_id AS id, p.name, p.directory, p.last_seen_at AS last_seen,
-        (SELECT COUNT(*) FROM cl_observations o WHERE o.project_id = p.project_id) AS observations,
         (SELECT COUNT(*) FROM cl_instincts i WHERE i.project_id = p.project_id) AS instincts
       FROM cl_projects p
       ORDER BY p.last_seen_at DESC
@@ -944,7 +1073,7 @@ function buildApp(opts = {}) {
     for (const proj of projects) {
       const counts = db.prepare(`
         SELECT s.status, COUNT(*) AS cnt FROM suggestions s
-        JOIN cl_instincts i ON s.instinct_id = CAST(i.id AS TEXT)
+        JOIN cl_instincts i ON s.instinct_id = i.instinct_id
         WHERE i.project_id = ?
         GROUP BY s.status
       `).all(proj.id);
@@ -980,10 +1109,12 @@ function buildApp(opts = {}) {
     }
   });
 
-  app.get('/api/instincts/:id/observations', async (request, reply) => {
+  app.get('/api/instincts/:id', async (request, reply) => {
     const id = parseInt(request.params.id);
     if (isNaN(id)) return reply.code(400).send({ error: 'invalid id' });
-    return getInstinctObservations(db, id);
+    const inst = getInstinct(db, id);
+    if (!inst) return reply.code(404).send({ error: 'not found' });
+    return inst;
   });
 
   app.get('/api/instincts/:id/suggestions', async (request, reply) => {
@@ -1035,35 +1166,13 @@ function buildApp(opts = {}) {
     return queryLearningRecent(db, limit);
   });
 
-  // ── Observations ─────────────────────────────────────────────────────────
-
-  app.get('/api/observations', async (request) => {
-    const { project, category, from, to, instinct_id, search, page, per_page } = request.query;
-    return queryObservations(db, {
-      project, category, from, to, instinct_id, search,
-      page: Math.max(1, parseInt(page) || 1),
-      perPage: Math.min(50, Math.max(1, parseInt(per_page) || 20)),
-    });
-  });
-
-  app.get('/api/observations/activity', async (request) => {
-    const { days } = request.query;
-    return queryObservationActivity(db, parseInt(days) || 7);
-  });
-
-  app.get('/api/observations/:id', async (request, reply) => {
-    const obs = getObservation(db, parseInt(request.params.id, 10));
-    if (!obs) return reply.code(404).send({ error: 'Observation not found' });
-    return obs;
-  });
-
   // ── Suggestions ─────────────────────────────────────────────────────────
 
   app.get('/api/suggestions', async (request) => {
     const { status, project } = request.query;
     if (project) {
       const sql = `SELECT s.* FROM suggestions s
-        JOIN cl_instincts i ON s.instinct_id = CAST(i.id AS TEXT)
+        JOIN cl_instincts i ON s.instinct_id = i.instinct_id
         WHERE i.project_id = ?` + (status ? ' AND s.status = ?' : '') +
         ' ORDER BY s.created_at DESC';
       return status ? db.prepare(sql).all(project, status) : db.prepare(sql).all(project);
@@ -1193,4 +1302,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { buildApp, parseQualifiedName };
+module.exports = { buildApp, parseQualifiedName, syncComponents };
