@@ -16,9 +16,14 @@ const {
   getScanHistory,
   upsertClProject,
   upsertInstinct,
+  queryObservations,
+  getObservation,
+  queryObservationActivity,
 } = require('./op-db');
 const { ingestAll } = require('./op-ingest');
 const { createComponent, deleteComponent, previewComponent } = require('./op-actions');
+const { findInstinctFile, updateConfidence, archiveInstinct } = require('./op-instinct-updater');
+const { runRetention } = require('./op-retention');
 
 // ---------------------------------------------------------------------------
 // Paths (environment-configurable with sensible defaults)
@@ -129,13 +134,100 @@ function extractKeywordsFromPrompts(invocations) {
 // Filesystem scanners (use CLAUDE_DIR for real components)
 // ---------------------------------------------------------------------------
 
-function readItemMeta(type, name) {
-  let filePath;
-  if (type === 'skills') {
-    filePath = path.join(CLAUDE_DIR, 'skills', name, 'SKILL.md');
-  } else {
-    filePath = path.join(CLAUDE_DIR, 'agents', name + '.md');
+function parseQualifiedName(name) {
+  const idx = name.indexOf(':');
+  if (idx === -1) return { plugin: null, shortName: name };
+  return { plugin: name.substring(0, idx), shortName: name.substring(idx + 1) };
+}
+
+function getInstalledPlugins() {
+  const jsonPath = path.join(CLAUDE_DIR, 'plugins', 'installed_plugins.json');
+  try {
+    const data = JSON.parse(fs.readFileSync(jsonPath, 'utf8'));
+    return Object.entries(data.plugins || {}).map(([key, installs]) => {
+      const projects = [];
+      for (const inst of installs) {
+        if (inst.scope === 'user') {
+          if (!projects.includes('global')) projects.push('global');
+        } else if (inst.projectPath) {
+          const name = path.basename(inst.projectPath);
+          if (!projects.includes(name)) projects.push(name);
+        }
+      }
+      return {
+        plugin: key.split('@')[0],
+        installPath: installs[0].installPath,
+        projects: projects.length ? projects : ['global'],
+      };
+    });
+  } catch {
+    return [];
   }
+}
+
+function getKnownProjectPaths() {
+  const plugins = getInstalledPlugins();
+  const paths = new Set();
+  const jsonPath = path.join(CLAUDE_DIR, 'plugins', 'installed_plugins.json');
+  try {
+    const data = JSON.parse(fs.readFileSync(jsonPath, 'utf8'));
+    for (const installs of Object.values(data.plugins || {})) {
+      for (const inst of installs) {
+        if (inst.projectPath) paths.add(inst.projectPath);
+      }
+    }
+  } catch { /* ignore */ }
+  return [...paths];
+}
+
+function getPluginComponents(type) {
+  const plugins = getInstalledPlugins();
+  const items = [];
+  for (const { plugin, installPath, projects } of plugins) {
+    try {
+      if (type === 'agents') {
+        const dir = path.join(installPath, 'agents');
+        for (const f of fs.readdirSync(dir)) {
+          if (!f.endsWith('.md')) continue;
+          const name = f.replace(/\.md$/, '');
+          items.push({ qualifiedName: `${plugin}:${name}`, plugin, projects, filePath: path.join(dir, f) });
+        }
+      } else if (type === 'skills') {
+        const dir = path.join(installPath, 'skills');
+        for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+          if (!e.isDirectory()) continue;
+          const skillFile = path.join(dir, e.name, 'SKILL.md');
+          if (fs.existsSync(skillFile)) {
+            items.push({ qualifiedName: `${plugin}:${e.name}`, plugin, projects, filePath: skillFile });
+          }
+        }
+      }
+    } catch { /* plugin dir may not have agents/ or skills/ */ }
+  }
+  return items;
+}
+
+function getProjectAgents() {
+  const projectPaths = getKnownProjectPaths();
+  const items = [];
+  for (const projPath of projectPaths) {
+    const agentsDir = path.join(projPath, '.claude', 'agents');
+    try {
+      for (const f of fs.readdirSync(agentsDir)) {
+        if (!f.endsWith('.md')) continue;
+        const name = f.replace(/\.md$/, '');
+        items.push({
+          name,
+          project: path.basename(projPath),
+          filePath: path.join(agentsDir, f),
+        });
+      }
+    } catch { /* no .claude/agents/ in this project */ }
+  }
+  return items;
+}
+
+function readItemMetaFromFile(filePath) {
   try {
     const content = fs.readFileSync(filePath, 'utf8');
     const meta = parseFrontmatter(content);
@@ -143,6 +235,16 @@ function readItemMeta(type, name) {
   } catch {
     return { description: '', origin: 'custom' };
   }
+}
+
+function readItemMeta(type, name) {
+  let filePath;
+  if (type === 'skills') {
+    filePath = path.join(CLAUDE_DIR, 'skills', name, 'SKILL.md');
+  } else {
+    filePath = path.join(CLAUDE_DIR, 'agents', name + '.md');
+  }
+  return readItemMetaFromFile(filePath);
 }
 
 function getKnownSkills() {
@@ -188,8 +290,7 @@ function getKnownRules() {
   return results;
 }
 
-function getKnownHooks() {
-  const settingsPath = path.join(CLAUDE_DIR, 'settings.json');
+function parseHooksFromSettings(settingsPath, project) {
   const results = [];
   try {
     const settings = JSON.parse(fs.readFileSync(settingsPath, 'utf8'));
@@ -205,11 +306,21 @@ function getKnownHooks() {
             event,
             matcher,
             command: hook.command || '',
+            project,
           });
         }
       }
     }
   } catch { /* no settings.json or invalid */ }
+  return results;
+}
+
+function getKnownHooks() {
+  const results = parseHooksFromSettings(path.join(CLAUDE_DIR, 'settings.json'), 'global');
+  for (const projPath of getKnownProjectPaths()) {
+    const projSettings = path.join(projPath, '.claude', 'settings.json');
+    results.push(...parseHooksFromSettings(projSettings, path.basename(projPath)));
+  }
   return results;
 }
 
@@ -374,6 +485,17 @@ function buildApp(opts = {}) {
     }, config.ingest_interval_ms || 10000));
 
     timers.push(setInterval(() => syncAll(db), config.cl_sync_interval_ms || 60000));
+
+    // Retention: run once on startup, then daily
+    const retentionOpts = {
+      warmDays: config.retention_warm_days ?? 7,
+      coldDays: config.retention_cold_days ?? 90,
+    };
+    try { runRetention(db, retentionOpts); } catch { /* non-critical */ }
+    const ONE_DAY_MS = 24 * 60 * 60 * 1000;
+    timers.push(setInterval(() => {
+      try { runRetention(db, retentionOpts); } catch { /* non-critical */ }
+    }, ONE_DAY_MS));
   }
 
   // ── Health ──────────────────────────────────────────────────────────────
@@ -537,8 +659,22 @@ function buildApp(opts = {}) {
         : null,
     };
 
+    const knownAgentSet = new Set(getKnownAgents());
     const events = db.prepare('SELECT * FROM events WHERE session_id = ? ORDER BY timestamp ASC').all(id)
-      .map(ev => ({ ...ev, created_at: ev.timestamp, cost: ev.estimated_cost_usd }));
+      .map(ev => {
+        const isAgent = ev.event_type === 'agent_spawn';
+        const { plugin } = isAgent ? parseQualifiedName(ev.name) : { plugin: null };
+        return {
+          ...ev,
+          type: ev.event_type,
+          created_at: ev.timestamp,
+          cost: ev.estimated_cost_usd,
+          agent_class: isAgent
+            ? (knownAgentSet.has(ev.name) ? 'configured' : 'built-in')
+            : undefined,
+          plugin: plugin || undefined,
+        };
+      });
 
     return { session, events };
   });
@@ -551,11 +687,11 @@ function buildApp(opts = {}) {
     const since = periodToDate(period);
 
     if (type === 'hooks') {
-      return getKnownHooks();
+      return getKnownHooks();  // already includes project field
     }
 
     if (type === 'rules') {
-      return getKnownRules().map(name => ({ name, type: 'rule' }));
+      return getKnownRules().map(name => ({ name, type: 'rule', project: 'global' }));
     }
 
     const eventTypeMap = { skills: 'skill_invoke', agents: 'agent_spawn' };
@@ -563,6 +699,10 @@ function buildApp(opts = {}) {
     if (!eventType) return { error: 'Invalid type. Use skills, agents, hooks, or rules.' };
 
     const knownItems = type === 'skills' ? getKnownSkills() : getKnownAgents();
+    const pluginItems = getPluginComponents(type);
+    const pluginMap = new Map(pluginItems.map(p => [p.qualifiedName, p]));
+    const projAgents = type === 'agents' ? getProjectAgents() : [];
+    const projAgentMap = new Map(projAgents.map(a => [a.name, a]));
 
     const conditions = ['event_type = @eventType'];
     if (since) conditions.push('timestamp >= @since');
@@ -578,20 +718,59 @@ function buildApp(opts = {}) {
 
     for (const row of usageRows) {
       seen.add(row.name);
-      const meta = readItemMeta(type, row.name);
-      items.push({
+      const pInfo = pluginMap.get(row.name);
+      const meta = pInfo
+        ? readItemMetaFromFile(pInfo.filePath)
+        : readItemMeta(type, row.name);
+      const { plugin } = parseQualifiedName(row.name);
+      const item = {
         name: row.name,
         count: row.count,
         last_used: row.last_used,
         status: 'active',
         origin: meta.origin,
-      });
+        plugin: plugin || null,
+        project: pInfo ? pInfo.projects.join(', ') : 'global',
+      };
+      if (type === 'agents') {
+        item.agent_class = knownItems.includes(row.name) ? 'configured' : 'built-in';
+      }
+      items.push(item);
     }
 
     for (const name of knownItems) {
       if (!seen.has(name)) {
         const meta = readItemMeta(type, name);
-        items.push({ name, count: 0, last_used: null, status: 'unused', origin: meta.origin });
+        const item = { name, count: 0, last_used: null, status: 'unused', origin: meta.origin, plugin: null, project: 'global' };
+        if (type === 'agents') item.agent_class = 'configured';
+        items.push(item);
+      }
+    }
+
+    for (const pItem of pluginItems) {
+      if (!seen.has(pItem.qualifiedName)) {
+        const meta = readItemMetaFromFile(pItem.filePath);
+        const item = {
+          name: pItem.qualifiedName,
+          count: 0, last_used: null, status: 'unused',
+          origin: meta.origin, plugin: pItem.plugin,
+          project: pItem.projects.join(', '),
+        };
+        if (type === 'agents') item.agent_class = 'configured';
+        items.push(item);
+      }
+    }
+
+    for (const projAgent of projAgents) {
+      if (!seen.has(projAgent.name)) {
+        const meta = readItemMetaFromFile(projAgent.filePath);
+        items.push({
+          name: projAgent.name,
+          count: 0, last_used: null, status: 'unused',
+          origin: meta.origin, plugin: null,
+          project: projAgent.project,
+          agent_class: 'configured',
+        });
       }
     }
 
@@ -600,8 +779,10 @@ function buildApp(opts = {}) {
 
   app.get('/api/inventory/:type/:name', async (request) => {
     const { type, name } = request.params;
-    const { period } = request.query;
+    const { period, page: pageStr, per_page: perPageStr } = request.query;
     const since = periodToDate(period);
+    const page = Math.max(1, parseInt(pageStr) || 1);
+    const perPage = Math.min(50, Math.max(1, parseInt(perPageStr) || 10));
 
     const eventTypeMap = { skills: 'skill_invoke', agents: 'agent_spawn' };
     const eventType = eventTypeMap[type];
@@ -613,16 +794,69 @@ function buildApp(opts = {}) {
     if (since) conditions.push('timestamp >= @since');
     const where = 'WHERE ' + conditions.join(' AND ');
 
-    const invocations = db.prepare(
+    const allInvocations = db.prepare(
       `SELECT timestamp, detail, session_id, duration_ms, user_prompt FROM events ${where} ORDER BY timestamp DESC`
     ).all({ eventType, name, since: since || undefined });
+
+    // Enrich each invocation with trigger source (nearest preceding skill/agent in same session)
+    const triggerStmt = db.prepare(`
+      SELECT name, event_type FROM events
+      WHERE session_id = @sessionId
+        AND event_type IN ('skill_invoke', 'agent_spawn')
+        AND timestamp < @timestamp
+        AND name != @currentName
+      ORDER BY timestamp DESC LIMIT 1
+    `);
+
+    // Find what each invocation subsequently triggers
+    const triggersStmt = db.prepare(`
+      SELECT name, event_type FROM events
+      WHERE session_id = @sessionId
+        AND event_type IN ('skill_invoke', 'agent_spawn')
+        AND timestamp > @timestamp
+        AND name != @currentName
+      ORDER BY timestamp ASC LIMIT 1
+    `);
+
+    const triggerCounts = new Map();
+
+    for (const inv of allInvocations) {
+      const trigger = triggerStmt.get({
+        sessionId: inv.session_id,
+        timestamp: inv.timestamp,
+        currentName: name,
+      });
+      inv.triggered_by = trigger
+        ? { name: trigger.name, type: trigger.event_type }
+        : null;
+
+      const triggered = triggersStmt.get({
+        sessionId: inv.session_id,
+        timestamp: inv.timestamp,
+        currentName: name,
+      });
+      if (triggered) {
+        const key = `${triggered.event_type}:${triggered.name}`;
+        if (!triggerCounts.has(key)) {
+          triggerCounts.set(key, { name: triggered.name, event_type: triggered.event_type, count: 0 });
+        }
+        triggerCounts.get(key).count++;
+      }
+    }
+
+    const total = allInvocations.length;
+    const invocations = allInvocations.slice((page - 1) * perPage, page * perPage);
 
     return {
       name,
       description: meta.description,
       origin: meta.origin,
-      keywords: extractKeywordsFromPrompts(invocations),
+      keywords: extractKeywordsFromPrompts(allInvocations),
       invocations,
+      triggers: [...triggerCounts.values()],
+      total,
+      page,
+      per_page: perPage,
     };
   });
 
@@ -711,6 +945,28 @@ function buildApp(opts = {}) {
     }
   });
 
+  // ── Observations ─────────────────────────────────────────────────────────
+
+  app.get('/api/observations', async (request) => {
+    const { project, category, from, to, instinct_id, search, page, per_page } = request.query;
+    return queryObservations(db, {
+      project, category, from, to, instinct_id, search,
+      page: Math.max(1, parseInt(page) || 1),
+      perPage: Math.min(50, Math.max(1, parseInt(per_page) || 20)),
+    });
+  });
+
+  app.get('/api/observations/activity', async (request) => {
+    const { days } = request.query;
+    return queryObservationActivity(db, parseInt(days) || 7);
+  });
+
+  app.get('/api/observations/:id', async (request, reply) => {
+    const obs = getObservation(db, parseInt(request.params.id, 10));
+    if (!obs) return reply.code(404).send({ error: 'Observation not found' });
+    return obs;
+  });
+
   // ── Suggestions ─────────────────────────────────────────────────────────
 
   app.get('/api/suggestions', async (request) => {
@@ -721,13 +977,46 @@ function buildApp(opts = {}) {
   app.put('/api/suggestions/:id/approve', async (request) => {
     const { id } = request.params;
     updateSuggestionStatus(db, id, 'approved', 'user');
-    return { success: true, id, status: 'approved' };
+
+    // Feedback loop: boost source instinct confidence
+    const suggestion = db.prepare('SELECT instinct_id FROM suggestions WHERE id = ?').get(id);
+    let instinct_updated = null;
+    if (suggestion?.instinct_id) {
+      const filePath = findInstinctFile(REPO_DIR, suggestion.instinct_id);
+      if (filePath) {
+        try {
+          const result = updateConfidence(filePath, +0.15);
+          instinct_updated = { id: suggestion.instinct_id, confidence: result.confidence };
+        } catch { /* instinct file update failed — non-critical */ }
+      }
+    }
+
+    return { success: true, id, status: 'approved', instinct_updated };
   });
 
   app.put('/api/suggestions/:id/dismiss', async (request) => {
     const { id } = request.params;
     updateSuggestionStatus(db, id, 'dismissed', 'user');
-    return { success: true, id, status: 'dismissed' };
+
+    // Feedback loop: reduce source instinct confidence, archive if 3+ dismissals
+    const suggestion = db.prepare('SELECT instinct_id FROM suggestions WHERE id = ?').get(id);
+    let instinct_updated = null;
+    if (suggestion?.instinct_id) {
+      const filePath = findInstinctFile(REPO_DIR, suggestion.instinct_id);
+      if (filePath) {
+        try {
+          const result = updateConfidence(filePath, -0.2);
+          instinct_updated = { id: suggestion.instinct_id, confidence: result.confidence };
+          if (result.dismiss_count >= 3) {
+            const archivePath = archiveInstinct(filePath);
+            instinct_updated.archived = true;
+            instinct_updated.archive_path = archivePath;
+          }
+        } catch { /* instinct file update failed — non-critical */ }
+      }
+    }
+
+    return { success: true, id, status: 'dismissed', instinct_updated };
   });
 
   // ── Scanner ─────────────────────────────────────────────────────────────
@@ -807,4 +1096,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { buildApp };
+module.exports = { buildApp, parseQualifiedName };

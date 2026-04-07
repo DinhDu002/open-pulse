@@ -555,3 +555,132 @@ describe('queryLearningRecent', () => {
     }
   });
 });
+
+// ---------------------------------------------------------------------------
+// HTTP endpoint tests for observations API
+// ---------------------------------------------------------------------------
+
+describe('HTTP: /api/observations', () => {
+  let app;
+  const HTTP_TEST_DIR = path.join(os.tmpdir(), `op-obs-http-test-${Date.now()}`);
+
+  before(async () => {
+    fs.mkdirSync(path.join(HTTP_TEST_DIR, 'data'), { recursive: true });
+    fs.mkdirSync(path.join(HTTP_TEST_DIR, 'cl', 'projects'), { recursive: true });
+    fs.mkdirSync(path.join(HTTP_TEST_DIR, 'cl', 'instincts', 'personal'), { recursive: true });
+    fs.mkdirSync(path.join(HTTP_TEST_DIR, '.claude', 'skills'), { recursive: true });
+    fs.mkdirSync(path.join(HTTP_TEST_DIR, '.claude', 'agents'), { recursive: true });
+    fs.mkdirSync(path.join(HTTP_TEST_DIR, '.claude', 'rules'), { recursive: true });
+
+    process.env.OPEN_PULSE_DB = path.join(HTTP_TEST_DIR, 'test.db');
+    process.env.OPEN_PULSE_DIR = HTTP_TEST_DIR;
+    process.env.OPEN_PULSE_CLAUDE_DIR = path.join(HTTP_TEST_DIR, '.claude');
+
+    const { buildApp } = require('../src/op-server');
+    app = buildApp({ disableTimers: true });
+    await app.ready();
+
+    // Seed test data directly into the test DB
+    const httpDb = createDb(path.join(HTTP_TEST_DIR, 'test.db'));
+    upsertClProject(httpDb, {
+      project_id: 'http-proj',
+      name: 'HTTP Project',
+      directory: '/http-proj',
+      first_seen_at: '2024-01-01T00:00:00Z',
+      last_seen_at: '2024-01-10T00:00:00Z',
+      session_count: 2,
+    });
+    httpDb.prepare(`
+      INSERT INTO cl_observations (observed_at, project_id, session_id, category, observation, raw_context, instinct_id)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `).run('2024-06-01T00:00:00Z', 'http-proj', 'sess-http-1', 'coding', 'HTTP test observation alpha', null, null);
+    httpDb.prepare(`
+      INSERT INTO cl_observations (observed_at, project_id, session_id, category, observation, raw_context, instinct_id)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `).run('2024-06-02T00:00:00Z', 'http-proj', 'sess-http-2', 'testing', 'HTTP test observation beta', null, null);
+    httpDb.close();
+  });
+
+  after(async () => {
+    if (app) await app.close();
+    fs.rmSync(HTTP_TEST_DIR, { recursive: true, force: true });
+    delete process.env.OPEN_PULSE_DB;
+    delete process.env.OPEN_PULSE_DIR;
+    delete process.env.OPEN_PULSE_CLAUDE_DIR;
+  });
+
+  test('GET /api/observations returns paginated result', async () => {
+    const res = await app.inject({ method: 'GET', url: '/api/observations' });
+    assert.equal(res.statusCode, 200);
+    const body = JSON.parse(res.body);
+    assert.ok('items' in body, 'body should have items');
+    assert.ok('total' in body, 'body should have total');
+    assert.ok('page' in body, 'body should have page');
+    assert.ok('per_page' in body, 'body should have per_page');
+    assert.ok(Array.isArray(body.items));
+  });
+
+  test('GET /api/observations filters by category', async () => {
+    const res = await app.inject({ method: 'GET', url: '/api/observations?category=coding' });
+    assert.equal(res.statusCode, 200);
+    const body = JSON.parse(res.body);
+    assert.ok(body.items.every(r => r.category === 'coding'));
+  });
+
+  test('GET /api/observations filters by search', async () => {
+    const res = await app.inject({ method: 'GET', url: '/api/observations?search=alpha' });
+    assert.equal(res.statusCode, 200);
+    const body = JSON.parse(res.body);
+    assert.ok(body.items.length >= 1);
+    assert.ok(body.items.every(r => r.observation.toLowerCase().includes('alpha')));
+  });
+
+  test('GET /api/observations respects page and per_page', async () => {
+    const res = await app.inject({ method: 'GET', url: '/api/observations?page=1&per_page=1' });
+    assert.equal(res.statusCode, 200);
+    const body = JSON.parse(res.body);
+    assert.equal(body.page, 1);
+    assert.equal(body.per_page, 1);
+    assert.equal(body.items.length, 1);
+  });
+
+  test('GET /api/observations/activity returns array of { date, count }', async () => {
+    const res = await app.inject({ method: 'GET', url: '/api/observations/activity' });
+    assert.equal(res.statusCode, 200);
+    const body = JSON.parse(res.body);
+    assert.ok(Array.isArray(body));
+    if (body.length > 0) {
+      assert.ok('date' in body[0]);
+      assert.ok('count' in body[0]);
+    }
+  });
+
+  test('GET /api/observations/activity accepts days param', async () => {
+    const res = await app.inject({ method: 'GET', url: '/api/observations/activity?days=14' });
+    assert.equal(res.statusCode, 200);
+    const body = JSON.parse(res.body);
+    assert.ok(Array.isArray(body));
+  });
+
+  test('GET /api/observations/:id returns single observation', async () => {
+    // First get a valid id from the list
+    const listRes = await app.inject({ method: 'GET', url: '/api/observations' });
+    const list = JSON.parse(listRes.body);
+    assert.ok(list.total >= 1, 'need at least one observation');
+    const id = list.items[0].id;
+
+    const res = await app.inject({ method: 'GET', url: `/api/observations/${id}` });
+    assert.equal(res.statusCode, 200);
+    const body = JSON.parse(res.body);
+    assert.equal(body.id, id);
+    assert.ok('observation' in body);
+    assert.ok('category' in body);
+  });
+
+  test('GET /api/observations/:id returns 404 for missing id', async () => {
+    const res = await app.inject({ method: 'GET', url: '/api/observations/999999' });
+    assert.equal(res.statusCode, 404);
+    const body = JSON.parse(res.body);
+    assert.ok('error' in body);
+  });
+});
