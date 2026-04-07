@@ -863,3 +863,135 @@ describe('HTTP: /api/observations', () => {
     assert.ok('error' in body);
   });
 });
+
+// ---------------------------------------------------------------------------
+// HTTP endpoint tests for projects + learning API
+// ---------------------------------------------------------------------------
+
+describe('HTTP: /api/projects and /api/learning', () => {
+  let app;
+  let httpDb;
+  let projInstinctId;
+  const HTTP_PL_DIR = path.join(os.tmpdir(), `op-pl-http-test-${Date.now()}`);
+
+  before(async () => {
+    fs.mkdirSync(path.join(HTTP_PL_DIR, 'data'), { recursive: true });
+    fs.mkdirSync(path.join(HTTP_PL_DIR, 'cl', 'projects'), { recursive: true });
+    fs.mkdirSync(path.join(HTTP_PL_DIR, 'cl', 'instincts', 'personal'), { recursive: true });
+    fs.mkdirSync(path.join(HTTP_PL_DIR, '.claude', 'skills'), { recursive: true });
+    fs.mkdirSync(path.join(HTTP_PL_DIR, '.claude', 'agents'), { recursive: true });
+    fs.mkdirSync(path.join(HTTP_PL_DIR, '.claude', 'rules'), { recursive: true });
+
+    process.env.OPEN_PULSE_DB = path.join(HTTP_PL_DIR, 'test.db');
+    process.env.OPEN_PULSE_DIR = HTTP_PL_DIR;
+    process.env.OPEN_PULSE_CLAUDE_DIR = path.join(HTTP_PL_DIR, '.claude');
+
+    delete require.cache[require.resolve('../src/op-server')];
+    delete require.cache[require.resolve('../src/op-db')];
+    const { buildApp } = require('../src/op-server');
+    app = buildApp({ disableTimers: true });
+    await app.ready();
+
+    // Seed test data
+    httpDb = createDb(path.join(HTTP_PL_DIR, 'test.db'));
+    upsertClProject(httpDb, {
+      project_id: 'pl-proj',
+      name: 'PL Project',
+      directory: '/pl-proj',
+      first_seen_at: '2024-01-01T00:00:00Z',
+      last_seen_at: '2024-01-10T00:00:00Z',
+      session_count: 4,
+    });
+    upsertInstinct(httpDb, {
+      project_id: 'pl-proj',
+      category: 'workflow',
+      pattern: 'Always plan before coding',
+      confidence: 0.8,
+      seen_count: 5,
+      first_seen: '2024-01-01T00:00:00Z',
+      last_seen: '2024-01-10T00:00:00Z',
+      instinct: 'Planning is essential',
+    });
+    projInstinctId = httpDb.prepare('SELECT id FROM cl_instincts WHERE project_id = ? LIMIT 1').get('pl-proj').id;
+    // Seed a suggestion linked to this instinct
+    insertSuggestion(httpDb, {
+      id: `pl-sugg-1`,
+      created_at: '2024-01-05T12:00:00Z',
+      type: 'hook',
+      confidence: 0.7,
+      description: 'PL project suggestion',
+      evidence: null,
+      instinct_id: String(projInstinctId),
+      status: 'pending',
+    });
+    httpDb.close();
+  });
+
+  after(async () => {
+    if (app) await app.close();
+    fs.rmSync(HTTP_PL_DIR, { recursive: true, force: true });
+    delete process.env.OPEN_PULSE_DB;
+    delete process.env.OPEN_PULSE_DIR;
+    delete process.env.OPEN_PULSE_CLAUDE_DIR;
+    delete require.cache[require.resolve('../src/op-server')];
+    delete require.cache[require.resolve('../src/op-db')];
+  });
+
+  test('GET /api/projects/:id/summary returns project with counts', async () => {
+    const res = await app.inject({ method: 'GET', url: '/api/projects/pl-proj/summary' });
+    assert.equal(res.statusCode, 200);
+    const body = JSON.parse(res.body);
+    assert.equal(body.project_id, 'pl-proj');
+    assert.equal(typeof body.instinct_count, 'number');
+    assert.equal(typeof body.observation_count, 'number');
+    assert.ok('suggestion_counts' in body);
+    assert.equal(typeof body.suggestion_counts.pending, 'number');
+    assert.equal(typeof body.suggestion_counts.approved, 'number');
+    assert.equal(typeof body.suggestion_counts.dismissed, 'number');
+  });
+
+  test('GET /api/projects/:id/summary returns 404 for unknown project', async () => {
+    const res = await app.inject({ method: 'GET', url: '/api/projects/nonexistent-xyz/summary' });
+    assert.equal(res.statusCode, 404);
+    const body = JSON.parse(res.body);
+    assert.ok('error' in body);
+  });
+
+  test('GET /api/projects/:id/timeline returns array', async () => {
+    const res = await app.inject({ method: 'GET', url: '/api/projects/pl-proj/timeline?weeks=4' });
+    assert.equal(res.statusCode, 200);
+    const body = JSON.parse(res.body);
+    assert.ok(Array.isArray(body));
+  });
+
+  test('GET /api/learning/activity returns daily activity array', async () => {
+    const res = await app.inject({ method: 'GET', url: '/api/learning/activity?days=30' });
+    assert.equal(res.statusCode, 200);
+    const body = JSON.parse(res.body);
+    assert.ok(Array.isArray(body));
+    if (body.length > 0) {
+      assert.ok('date' in body[0]);
+      assert.ok('count' in body[0]);
+    }
+  });
+
+  test('GET /api/learning/recent returns array with kind field', async () => {
+    const res = await app.inject({ method: 'GET', url: '/api/learning/recent?limit=5' });
+    assert.equal(res.statusCode, 200);
+    const body = JSON.parse(res.body);
+    assert.ok(Array.isArray(body));
+    if (body.length > 0) {
+      assert.ok('kind' in body[0]);
+      assert.ok(['instinct', 'suggestion'].includes(body[0].kind));
+    }
+  });
+
+  test('GET /api/suggestions?project=pl-proj filters by project', async () => {
+    const res = await app.inject({ method: 'GET', url: '/api/suggestions?project=pl-proj' });
+    assert.equal(res.statusCode, 200);
+    const body = JSON.parse(res.body);
+    assert.ok(Array.isArray(body));
+    assert.ok(body.length >= 1);
+    assert.ok(body.every(s => s.instinct_id === String(projInstinctId)));
+  });
+});

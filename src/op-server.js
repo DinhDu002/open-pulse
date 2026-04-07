@@ -25,6 +25,10 @@ const {
   getInstinctSuggestions,
   updateInstinct,
   deleteInstinct,
+  getProjectSummary,
+  getProjectTimeline,
+  queryLearningActivity,
+  queryLearningRecent,
 } = require('./op-db');
 const { ingestAll } = require('./op-ingest');
 const { createComponent, deleteComponent, previewComponent } = require('./op-actions');
@@ -925,7 +929,7 @@ function buildApp(opts = {}) {
       ORDER BY p.last_seen_at DESC
     `).all();
 
-    return rows.map(row => {
+    const projects = rows.map(row => {
       let observer_running = false;
       try {
         const pidFile = path.join(REPO_DIR, 'projects', row.id, '.observer.pid');
@@ -936,6 +940,22 @@ function buildApp(opts = {}) {
       } catch { /* no pid file */ }
       return { ...row, observer_running };
     });
+
+    for (const proj of projects) {
+      const counts = db.prepare(`
+        SELECT s.status, COUNT(*) AS cnt FROM suggestions s
+        JOIN cl_instincts i ON s.instinct_id = CAST(i.id AS TEXT)
+        WHERE i.project_id = ?
+        GROUP BY s.status
+      `).all(proj.id);
+      proj.approved = counts.find(c => c.status === 'approved')?.cnt || 0;
+      proj.dismissed = counts.find(c => c.status === 'dismissed')?.cnt || 0;
+      proj.pending = counts.find(c => c.status === 'pending')?.cnt || 0;
+      const total = proj.approved + proj.dismissed;
+      proj.approve_rate = total > 0 ? proj.approved / total : null;
+    }
+
+    return projects;
   });
 
   app.post('/api/instincts/sync', async () => {
@@ -990,6 +1010,31 @@ function buildApp(opts = {}) {
     return { success: true, id };
   });
 
+  // ── Projects ─────────────────────────────────────────────────────────────
+
+  app.get('/api/projects/:id/summary', async (request, reply) => {
+    const summary = getProjectSummary(db, request.params.id);
+    if (!summary) return reply.code(404).send({ error: 'Project not found' });
+    return summary;
+  });
+
+  app.get('/api/projects/:id/timeline', async (request) => {
+    const weeks = Math.max(1, parseInt(request.query.weeks) || 8);
+    return getProjectTimeline(db, request.params.id, weeks);
+  });
+
+  // ── Learning ──────────────────────────────────────────────────────────────
+
+  app.get('/api/learning/activity', async (request) => {
+    const days = Math.max(1, parseInt(request.query.days) || 7);
+    return queryLearningActivity(db, days);
+  });
+
+  app.get('/api/learning/recent', async (request) => {
+    const limit = Math.min(20, Math.max(1, parseInt(request.query.limit) || 5));
+    return queryLearningRecent(db, limit);
+  });
+
   // ── Observations ─────────────────────────────────────────────────────────
 
   app.get('/api/observations', async (request) => {
@@ -1015,7 +1060,14 @@ function buildApp(opts = {}) {
   // ── Suggestions ─────────────────────────────────────────────────────────
 
   app.get('/api/suggestions', async (request) => {
-    const { status } = request.query;
+    const { status, project } = request.query;
+    if (project) {
+      const sql = `SELECT s.* FROM suggestions s
+        JOIN cl_instincts i ON s.instinct_id = CAST(i.id AS TEXT)
+        WHERE i.project_id = ?` + (status ? ' AND s.status = ?' : '') +
+        ' ORDER BY s.created_at DESC';
+      return status ? db.prepare(sql).all(project, status) : db.prepare(sql).all(project);
+    }
     return querySuggestions(db, status || null);
   });
 
