@@ -400,13 +400,15 @@ export function mount(el, { period } = {}) {
   el.appendChild(content);
 
   function loadTab(tab, isRefresh = false) {
-    content.textContent = '';
-    const sp = document.createElement('div');
-    sp.className = 'empty-state';
-    const spinner = document.createElement('span');
-    spinner.className = 'spinner';
-    sp.appendChild(spinner);
-    content.appendChild(sp);
+    if (!isRefresh) {
+      content.textContent = '';
+      const sp = document.createElement('div');
+      sp.className = 'empty-state';
+      const spinner = document.createElement('span');
+      spinner.className = 'spinner';
+      sp.appendChild(spinner);
+      content.appendChild(sp);
+    }
 
     let apiPath;
     if (tab === 'skills') apiPath = '/inventory/skills?period=' + p;
