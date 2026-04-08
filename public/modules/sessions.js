@@ -61,7 +61,7 @@ function renderList(el, sessions) {
     sessions.forEach(s => {
       const tr = document.createElement('tr');
       tr.addEventListener('click', () => {
-        location.hash = '#sessions/' + s.id;
+        location.hash = '#sessions/' + s.session_id;
       });
 
       const model = s.model ? s.model.split('/').pop().split('-').slice(0, 3).join('-') : '—';
@@ -85,6 +85,28 @@ function renderList(el, sessions) {
 }
 
 // ── Session Detail ────────────────────────────────────────────────────────────
+
+function groupEventsByPrompt(events) {
+  const groups = [];
+  let current = null;
+
+  for (const evt of events) {
+    const pid = evt.prompt_id;
+    if (pid && current && current.promptId === pid) {
+      current.events.push(evt);
+    } else if (pid) {
+      current = { promptId: pid, promptText: evt.user_prompt, events: [evt] };
+      groups.push(current);
+    } else {
+      if (!current || current.promptId !== null) {
+        current = { promptId: null, promptText: null, events: [] };
+        groups.push(current);
+      }
+      current.events.push(evt);
+    }
+  }
+  return groups;
+}
 
 function dotClass(type) {
   if (!type) return '';
@@ -165,7 +187,7 @@ function renderDetail(el, session) {
     const timeline = document.createElement('div');
     timeline.className = 'timeline';
 
-    events.forEach(ev => {
+    const renderEventRow = (ev, container) => {
       const evEl = document.createElement('div');
       const dc = dotClass(ev.type);
       evEl.className = 'timeline-event ' + dc;
@@ -191,6 +213,18 @@ function renderDetail(el, session) {
 
       top.appendChild(badge);
       top.appendChild(name);
+      if (ev.agent_class) {
+        const cls = document.createElement('span');
+        cls.className = `badge badge-agent-${ev.agent_class === 'configured' ? 'configured' : 'builtin'}`;
+        cls.textContent = ev.agent_class;
+        top.appendChild(cls);
+      }
+      if (ev.plugin) {
+        const plg = document.createElement('span');
+        plg.className = 'badge badge-origin';
+        plg.textContent = ev.plugin;
+        top.appendChild(plg);
+      }
       top.appendChild(time);
       evEl.appendChild(top);
 
@@ -201,8 +235,48 @@ function renderDetail(el, session) {
         evEl.appendChild(detail);
       }
 
-      timeline.appendChild(evEl);
-    });
+      container.appendChild(evEl);
+    };
+
+    // Check if any event has a prompt_id — if none, render flat (old sessions)
+    const hasPrompts = events.some(ev => ev.prompt_id);
+
+    if (!hasPrompts) {
+      events.forEach(ev => renderEventRow(ev, timeline));
+    } else {
+      const groups = groupEventsByPrompt(events);
+
+      groups.forEach(group => {
+        const header = document.createElement('div');
+        if (group.promptId) {
+          header.className = 'prompt-group-header clickable';
+          header.addEventListener('click', () => { location.hash = '#prompts/' + group.promptId; });
+
+          const promptCost = group.events.reduce((sum, ev) => sum + (ev.cost || 0), 0);
+          const text = document.createElement('span');
+          text.className = 'prompt-group-text';
+          text.textContent = group.promptText
+            ? (group.promptText.length > 120 ? group.promptText.slice(0, 120) + '…' : group.promptText)
+            : 'Prompt ' + group.promptId;
+
+          const stats = document.createElement('span');
+          stats.className = 'prompt-group-stats';
+          stats.textContent = group.events.length + ' events' + (promptCost > 0 ? ' · ' + fmtCost(promptCost) : '');
+
+          header.appendChild(text);
+          header.appendChild(stats);
+        } else {
+          header.className = 'prompt-group-header';
+          const text = document.createElement('span');
+          text.className = 'prompt-group-text';
+          text.textContent = 'Other events';
+          header.appendChild(text);
+        }
+        timeline.appendChild(header);
+
+        group.events.forEach(ev => renderEventRow(ev, timeline));
+      });
+    }
 
     tlCard.appendChild(timeline);
   }
