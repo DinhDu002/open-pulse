@@ -37,6 +37,18 @@ describe('op-db', () => {
     assert.ok(tables.includes('scan_results'));
   });
 
+  it('creates prompts table', () => {
+    const tables = db.prepare(
+      "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name"
+    ).all().map(r => r.name);
+    assert.ok(tables.includes('prompts'));
+  });
+
+  it('events table has prompt_id column', () => {
+    const cols = db.prepare('PRAGMA table_info(events)').all().map(c => c.name);
+    assert.ok(cols.includes('prompt_id'));
+  });
+
   it('insertEvent + query', () => {
     mod.insertEvent(db, {
       timestamp: '2026-04-06T10:00:00Z',
@@ -271,5 +283,104 @@ describe('op-db', () => {
     mod.setKgSyncState(db, 'last_event_id', '99');
     assert.equal(mod.getKgSyncState(db, 'last_event_id'), '99');
     assert.equal(mod.getKgSyncState(db, 'missing_key'), null);
+  });
+
+  // ─── deleteProject ─────────────────────────────────────────────────────────
+
+  describe('deleteProject', () => {
+    const P1 = 'del-proj-1';
+    const P2 = 'del-proj-2';
+
+    before(() => {
+      // Seed two projects with instincts, suggestions, kb_notes, vault_hashes
+      for (const pid of [P1, P2]) {
+        mod.upsertClProject(db, {
+          project_id: pid, name: pid, directory: '/tmp/' + pid,
+          first_seen_at: '2026-01-01T00:00:00Z',
+          last_seen_at: '2026-01-01T00:00:00Z',
+          session_count: 0,
+        });
+        mod.upsertInstinct(db, {
+          instinct_id: pid + '-inst-1', project_id: pid,
+          category: 'test', pattern: 'p', confidence: 0.5,
+          seen_count: 1, first_seen: '2026-01-01T00:00:00Z',
+          last_seen: '2026-01-01T00:00:00Z', instinct: 'body',
+        });
+        mod.upsertInstinct(db, {
+          instinct_id: pid + '-inst-2', project_id: pid,
+          category: 'test', pattern: 'q', confidence: 0.7,
+          seen_count: 1, first_seen: '2026-01-01T00:00:00Z',
+          last_seen: '2026-01-01T00:00:00Z', instinct: 'body2',
+        });
+        mod.insertSuggestion(db, {
+          id: pid + '-sugg-1', created_at: '2026-01-01T00:00:00Z',
+          type: 'adoption', confidence: 0.6,
+          description: 'test suggestion', evidence: 'ev',
+          instinct_id: pid + '-inst-1', status: 'pending',
+        });
+        mod.insertKbNote(db, {
+          id: pid + '-note-1', project_id: pid, slug: 'note-1',
+          title: 'Test Note', body: 'content',
+          tags: '[]', created_at: '2026-01-01T00:00:00Z',
+          updated_at: '2026-01-01T00:00:00Z',
+        });
+        mod.upsertKgVaultHash(db, {
+          project_id: pid, file_path: 'test.md', content_hash: 'hash-' + pid,
+        });
+      }
+    });
+
+    it('deletes project and all related data', () => {
+      const result = mod.deleteProject(db, P1);
+      assert.equal(result.deleted, true);
+
+      // Project row gone
+      const proj = db.prepare('SELECT * FROM cl_projects WHERE project_id = ?').get(P1);
+      assert.equal(proj, undefined);
+
+      // Instincts gone
+      const instincts = db.prepare('SELECT * FROM cl_instincts WHERE project_id = ?').all(P1);
+      assert.equal(instincts.length, 0);
+
+      // Suggestions linked to P1 instincts gone
+      const suggs = db.prepare(
+        "SELECT * FROM suggestions WHERE instinct_id LIKE ?"
+      ).all(P1 + '%');
+      assert.equal(suggs.length, 0);
+
+      // kb_notes gone
+      const notes = db.prepare('SELECT * FROM kb_notes WHERE project_id = ?').all(P1);
+      assert.equal(notes.length, 0);
+
+      // vault_hashes gone
+      const hashes = db.prepare('SELECT * FROM kg_vault_hashes WHERE project_id = ?').all(P1);
+      assert.equal(hashes.length, 0);
+    });
+
+    it('returns deleted: false for non-existent project', () => {
+      const result = mod.deleteProject(db, 'no-such-project');
+      assert.equal(result.deleted, false);
+    });
+
+    it('does not affect other projects', () => {
+      // P2 data should be untouched
+      const proj = db.prepare('SELECT * FROM cl_projects WHERE project_id = ?').get(P2);
+      assert.ok(proj);
+      assert.equal(proj.name, P2);
+
+      const instincts = db.prepare('SELECT * FROM cl_instincts WHERE project_id = ?').all(P2);
+      assert.equal(instincts.length, 2);
+
+      const suggs = db.prepare(
+        "SELECT * FROM suggestions WHERE instinct_id LIKE ?"
+      ).all(P2 + '%');
+      assert.equal(suggs.length, 1);
+
+      const notes = db.prepare('SELECT * FROM kb_notes WHERE project_id = ?').all(P2);
+      assert.equal(notes.length, 1);
+
+      const hashes = db.prepare('SELECT * FROM kg_vault_hashes WHERE project_id = ?').all(P2);
+      assert.equal(hashes.length, 1);
+    });
   });
 });

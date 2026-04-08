@@ -50,6 +50,21 @@ CREATE TABLE IF NOT EXISTS sessions (
   total_cost_usd       REAL    DEFAULT 0
 );
 
+CREATE TABLE IF NOT EXISTS prompts (
+  id              INTEGER PRIMARY KEY AUTOINCREMENT,
+  session_id      TEXT    NOT NULL,
+  prompt_text     TEXT    NOT NULL,
+  seq_start       INTEGER NOT NULL,
+  seq_end         INTEGER,
+  timestamp       TEXT    NOT NULL,
+  event_count     INTEGER DEFAULT 0,
+  total_cost_usd  REAL    DEFAULT 0,
+  duration_ms     INTEGER DEFAULT 0,
+  FOREIGN KEY (session_id) REFERENCES sessions(session_id)
+);
+CREATE INDEX IF NOT EXISTS idx_prompts_session ON prompts(session_id);
+CREATE INDEX IF NOT EXISTS idx_prompts_timestamp ON prompts(timestamp);
+
 CREATE TABLE IF NOT EXISTS collector_errors (
   id             INTEGER PRIMARY KEY AUTOINCREMENT,
   occurred_at    TEXT    NOT NULL DEFAULT (datetime('now')),
@@ -168,6 +183,19 @@ CREATE TABLE IF NOT EXISTS kg_sync_state (
   key   TEXT PRIMARY KEY,
   value TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS kb_notes (
+  id         TEXT PRIMARY KEY,
+  project_id TEXT NOT NULL,
+  slug       TEXT NOT NULL,
+  title      TEXT NOT NULL,
+  body       TEXT NOT NULL DEFAULT '',
+  tags       TEXT DEFAULT '[]',
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_kb_notes_project_slug ON kb_notes(project_id, slug);
+CREATE INDEX IF NOT EXISTS idx_kb_notes_project ON kb_notes(project_id);
 `;
 
 // ---------------------------------------------------------------------------
@@ -190,6 +218,13 @@ function createDb(dbPath) {
   ];
   for (const sql of migrations) {
     try { db.exec(sql); } catch { /* column already exists */ }
+  }
+  // Migration: add prompt_id to events
+  try {
+    db.prepare('SELECT prompt_id FROM events LIMIT 0').get();
+  } catch {
+    db.exec('ALTER TABLE events ADD COLUMN prompt_id INTEGER REFERENCES prompts(id)');
+    db.exec('CREATE INDEX IF NOT EXISTS idx_events_prompt ON events(prompt_id)');
   }
   // Drop legacy cl_observations table (no longer used)
   db.exec('DROP TABLE IF EXISTS cl_observations');
@@ -621,6 +656,36 @@ function getProjectTimeline(db, projectId, weeks) {
   `).all(projectId, w);
 }
 
+function deleteProject(db, projectId) {
+  const tx = db.transaction(() => {
+    // Collect instinct_ids for suggestion cleanup
+    const instinctIds = db.prepare(
+      'SELECT instinct_id FROM cl_instincts WHERE project_id = ?'
+    ).all(projectId).map(r => r.instinct_id).filter(Boolean);
+
+    // Delete suggestions linked to project instincts
+    if (instinctIds.length > 0) {
+      const del = db.prepare('DELETE FROM suggestions WHERE instinct_id = ?');
+      for (const iid of instinctIds) del.run(iid);
+    }
+
+    // Delete instincts
+    db.prepare('DELETE FROM cl_instincts WHERE project_id = ?').run(projectId);
+
+    // Delete kb_notes
+    db.prepare('DELETE FROM kb_notes WHERE project_id = ?').run(projectId);
+
+    // Delete vault hashes
+    db.prepare('DELETE FROM kg_vault_hashes WHERE project_id = ?').run(projectId);
+
+    // Delete the project row
+    const result = db.prepare('DELETE FROM cl_projects WHERE project_id = ?').run(projectId);
+
+    return { deleted: result.changes > 0 };
+  });
+  return tx();
+}
+
 // ---------------------------------------------------------------------------
 // Learning API — Combined activity feed
 // ---------------------------------------------------------------------------
@@ -815,6 +880,86 @@ function getKgStatus(db) {
 }
 
 // ---------------------------------------------------------------------------
+// Knowledge Base Notes
+// ---------------------------------------------------------------------------
+
+function insertKbNote(db, note) {
+  const now = new Date().toISOString();
+  db.prepare(`
+    INSERT INTO kb_notes (id, project_id, slug, title, body, tags, created_at, updated_at)
+    VALUES (@id, @project_id, @slug, @title, @body, @tags, @created_at, @updated_at)
+  `).run({ created_at: now, updated_at: now, body: '', tags: '[]', ...note });
+}
+
+function updateKbNote(db, id, fields) {
+  const now = new Date().toISOString();
+  const sets = ['updated_at = @updated_at'];
+  const params = { id, updated_at: now };
+  for (const key of ['title', 'slug', 'body', 'tags']) {
+    if (fields[key] !== undefined) {
+      sets.push(`${key} = @${key}`);
+      params[key] = fields[key];
+    }
+  }
+  db.prepare(`UPDATE kb_notes SET ${sets.join(', ')} WHERE id = @id`).run(params);
+}
+
+function deleteKbNote(db, id) {
+  db.prepare('DELETE FROM kb_notes WHERE id = ?').run(id);
+}
+
+function getKbNote(db, id) {
+  return db.prepare('SELECT * FROM kb_notes WHERE id = ?').get(id) || null;
+}
+
+function getKbNoteBySlug(db, projectId, slug) {
+  return db.prepare(
+    'SELECT * FROM kb_notes WHERE project_id = ? AND slug = ?'
+  ).get(projectId, slug) || null;
+}
+
+function queryKbNotes(db, { projectId, search, tag, page = 1, perPage = 20 } = {}) {
+  page = Math.max(1, page);
+  perPage = Math.min(Math.max(1, perPage), 50);
+  const conditions = [];
+  const params = {};
+
+  if (projectId) {
+    conditions.push('project_id = @projectId');
+    params.projectId = projectId;
+  }
+  if (search) {
+    conditions.push('(title LIKE @search OR body LIKE @search)');
+    params.search = `%${search}%`;
+  }
+  if (tag) {
+    conditions.push("tags LIKE @tag");
+    params.tag = `%"${tag}"%`;
+  }
+
+  const where = conditions.length ? 'WHERE ' + conditions.join(' AND ') : '';
+  const total = db.prepare(`SELECT COUNT(*) AS c FROM kb_notes ${where}`).get(params).c;
+  const items = db.prepare(
+    `SELECT * FROM kb_notes ${where} ORDER BY updated_at DESC LIMIT @limit OFFSET @offset`
+  ).all({ ...params, limit: perPage, offset: (page - 1) * perPage });
+
+  return { items, total, page, perPage };
+}
+
+function getKbNoteBacklinks(db, projectId, slug) {
+  const pattern = `%[[notes/${slug}]]%`;
+  return db.prepare(
+    'SELECT * FROM kb_notes WHERE project_id = ? AND body LIKE ?'
+  ).all(projectId, pattern);
+}
+
+function getAllKbNoteSlugs(db, projectId) {
+  return db.prepare(
+    'SELECT slug FROM kb_notes WHERE project_id = ?'
+  ).all(projectId).map(r => r.slug);
+}
+
+// ---------------------------------------------------------------------------
 // Exports
 // ---------------------------------------------------------------------------
 
@@ -848,6 +993,7 @@ module.exports = {
   deleteInstinct,
   getProjectSummary,
   getProjectTimeline,
+  deleteProject,
   queryLearningActivity,
   queryLearningRecent,
   upsertKgNode,
@@ -864,4 +1010,12 @@ module.exports = {
   setKgSyncState,
   getKgSyncState,
   getKgStatus,
+  insertKbNote,
+  updateKbNote,
+  deleteKbNote,
+  getKbNote,
+  getKbNoteBySlug,
+  queryKbNotes,
+  getKbNoteBacklinks,
+  getAllKbNoteSlugs,
 };
