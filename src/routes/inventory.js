@@ -130,50 +130,55 @@ module.exports = async function inventoryRoutes(app, opts) {
       `SELECT timestamp, detail, session_id, duration_ms, user_prompt FROM events ${where} ORDER BY timestamp DESC`
     ).all({ eventType, name, since: since || undefined });
 
-    // Enrich each invocation with trigger source (nearest preceding skill/agent in same session)
-    const triggerStmt = db.prepare(`
-      SELECT name, event_type FROM events
-      WHERE session_id = @sessionId
-        AND event_type IN ('skill_invoke', 'agent_spawn')
-        AND timestamp < @timestamp
-        AND name != @currentName
-      ORDER BY timestamp DESC LIMIT 1
-    `);
+    // Batch query: find triggered_by for all invocations at once
+    // (nearest preceding skill/agent in the same session, before each invocation)
+    const triggeredBySinceFrag = since ? 'AND e1.timestamp >= @since' : '';
+    const triggeredByRows = db.prepare(`
+      SELECT e1.timestamp AS inv_ts, e2.name, e2.event_type
+      FROM events e1
+      JOIN events e2 ON e2.session_id = e1.session_id
+        AND e2.event_type IN ('skill_invoke', 'agent_spawn')
+        AND e2.timestamp < e1.timestamp
+        AND e2.name != @currentName
+      WHERE e1.name = @currentName AND e1.event_type = @eventType
+        ${triggeredBySinceFrag}
+      GROUP BY e1.session_id, e1.timestamp
+      HAVING e2.timestamp = MAX(e2.timestamp)
+    `).all({ currentName: name, eventType, since: since || undefined });
 
-    // Find what each invocation subsequently triggers
-    const triggersStmt = db.prepare(`
-      SELECT name, event_type FROM events
-      WHERE session_id = @sessionId
-        AND event_type IN ('skill_invoke', 'agent_spawn')
-        AND timestamp > @timestamp
-        AND name != @currentName
-      ORDER BY timestamp ASC LIMIT 1
-    `);
+    const triggeredByMap = new Map(
+      triggeredByRows.map(r => [r.inv_ts, { name: r.name, type: r.event_type }])
+    );
 
+    // Batch query: find what each invocation subsequently triggers
+    // (nearest following skill/agent in the same session, after each invocation)
+    const triggersSinceFrag = since ? 'AND e1.timestamp >= @since' : '';
+    const triggersRows = db.prepare(`
+      SELECT e1.timestamp AS inv_ts, e2.name, e2.event_type
+      FROM events e1
+      JOIN events e2 ON e2.session_id = e1.session_id
+        AND e2.event_type IN ('skill_invoke', 'agent_spawn')
+        AND e2.timestamp > e1.timestamp
+        AND e2.name != @currentName
+      WHERE e1.name = @currentName AND e1.event_type = @eventType
+        ${triggersSinceFrag}
+      GROUP BY e1.session_id, e1.timestamp
+      HAVING e2.timestamp = MIN(e2.timestamp)
+    `).all({ currentName: name, eventType, since: since || undefined });
+
+    // Build trigger counts from batch results
     const triggerCounts = new Map();
-
-    for (const inv of allInvocations) {
-      const trigger = triggerStmt.get({
-        sessionId: inv.session_id,
-        timestamp: inv.timestamp,
-        currentName: name,
-      });
-      inv.triggered_by = trigger
-        ? { name: trigger.name, type: trigger.event_type }
-        : null;
-
-      const triggered = triggersStmt.get({
-        sessionId: inv.session_id,
-        timestamp: inv.timestamp,
-        currentName: name,
-      });
-      if (triggered) {
-        const key = `${triggered.event_type}:${triggered.name}`;
-        if (!triggerCounts.has(key)) {
-          triggerCounts.set(key, { name: triggered.name, event_type: triggered.event_type, count: 0 });
-        }
-        triggerCounts.get(key).count++;
+    for (const row of triggersRows) {
+      const key = `${row.event_type}:${row.name}`;
+      if (!triggerCounts.has(key)) {
+        triggerCounts.set(key, { name: row.name, event_type: row.event_type, count: 0 });
       }
+      triggerCounts.get(key).count++;
+    }
+
+    // Assign triggered_by to each invocation from the batch lookup
+    for (const inv of allInvocations) {
+      inv.triggered_by = triggeredByMap.get(inv.timestamp) || null;
     }
 
     const total = allInvocations.length;

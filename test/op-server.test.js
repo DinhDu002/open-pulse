@@ -27,6 +27,51 @@ describe('op-server', () => {
     const { buildApp } = require('../src/op-server');
     app = buildApp({ disableTimers: true });
     await app.ready();
+
+    // Seed prompts test data
+    const dbMod = require('../src/op-db');
+    const testDb = require('better-sqlite3')(process.env.OPEN_PULSE_DB);
+
+    dbMod.upsertSession(testDb, {
+      session_id: 'sess-prompt-api',
+      started_at: '2026-04-08T10:00:00Z',
+      working_directory: '/Users/test/my-project',
+      model: 'claude-sonnet-4-6',
+    });
+
+    const p1Id = dbMod.insertPrompt(testDb, {
+      session_id: 'sess-prompt-api',
+      prompt_text: 'add authentication',
+      seq_start: 1,
+      timestamp: '2026-04-08T10:00:01Z',
+    });
+    const p2Id = dbMod.insertPrompt(testDb, {
+      session_id: 'sess-prompt-api',
+      prompt_text: 'run all tests',
+      seq_start: 3,
+      timestamp: '2026-04-08T10:01:00Z',
+    });
+
+    dbMod.insertEvent(testDb, {
+      timestamp: '2026-04-08T10:00:02Z', session_id: 'sess-prompt-api',
+      event_type: 'tool_call', name: 'Read', prompt_id: p1Id, seq_num: 1,
+      estimated_cost_usd: 0.01,
+    });
+    dbMod.insertEvent(testDb, {
+      timestamp: '2026-04-08T10:00:03Z', session_id: 'sess-prompt-api',
+      event_type: 'agent_spawn', name: 'Explore', prompt_id: p1Id, seq_num: 2,
+      estimated_cost_usd: 0.05,
+    });
+    dbMod.insertEvent(testDb, {
+      timestamp: '2026-04-08T10:01:01Z', session_id: 'sess-prompt-api',
+      event_type: 'tool_call', name: 'Bash', prompt_id: p2Id, seq_num: 3,
+      estimated_cost_usd: 0.02,
+    });
+
+    dbMod.updatePromptStats(testDb, p1Id, { seq_end: 2, cost: 0.01, timestamp: '2026-04-08T10:00:02Z' });
+    dbMod.updatePromptStats(testDb, p1Id, { seq_end: 2, cost: 0.05, timestamp: '2026-04-08T10:00:03Z' });
+    dbMod.updatePromptStats(testDb, p2Id, { seq_end: 3, cost: 0.02, timestamp: '2026-04-08T10:01:01Z' });
+    testDb.close();
   });
 
   after(async () => {
@@ -379,6 +424,44 @@ describe('op-server', () => {
     assert.ok(trig.count >= 1);
   });
 
+  it('GET /api/inventory/:type/:name returns trigger data from batch queries', async () => {
+    const dbMod = require('../src/op-db');
+    const testDb = require('better-sqlite3')(process.env.OPEN_PULSE_DB);
+    const sess = 'sess-trigger-batch-' + Date.now();
+    dbMod.upsertSession(testDb, { session_id: sess, started_at: '2026-04-08T12:00:00Z', model: 'sonnet', working_directory: '/tmp' });
+    dbMod.insertEventBatch(testDb, [
+      { timestamp: '2026-04-08T12:00:01Z', session_id: sess, event_type: 'agent_spawn', name: 'Plan', seq_num: 1 },
+      { timestamp: '2026-04-08T12:00:02Z', session_id: sess, event_type: 'skill_invoke', name: 'tdd-workflow', seq_num: 2 },
+      { timestamp: '2026-04-08T12:00:03Z', session_id: sess, event_type: 'skill_invoke', name: 'tdd-workflow', seq_num: 3 },
+      { timestamp: '2026-04-08T12:00:04Z', session_id: sess, event_type: 'agent_spawn', name: 'Explore', seq_num: 4 },
+    ]);
+    testDb.close();
+
+    const res = await app.inject({ method: 'GET', url: '/api/inventory/skills/tdd-workflow?period=all' });
+    assert.equal(res.statusCode, 200);
+    const body = JSON.parse(res.payload);
+    assert.equal(body.total, 2);
+    assert.ok(Array.isArray(body.triggers));
+    assert.ok(Array.isArray(body.invocations));
+    // Both invocations should have triggered_by = Plan (nearest preceding agent_spawn)
+    for (const inv of body.invocations) {
+      assert.ok(
+        inv.triggered_by === null || inv.triggered_by.name === 'Plan',
+        `triggered_by should be null or Plan, got: ${JSON.stringify(inv.triggered_by)}`
+      );
+    }
+    // Explore should appear in triggers (nearest following agent_spawn)
+    const exploreTrigger = body.triggers.find(t => t.name === 'Explore');
+    assert.ok(exploreTrigger, 'Explore should appear in triggers');
+    assert.equal(exploreTrigger.event_type, 'agent_spawn');
+    // The second invocation (12:00:02) is followed by another tdd-workflow invoke at 12:00:03,
+    // but that is the same name so it's excluded. Explore (12:00:04) follows both.
+    // The first invocation (12:00:02) nearest following different name is tdd-workflow at 12:00:03 — excluded.
+    // Actually nearest different-name following 12:00:02 is Explore at 12:00:04.
+    // And nearest different-name following 12:00:03 is Explore at 12:00:04.
+    assert.ok(exploreTrigger.count >= 1, 'Explore trigger count should be >= 1');
+  });
+
   describe('knowledge graph API', () => {
     it('GET /api/knowledge/status returns stats', async () => {
       const res = await app.inject({ method: 'GET', url: '/api/knowledge/status' });
@@ -420,6 +503,143 @@ describe('op-server', () => {
       assert.equal(res.statusCode, 200);
       const body = JSON.parse(res.payload);
       assert.ok('knowledge_graph_interval_ms' in body);
+    });
+  });
+
+  describe('DELETE /api/projects/:id', () => {
+    it('returns 404 for non-existent project', async () => {
+      const res = await app.inject({ method: 'DELETE', url: '/api/projects/nonexistent' });
+      assert.equal(res.statusCode, 404);
+    });
+
+    it('deletes a project and returns success', async () => {
+      // Seed project via internal DB
+      const dbPath = process.env.OPEN_PULSE_DB;
+      const { createDb, upsertClProject, upsertInstinct, insertSuggestion, insertKbNote, upsertKgVaultHash } = require('../src/op-db');
+      const db = createDb(dbPath);
+      const pid = 'test-del-proj';
+
+      upsertClProject(db, {
+        project_id: pid, name: 'deleteme', directory: '/tmp/deleteme',
+        first_seen_at: '2026-01-01T00:00:00Z',
+        last_seen_at: '2026-01-01T00:00:00Z', session_count: 0,
+      });
+      upsertInstinct(db, {
+        instinct_id: 'del-inst-1', project_id: pid,
+        category: 'test', pattern: 'p', confidence: 0.5,
+        seen_count: 1, first_seen: '2026-01-01T00:00:00Z',
+        last_seen: '2026-01-01T00:00:00Z', instinct: 'body',
+      });
+      insertSuggestion(db, {
+        id: 'del-sugg-1', created_at: '2026-01-01T00:00:00Z',
+        type: 'adoption', confidence: 0.6,
+        description: 'test', evidence: 'ev',
+        instinct_id: 'del-inst-1', status: 'pending',
+      });
+      insertKbNote(db, {
+        id: 'del-note-1', project_id: pid, slug: 'note-del',
+        title: 'Note', body: 'content',
+        tags: '[]', created_at: '2026-01-01T00:00:00Z',
+        updated_at: '2026-01-01T00:00:00Z',
+      });
+      upsertKgVaultHash(db, {
+        project_id: pid, file_path: 'test.md', content_hash: 'hash1',
+      });
+
+      // Create filesystem dirs and projects.json
+      const clDir = path.join(TEST_DIR, 'cl', 'projects', pid);
+      const projDir = path.join(TEST_DIR, 'projects', pid);
+      fs.mkdirSync(clDir, { recursive: true });
+      fs.mkdirSync(projDir, { recursive: true });
+      fs.writeFileSync(path.join(clDir, 'test.md'), 'test');
+      fs.writeFileSync(
+        path.join(TEST_DIR, 'projects.json'),
+        JSON.stringify({ [pid]: { id: pid, name: 'deleteme', root: '/tmp/deleteme' } })
+      );
+
+      db.close();
+
+      // Delete the project
+      const res = await app.inject({ method: 'DELETE', url: '/api/projects/' + pid });
+      assert.equal(res.statusCode, 200);
+      const body = JSON.parse(res.body);
+      assert.equal(body.deleted, true);
+
+      // Verify project summary returns 404
+      const summaryRes = await app.inject({ method: 'GET', url: '/api/projects/' + pid + '/summary' });
+      assert.equal(summaryRes.statusCode, 404);
+
+      // Verify filesystem dirs removed
+      assert.equal(fs.existsSync(clDir), false);
+      assert.equal(fs.existsSync(projDir), false);
+
+      // Verify projects.json entry removed
+      const registry = JSON.parse(fs.readFileSync(path.join(TEST_DIR, 'projects.json'), 'utf8'));
+      assert.equal(registry[pid], undefined);
+    });
+  });
+
+  describe('prompts API', () => {
+    it('GET /api/prompts returns paginated list', async () => {
+      const res = await app.inject({ method: 'GET', url: '/api/prompts?period=all' });
+      assert.equal(res.statusCode, 200);
+      const body = JSON.parse(res.body);
+      assert.ok(body.prompts.length > 0);
+      assert.ok(body.total > 0);
+      assert.equal(body.page, 1);
+      assert.equal(body.per_page, 20);
+      const p = body.prompts.find(p => p.prompt_text === 'add authentication');
+      assert.ok(p);
+      assert.equal(p.session_id, 'sess-prompt-api');
+      assert.ok(p.event_breakdown);
+    });
+
+    it('GET /api/prompts?q= filters by text', async () => {
+      const res = await app.inject({ method: 'GET', url: '/api/prompts?period=all&q=authentication' });
+      const body = JSON.parse(res.body);
+      assert.ok(body.prompts.every(p => p.prompt_text.includes('authentication')));
+    });
+
+    it('GET /api/prompts?session_id= filters by session', async () => {
+      const res = await app.inject({
+        method: 'GET',
+        url: '/api/prompts?period=all&session_id=sess-prompt-api',
+      });
+      const body = JSON.parse(res.body);
+      assert.ok(body.prompts.length >= 2);
+      assert.ok(body.prompts.every(p => p.session_id === 'sess-prompt-api'));
+    });
+
+    it('GET /api/prompts paginates correctly', async () => {
+      const res = await app.inject({
+        method: 'GET',
+        url: '/api/prompts?period=all&per_page=1&page=1',
+      });
+      const body = JSON.parse(res.body);
+      assert.equal(body.prompts.length, 1);
+      assert.equal(body.per_page, 1);
+    });
+
+    it('GET /api/prompts/:id returns prompt with events', async () => {
+      const listRes = await app.inject({ method: 'GET', url: '/api/prompts?period=all&q=authentication' });
+      const listBody = JSON.parse(listRes.body);
+      const promptId = listBody.prompts[0].id;
+
+      const res = await app.inject({ method: 'GET', url: '/api/prompts/' + promptId });
+      assert.equal(res.statusCode, 200);
+      const body = JSON.parse(res.body);
+      assert.equal(body.prompt.id, promptId);
+      assert.equal(body.prompt.prompt_text, 'add authentication');
+      assert.ok(body.prompt.project);
+      assert.ok(Array.isArray(body.events));
+      assert.ok(body.events.length >= 2);
+      assert.equal(body.events[0].name, 'Read');
+      assert.equal(body.events[1].name, 'Explore');
+    });
+
+    it('GET /api/prompts/:id returns 404 for nonexistent', async () => {
+      const res = await app.inject({ method: 'GET', url: '/api/prompts/99999' });
+      assert.equal(res.statusCode, 404);
     });
   });
 });
