@@ -29,7 +29,8 @@ const {
 const { generateAllVaults } = require('../op-vault-generator');
 
 module.exports = async function knowledgeRoutes(app, opts) {
-  const { db, config } = opts;
+  const { db, config, helpers } = opts;
+  const { errorReply } = helpers;
 
   // ── Knowledge Graph ─────────────────────────────────────────────────────
 
@@ -87,17 +88,17 @@ module.exports = async function knowledgeRoutes(app, opts) {
     return results.slice(0, limit);
   });
 
-  app.get('/api/knowledge/discover', async (req) => {
+  app.get('/api/knowledge/discover', async (req, reply) => {
     const { project, context } = req.query;
-    if (!project || !context) return { error: 'project and context required' };
+    if (!project || !context) return errorReply(reply, 400, 'project and context required');
     return discoverRelevantContent(db, project, context);
   });
 
-  app.get('/api/knowledge/node/:id', async (request) => {
+  app.get('/api/knowledge/node/:id', async (request, reply) => {
     const { id } = request.params;
     const decoded = decodeURIComponent(id);
     const detail = getKgNodeDetail(db, decoded);
-    if (!detail) return { error: 'Node not found' };
+    if (!detail) return errorReply(reply, 404, 'Node not found');
     return detail;
   });
 
@@ -142,9 +143,9 @@ module.exports = async function knowledgeRoutes(app, opts) {
     });
   });
 
-  app.post('/api/knowledge/notes', async (req) => {
+  app.post('/api/knowledge/notes', async (req, reply) => {
     const { project_id, title, body, tags } = req.body;
-    if (!project_id || !title) return { error: 'project_id and title required' };
+    if (!project_id || !title) return errorReply(reply, 400, 'project_id and title required');
     const existingSlugs = getAllKbNoteSlugs(db, project_id);
     const slug = slugifyUnique(title, existingSlugs);
     const id = `note:${crypto.randomUUID()}`;
@@ -158,23 +159,23 @@ module.exports = async function knowledgeRoutes(app, opts) {
     return note;
   });
 
-  app.get('/api/knowledge/notes/:id/backlinks', async (req) => {
+  app.get('/api/knowledge/notes/:id/backlinks', async (req, reply) => {
     const note = getKbNote(db, req.params.id);
-    if (!note) return { error: 'Not found' };
+    if (!note) return errorReply(reply, 404, 'Not found');
     return getKbNoteBacklinks(db, note.project_id, note.slug);
   });
 
-  app.get('/api/knowledge/notes/:id', async (req) => {
+  app.get('/api/knowledge/notes/:id', async (req, reply) => {
     const note = getKbNote(db, req.params.id);
-    if (!note) return { error: 'Not found' };
+    if (!note) return errorReply(reply, 404, 'Not found');
     const backlinks = getKbNoteBacklinks(db, note.project_id, note.slug);
     const refs = extractBacklinks(note.body);
     return { ...note, backlinks, references: refs };
   });
 
-  app.put('/api/knowledge/notes/:id', async (req) => {
+  app.put('/api/knowledge/notes/:id', async (req, reply) => {
     const existing = getKbNote(db, req.params.id);
-    if (!existing) return { error: 'Not found' };
+    if (!existing) return errorReply(reply, 404, 'Not found');
     const { title, body, tags } = req.body;
     const fields = {};
     if (title !== undefined) fields.title = title;
@@ -195,9 +196,9 @@ module.exports = async function knowledgeRoutes(app, opts) {
     return updated;
   });
 
-  app.delete('/api/knowledge/notes/:id', async (req) => {
+  app.delete('/api/knowledge/notes/:id', async (req, reply) => {
     const existing = getKbNote(db, req.params.id);
-    if (!existing) return { error: 'Not found' };
+    if (!existing) return errorReply(reply, 404, 'Not found');
     deleteKbNote(db, req.params.id);
     const project = db.prepare('SELECT directory FROM cl_projects WHERE project_id = ?').get(existing.project_id);
     if (project?.directory) deleteNoteFromDisk(project.directory, existing.slug);

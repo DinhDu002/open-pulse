@@ -13,7 +13,7 @@ const { parseQualifiedName, getKnownAgents } = require('../op-helpers');
 
 module.exports = async function coreRoutes(app, opts) {
   const { db, helpers, dbPath, repoDir, config } = opts;
-  const { periodToDate } = helpers;
+  const { periodToDate, errorReply, parsePagination } = helpers;
 
   const CONFIG_PATH = path.join(repoDir, 'config.json');
 
@@ -181,7 +181,7 @@ module.exports = async function coreRoutes(app, opts) {
   app.get('/api/sessions/:id', async (request, reply) => {
     const { id } = request.params;
     const rawSession = db.prepare('SELECT * FROM sessions WHERE session_id = ?').get(id);
-    if (!rawSession) return reply.code(404).send({ error: 'Session not found' });
+    if (!rawSession) return errorReply(reply, 404, 'Session not found');
 
     const session = {
       ...rawSession,
@@ -217,11 +217,9 @@ module.exports = async function coreRoutes(app, opts) {
   app.get('/api/prompts', async (request) => {
     const {
       period = '7d', q, session_id, project,
-      page: pageStr, per_page: perPageStr,
     } = request.query;
 
-    const page = Math.max(1, parseInt(pageStr) || 1);
-    const perPage = Math.min(50, Math.max(1, parseInt(perPageStr) || 20));
+    const { page, perPage } = parsePagination(request.query, { perPage: 20 });
     const offset = (page - 1) * perPage;
     const since = periodToDate(period);
 
@@ -275,7 +273,7 @@ module.exports = async function coreRoutes(app, opts) {
       'SELECT p.*, s.working_directory FROM prompts p LEFT JOIN sessions s ON s.session_id = p.session_id WHERE p.id = ?'
     ).get(id);
 
-    if (!row) { reply.code(404); return { error: 'Prompt not found' }; }
+    if (!row) return errorReply(reply, 404, 'Prompt not found');
 
     const events = db.prepare(
       'SELECT id, timestamp, event_type, name, detail, duration_ms, success, estimated_cost_usd, tool_input, tool_response, seq_num, model FROM events WHERE prompt_id = ? ORDER BY seq_num ASC'
@@ -295,8 +293,7 @@ module.exports = async function coreRoutes(app, opts) {
   // ── Rules ───────────────────────────────────────────────────────────────
 
   app.get('/api/rules', async (request) => {
-    const page = Math.max(1, parseInt(request.query.page) || 1);
-    const perPage = Math.min(50, Math.max(1, parseInt(request.query.per_page) || 50));
+    const { page, perPage } = parsePagination(request.query, { perPage: 50 });
 
     const all = db.prepare(
       'SELECT rules_loaded, COUNT(*) as count FROM sessions WHERE rules_loaded IS NOT NULL GROUP BY rules_loaded ORDER BY count DESC'
@@ -310,8 +307,7 @@ module.exports = async function coreRoutes(app, opts) {
   // ── Unused ──────────────────────────────────────────────────────────────
 
   app.get('/api/unused', async (request) => {
-    const page = Math.max(1, parseInt(request.query.page) || 1);
-    const perPage = Math.min(50, Math.max(1, parseInt(request.query.per_page) || 50));
+    const { page, perPage } = parsePagination(request.query, { perPage: 50 });
 
     const unused_skills = db.prepare(`
       SELECT c.name FROM components c

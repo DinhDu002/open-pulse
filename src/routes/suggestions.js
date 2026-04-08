@@ -9,7 +9,8 @@ const {
 } = require('../op-db');
 
 module.exports = async function suggestionsRoutes(app, opts) {
-  const { db, repoDir, config } = opts;
+  const { db, repoDir, config, helpers } = opts;
+  const { errorReply } = helpers;
 
   // ── Suggestions ─────────────────────────────────────────────────────────
 
@@ -30,8 +31,7 @@ module.exports = async function suggestionsRoutes(app, opts) {
         maxBuffer: 1024 * 1024,
       }, (error, stdout, stderr) => {
         if (error) {
-          reply.code(500);
-          resolve({ error: 'Suggestion agent failed', detail: (stderr || error.message).slice(-500) });
+          return resolve(errorReply(reply, 500, 'Suggestion agent failed: ' + (stderr || error.message).slice(-500)));
         } else {
           try { resolve(JSON.parse(stdout)); }
           catch { resolve({ generated: 0, raw: stdout.slice(0, 500) }); }

@@ -283,6 +283,20 @@ function isGitRepo(dir) {
   catch { return false; }
 }
 
+// ---------------------------------------------------------------------------
+// HTTP helpers
+// ---------------------------------------------------------------------------
+
+function errorReply(reply, code, message) {
+  return reply.code(code).send({ error: message });
+}
+
+function parsePagination(query, defaults = {}) {
+  const page = Math.max(1, parseInt(query.page) || (defaults.page || 1));
+  const perPage = Math.min(50, Math.max(1, parseInt(query.per_page) || (defaults.perPage || 10)));
+  return { page, perPage };
+}
+
 module.exports = {
   CLAUDE_DIR,
   periodToDate,
@@ -302,4 +316,6 @@ module.exports = {
   parseHooksFromSettings,
   getKnownHooks,
   isGitRepo,
+  errorReply,
+  parsePagination,
 };

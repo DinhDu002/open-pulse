@@ -21,7 +21,8 @@ const { findInstinctFile, updateConfidence, archiveInstinct } = require('../op-i
 const { syncAll } = require('../op-sync');
 
 module.exports = async function instinctsRoutes(app, opts) {
-  const { db, repoDir } = opts;
+  const { db, repoDir, helpers } = opts;
+  const { parsePagination, errorReply } = helpers;
 
   // ── Instincts ───────────────────────────────────────────────────────────
   // IMPORTANT: Static routes MUST be registered before parameterized routes
@@ -74,9 +75,9 @@ module.exports = async function instinctsRoutes(app, opts) {
     return { synced: true, instincts: instincts.cnt, projects: projects.cnt };
   });
 
-  app.get('/api/instincts/observer', async (request) => {
+  app.get('/api/instincts/observer', async (request, reply) => {
     const { project, lines = 30 } = request.query;
-    if (!project) return { error: 'project parameter required' };
+    if (!project) return errorReply(reply, 400, 'project parameter required');
 
     const logPath = path.join(repoDir, 'projects', project, 'observer.log');
     try {
@@ -90,14 +91,15 @@ module.exports = async function instinctsRoutes(app, opts) {
   });
 
   app.get('/api/instincts', async (request) => {
-    const { domain, source, project, confidence_min, confidence_max, search, sort, page, per_page } = request.query;
+    const { domain, source, project, confidence_min, confidence_max, search, sort } = request.query;
+    const { page, perPage } = parsePagination(request.query, { perPage: 20 });
     return queryInstinctsFiltered(db, {
       domain, source, project,
       confidence_min: confidence_min != null ? parseFloat(confidence_min) : undefined,
       confidence_max: confidence_max != null ? parseFloat(confidence_max) : undefined,
       search, sort,
-      page: Math.max(1, parseInt(page) || 1),
-      perPage: Math.min(50, Math.max(1, parseInt(per_page) || 20)),
+      page,
+      perPage,
     });
   });
 

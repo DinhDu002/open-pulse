@@ -67,6 +67,11 @@ function buildApp(opts = {}) {
 
   const app = Fastify({ logger: false });
 
+  app.setErrorHandler((err, req, reply) => {
+    req.log.error(err);
+    reply.code(500).send({ error: 'Internal server error' });
+  });
+
   // Static file serving
   const publicDir = path.join(REPO_DIR, 'public');
   if (fs.existsSync(publicDir)) {

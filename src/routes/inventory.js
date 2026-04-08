@@ -3,9 +3,11 @@
 const { getComponentsByType } = require('../op-db');
 const { parseQualifiedName } = require('../op-helpers');
 
+const VALID_TYPES = new Set(['skills', 'agents', 'hooks', 'rules']);
+
 module.exports = async function inventoryRoutes(app, opts) {
   const { db, helpers, componentETagFn } = opts;
-  const { periodToDate, readItemMeta, extractKeywordsFromPrompts } = helpers;
+  const { periodToDate, readItemMeta, extractKeywordsFromPrompts, errorReply, parsePagination } = helpers;
 
   app.get('/api/inventory/:type', async (request, reply) => {
     const { type } = request.params;
@@ -19,11 +21,10 @@ module.exports = async function inventoryRoutes(app, opts) {
       return;
     }
 
-    const singularType = type.replace(/s$/, '');
-    const validTypes = ['skill', 'agent', 'hook', 'rule'];
-    if (!validTypes.includes(singularType)) {
-      return { error: 'Invalid type. Use skills, agents, hooks, or rules.' };
+    if (!VALID_TYPES.has(type)) {
+      return errorReply(reply, 400, 'Invalid type. Must be: skills, agents, hooks, rules');
     }
+    const singularType = type.replace(/s$/, '');
 
     const components = getComponentsByType(db, singularType);
 
@@ -103,16 +104,15 @@ module.exports = async function inventoryRoutes(app, opts) {
     return items;
   });
 
-  app.get('/api/inventory/:type/:name', async (request) => {
+  app.get('/api/inventory/:type/:name', async (request, reply) => {
     const { type, name } = request.params;
-    const { period, page: pageStr, per_page: perPageStr } = request.query;
+    const { period } = request.query;
     const since = periodToDate(period);
-    const page = Math.max(1, parseInt(pageStr) || 1);
-    const perPage = Math.min(50, Math.max(1, parseInt(perPageStr) || 10));
+    const { page, perPage } = parsePagination(request.query, { perPage: 10 });
 
     const eventTypeMap = { skills: 'skill_invoke', agents: 'agent_spawn' };
     const eventType = eventTypeMap[type];
-    if (!eventType) return { error: 'Invalid type' };
+    if (!eventType) return errorReply(reply, 400, 'Invalid type. Must be: skills, agents');
 
     const singularType = type.replace(/s$/, '');
     const comp = db.prepare(
