@@ -642,4 +642,52 @@ describe('op-server', () => {
       assert.equal(res.statusCode, 404);
     });
   });
+
+  describe('pagination: /api/rules', () => {
+    it('GET /api/rules returns paginated response', async () => {
+      const res = await app.inject({ method: 'GET', url: '/api/rules?page=1&per_page=10' });
+      assert.equal(res.statusCode, 200);
+      const body = JSON.parse(res.payload);
+      assert.ok('data' in body, 'should have data');
+      assert.ok('total' in body, 'should have total');
+      assert.ok('page' in body, 'should have page');
+      assert.ok('per_page' in body, 'should have per_page');
+      assert.ok(Array.isArray(body.data), 'data should be array');
+      assert.equal(body.page, 1);
+      assert.equal(body.per_page, 10);
+    });
+
+    it('GET /api/rules clamps per_page to max 50', async () => {
+      const res = await app.inject({ method: 'GET', url: '/api/rules?per_page=999' });
+      assert.equal(res.statusCode, 200);
+      const body = JSON.parse(res.payload);
+      assert.equal(body.per_page, 50);
+    });
+  });
+
+  describe('pagination: /api/unused', () => {
+    it('GET /api/unused returns paginated flat list', async () => {
+      const res = await app.inject({ method: 'GET', url: '/api/unused' });
+      assert.equal(res.statusCode, 200);
+      const body = JSON.parse(res.payload);
+      assert.ok('data' in body, 'should have data');
+      assert.ok('total' in body, 'should have total');
+      assert.ok('page' in body, 'should have page');
+      assert.ok('per_page' in body, 'should have per_page');
+      assert.ok(Array.isArray(body.data), 'data should be array');
+      // Each item in data should have type and name
+      for (const item of body.data) {
+        assert.ok(['skill', 'agent', 'rule'].includes(item.type), 'item.type should be skill/agent/rule');
+        assert.ok(typeof item.name === 'string', 'item.name should be string');
+      }
+    });
+
+    it('GET /api/unused respects per_page', async () => {
+      const res = await app.inject({ method: 'GET', url: '/api/unused?per_page=1' });
+      assert.equal(res.statusCode, 200);
+      const body = JSON.parse(res.payload);
+      assert.equal(body.per_page, 1);
+      assert.ok(body.data.length <= 1);
+    });
+  });
 });

@@ -107,10 +107,25 @@ function syncInstinctsToDb(db) {
   } catch { /* projects dir not found */ }
 }
 
+let _lastSyncMtimes = { projects: 0, instincts: 0 };
+
 function syncAll(db) {
+  const registryPath = path.join(REPO_DIR, 'projects.json');
+  const instinctsDir = path.join(REPO_DIR, 'cl', 'instincts');
+
+  let projectsMtime = 0;
+  let instinctsMtime = 0;
+  try { projectsMtime = fs.statSync(registryPath).mtimeMs; } catch { /* missing */ }
+  try { instinctsMtime = fs.statSync(instinctsDir).mtimeMs; } catch { /* missing */ }
+
+  if (projectsMtime === _lastSyncMtimes.projects && instinctsMtime === _lastSyncMtimes.instincts) {
+    return; // No changes
+  }
+
   try {
     syncProjectsToDb(db);
     syncInstinctsToDb(db);
+    _lastSyncMtimes = { projects: projectsMtime, instincts: instinctsMtime };
   } catch { /* non-critical */ }
 }
 

@@ -294,15 +294,25 @@ module.exports = async function coreRoutes(app, opts) {
 
   // ── Rules ───────────────────────────────────────────────────────────────
 
-  app.get('/api/rules', async () => {
-    return db.prepare(
+  app.get('/api/rules', async (request) => {
+    const page = Math.max(1, parseInt(request.query.page) || 1);
+    const perPage = Math.min(50, Math.max(1, parseInt(request.query.per_page) || 50));
+
+    const all = db.prepare(
       'SELECT rules_loaded, COUNT(*) as count FROM sessions WHERE rules_loaded IS NOT NULL GROUP BY rules_loaded ORDER BY count DESC'
     ).all();
+
+    const total = all.length;
+    const data = all.slice((page - 1) * perPage, page * perPage);
+    return { data, total, page, per_page: perPage };
   });
 
   // ── Unused ──────────────────────────────────────────────────────────────
 
-  app.get('/api/unused', async () => {
+  app.get('/api/unused', async (request) => {
+    const page = Math.max(1, parseInt(request.query.page) || 1);
+    const perPage = Math.min(50, Math.max(1, parseInt(request.query.per_page) || 50));
+
     const unused_skills = db.prepare(`
       SELECT c.name FROM components c
       LEFT JOIN events e ON e.name = c.name AND e.event_type = 'skill_invoke'
@@ -323,7 +333,15 @@ module.exports = async function coreRoutes(app, opts) {
       "SELECT name FROM components WHERE type = 'rule'"
     ).all().map(r => r.name);
 
-    return { unused_skills, unused_agents, unused_rules };
+    const all = [
+      ...unused_skills.map(name => ({ type: 'skill', name })),
+      ...unused_agents.map(name => ({ type: 'agent', name })),
+      ...unused_rules.map(name => ({ type: 'rule', name })),
+    ];
+
+    const total = all.length;
+    const data = all.slice((page - 1) * perPage, page * perPage);
+    return { data, total, page, per_page: perPage };
   });
 
   // ── Errors ──────────────────────────────────────────────────────────────

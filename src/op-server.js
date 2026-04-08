@@ -100,14 +100,18 @@ function buildApp(opts = {}) {
     // Suggestion analysis: handled by external agent script (launchd 3 AM daily)
     // Manual trigger available via POST /api/suggestions/analyze
 
-    // Knowledge graph sync timer
+    // Knowledge graph sync timer (skip if no new events)
+    let _lastKgEventCount = 0;
     timers.push(setInterval(() => {
       try {
+        const currentCount = db.prepare('SELECT COUNT(*) as c FROM events').get().c;
+        if (currentCount === _lastKgEventCount) return;
         syncGraph(db, {
           sessionLookbackDays: config.knowledge_session_lookback_days ?? 30,
           instinctMinConfidence: config.knowledge_instinct_min_confidence ?? 0.3,
           minTriggerCount: config.knowledge_pattern_min_occurrences ?? 5,
         });
+        _lastKgEventCount = currentCount;
       } catch { /* non-critical */ }
     }, config.knowledge_graph_interval_ms || 300000));
 

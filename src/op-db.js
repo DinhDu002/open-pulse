@@ -47,7 +47,8 @@ CREATE TABLE IF NOT EXISTS sessions (
   total_agent_spawns   INTEGER DEFAULT 0,
   total_input_tokens   INTEGER DEFAULT 0,
   total_output_tokens  INTEGER DEFAULT 0,
-  total_cost_usd       REAL    DEFAULT 0
+  total_cost_usd       REAL    DEFAULT 0,
+  rules_loaded         TEXT
 );
 
 CREATE TABLE IF NOT EXISTS prompts (
@@ -216,6 +217,7 @@ function createDb(dbPath) {
     'ALTER TABLE suggestions ADD COLUMN category TEXT',
     'ALTER TABLE suggestions ADD COLUMN action_data TEXT',
     'ALTER TABLE suggestions ADD COLUMN description_vi TEXT',
+    'ALTER TABLE sessions ADD COLUMN rules_loaded TEXT',
   ];
   for (const sql of migrations) {
     try { db.exec(sql); } catch { /* column already exists */ }

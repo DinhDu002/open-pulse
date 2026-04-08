@@ -65,6 +65,7 @@ module.exports = async function knowledgeRoutes(app, opts) {
 
   app.get('/api/knowledge/autocomplete', async (req) => {
     const { project, q } = req.query;
+    const limit = Math.min(50, Math.max(1, parseInt(req.query.limit) || 20));
     const results = [];
     // Note slugs
     if (project) {
@@ -83,7 +84,7 @@ module.exports = async function knowledgeRoutes(app, opts) {
         results.push({ type: n.type, value: vaultPath, label: n.name });
       }
     }
-    return results.slice(0, 20);
+    return results.slice(0, limit);
   });
 
   app.get('/api/knowledge/discover', async (req) => {
