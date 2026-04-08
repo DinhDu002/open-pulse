@@ -2,14 +2,13 @@
 
 const path = require('path');
 const fs = require('fs');
-const os = require('os');
-const crypto = require('crypto');
 const Fastify = require('fastify');
 const fastifyStatic = require('@fastify/static');
 
 const {
   createDb,
   querySuggestions,
+  updateSuggestionVi,
   updateSuggestionStatus,
   insertScanResult,
   getLatestScan,
@@ -21,9 +20,11 @@ const {
   getInstinctStats,
   getInstinctSuggestions,
   updateInstinct,
+  updateInstinctVi,
   deleteInstinct,
   getProjectSummary,
   getProjectTimeline,
+  deleteProject,
   queryLearningActivity,
   queryLearningRecent,
   upsertComponent,
@@ -31,24 +32,56 @@ const {
   getComponentsByType,
   getAllComponents,
   getKgStatus, getKgGraph, getKgNodeDetail,
+  insertKbNote, updateKbNote, deleteKbNote, getKbNote,
+  getKbNoteBySlug, queryKbNotes, getKbNoteBacklinks, getAllKbNoteSlugs,
 } = require('./op-db');
 const { syncGraph } = require('./op-knowledge-graph');
+const { slugify, slugifyUnique, extractBacklinks, syncNoteToDisk, deleteNoteFromDisk, discoverRelevantContent, syncNoteToGraph, removeNoteFromGraph } = require('./op-notes');
 const { generateAllVaults } = require('./op-vault-generator');
 const { ingestAll } = require('./op-ingest');
 const { findInstinctFile, updateConfidence, archiveInstinct } = require('./op-instinct-updater');
 const { runRetention } = require('./op-retention');
-const { execFile } = require('child_process');
+const { execFile, spawn } = require('child_process');
+const {
+  CLAUDE_DIR,
+  periodToDate,
+  parseFrontmatter,
+  STOP_WORDS,
+  extractKeywordsFromPrompts,
+  parseQualifiedName,
+  getInstalledPlugins,
+  getKnownProjectPaths,
+  getPluginComponents,
+  getProjectAgents,
+  readItemMetaFromFile,
+  readItemMeta,
+  getKnownSkills,
+  getKnownAgents,
+  getKnownRules,
+  parseHooksFromSettings,
+  getKnownHooks,
+  isGitRepo,
+} = require('./op-helpers');
+const {
+  syncAll,
+  syncComponentsWithDb,
+  runScan,
+} = require('./op-sync');
 
 // ---------------------------------------------------------------------------
 // Paths (environment-configurable with sensible defaults)
 // ---------------------------------------------------------------------------
 
 const REPO_DIR   = process.env.OPEN_PULSE_DIR       || path.join(__dirname, '..');
-const CLAUDE_DIR = process.env.OPEN_PULSE_CLAUDE_DIR || path.join(os.homedir(), '.claude');
 const DB_PATH    = process.env.OPEN_PULSE_DB         || path.join(REPO_DIR, 'open-pulse.db');
 const CONFIG_PATH = path.join(REPO_DIR, 'config.json');
 
 let componentETag = '';
+let _syncDb = null;
+
+function syncComponents() {
+  if (_syncDb) componentETag = syncComponentsWithDb(_syncDb);
+}
 
 // ---------------------------------------------------------------------------
 // Config
@@ -70,520 +103,6 @@ function loadConfig() {
 }
 
 // ---------------------------------------------------------------------------
-// Helper: period string → ISO date cutoff
-// ---------------------------------------------------------------------------
-
-function periodToDate(period) {
-  if (!period || period === 'all') return null;
-  const match = period.match(/^(\d+)d$/);
-  if (!match) return null;
-  const days = parseInt(match[1], 10);
-  const d = new Date();
-  d.setDate(d.getDate() - days);
-  return d.toISOString();
-}
-
-// ---------------------------------------------------------------------------
-// YAML frontmatter parser
-// ---------------------------------------------------------------------------
-
-function parseFrontmatter(content) {
-  const match = content.match(/^---\n([\s\S]*?)\n---/);
-  if (!match) return {};
-  const result = {};
-  for (const line of match[1].split('\n')) {
-    const idx = line.indexOf(':');
-    if (idx === -1) continue;
-    const key = line.slice(0, idx).trim();
-    let val = line.slice(idx + 1).trim();
-    if ((val.startsWith('"') && val.endsWith('"')) || (val.startsWith("'") && val.endsWith("'"))) {
-      val = val.slice(1, -1);
-    }
-    result[key] = val;
-  }
-  return result;
-}
-
-// ---------------------------------------------------------------------------
-// Keyword extraction from invocation prompts
-// ---------------------------------------------------------------------------
-
-const STOP_WORDS = new Set([
-  'the','a','an','is','are','was','were','be','been','being','have','has','had',
-  'do','does','did','will','would','shall','should','may','might','must','can','could',
-  'to','of','in','for','on','with','at','by','from','as','into','through','during',
-  'before','after','above','below','between','out','off','over','under','again','further',
-  'then','once','here','there','when','where','why','how','all','both','each','few',
-  'more','most','other','some','such','no','nor','not','only','own','same','so','than',
-  'too','very','just','about','up','it','its','this','that','these','those','i','me',
-  'my','we','our','you','your','he','him','his','she','her','they','them','their',
-  'what','which','who','whom','and','but','or','if','while','because','until','although',
-  'null','true','false','undefined','none',
-]);
-
-function extractKeywordsFromPrompts(invocations) {
-  const freq = new Map();
-  for (const inv of invocations) {
-    let text = inv.user_prompt || '';
-    if (!text && inv.detail) {
-      try {
-        const obj = JSON.parse(inv.detail);
-        text = obj.args || obj.description || '';
-      } catch {
-        text = String(inv.detail);
-      }
-    }
-    const words = text.toLowerCase().replace(/[^a-z0-9\s-]/g, ' ').split(/\s+/).filter(Boolean);
-    for (const w of words) {
-      if (w.length < 3 || STOP_WORDS.has(w)) continue;
-      freq.set(w, (freq.get(w) || 0) + 1);
-    }
-  }
-  return [...freq.entries()]
-    .filter(([, count]) => count >= 1)
-    .sort((a, b) => b[1] - a[1])
-    .slice(0, 15)
-    .map(([word]) => word);
-}
-
-// ---------------------------------------------------------------------------
-// Filesystem scanners (use CLAUDE_DIR for real components)
-// ---------------------------------------------------------------------------
-
-function parseQualifiedName(name) {
-  const idx = name.indexOf(':');
-  if (idx === -1) return { plugin: null, shortName: name };
-  return { plugin: name.substring(0, idx), shortName: name.substring(idx + 1) };
-}
-
-function getInstalledPlugins() {
-  const jsonPath = path.join(CLAUDE_DIR, 'plugins', 'installed_plugins.json');
-  try {
-    const data = JSON.parse(fs.readFileSync(jsonPath, 'utf8'));
-    return Object.entries(data.plugins || {}).map(([key, installs]) => {
-      const projects = [];
-      for (const inst of installs) {
-        if (inst.scope === 'user') {
-          if (!projects.includes('global')) projects.push('global');
-        } else if (inst.projectPath) {
-          const name = path.basename(inst.projectPath);
-          if (!projects.includes(name)) projects.push(name);
-        }
-      }
-      return {
-        plugin: key.split('@')[0],
-        installPath: installs[0].installPath,
-        projects: projects.length ? projects : ['global'],
-      };
-    });
-  } catch {
-    return [];
-  }
-}
-
-function getKnownProjectPaths() {
-  const plugins = getInstalledPlugins();
-  const paths = new Set();
-  const jsonPath = path.join(CLAUDE_DIR, 'plugins', 'installed_plugins.json');
-  try {
-    const data = JSON.parse(fs.readFileSync(jsonPath, 'utf8'));
-    for (const installs of Object.values(data.plugins || {})) {
-      for (const inst of installs) {
-        if (inst.projectPath) paths.add(inst.projectPath);
-      }
-    }
-  } catch { /* ignore */ }
-  return [...paths];
-}
-
-function getPluginComponents(type) {
-  const plugins = getInstalledPlugins();
-  const items = [];
-  for (const { plugin, installPath, projects } of plugins) {
-    try {
-      if (type === 'agents') {
-        const dir = path.join(installPath, 'agents');
-        for (const f of fs.readdirSync(dir)) {
-          if (!f.endsWith('.md')) continue;
-          const name = f.replace(/\.md$/, '');
-          items.push({ qualifiedName: `${plugin}:${name}`, plugin, projects, filePath: path.join(dir, f) });
-        }
-      } else if (type === 'skills') {
-        const dir = path.join(installPath, 'skills');
-        for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
-          if (!e.isDirectory()) continue;
-          const skillFile = path.join(dir, e.name, 'SKILL.md');
-          if (fs.existsSync(skillFile)) {
-            items.push({ qualifiedName: `${plugin}:${e.name}`, plugin, projects, filePath: skillFile });
-          }
-        }
-      }
-    } catch { /* plugin dir may not have agents/ or skills/ */ }
-  }
-  return items;
-}
-
-function getProjectAgents() {
-  const projectPaths = getKnownProjectPaths();
-  const items = [];
-  for (const projPath of projectPaths) {
-    const agentsDir = path.join(projPath, '.claude', 'agents');
-    try {
-      for (const f of fs.readdirSync(agentsDir)) {
-        if (!f.endsWith('.md')) continue;
-        const name = f.replace(/\.md$/, '');
-        items.push({
-          name,
-          project: path.basename(projPath),
-          filePath: path.join(agentsDir, f),
-        });
-      }
-    } catch { /* no .claude/agents/ in this project */ }
-  }
-  return items;
-}
-
-function readItemMetaFromFile(filePath) {
-  try {
-    const content = fs.readFileSync(filePath, 'utf8');
-    const meta = parseFrontmatter(content);
-    return { description: meta.description || '', origin: meta.origin || 'custom' };
-  } catch {
-    return { description: '', origin: 'custom' };
-  }
-}
-
-function readItemMeta(type, name) {
-  let filePath;
-  if (type === 'skills') {
-    filePath = path.join(CLAUDE_DIR, 'skills', name, 'SKILL.md');
-  } else {
-    filePath = path.join(CLAUDE_DIR, 'agents', name + '.md');
-  }
-  return readItemMetaFromFile(filePath);
-}
-
-function getKnownSkills() {
-  const skillsDir = path.join(CLAUDE_DIR, 'skills');
-  try {
-    return fs.readdirSync(skillsDir, { withFileTypes: true })
-      .filter(e => e.isDirectory() || e.isSymbolicLink())
-      .map(e => e.name);
-  } catch {
-    return [];
-  }
-}
-
-function getKnownAgents() {
-  const agentsDir = path.join(CLAUDE_DIR, 'agents');
-  try {
-    return fs.readdirSync(agentsDir)
-      .filter(f => f.endsWith('.md'))
-      .map(f => f.replace(/\.md$/, ''));
-  } catch {
-    return [];
-  }
-}
-
-function getKnownRules() {
-  const rulesDir = path.join(CLAUDE_DIR, 'rules');
-  const results = [];
-  try {
-    for (const entry of fs.readdirSync(rulesDir, { withFileTypes: true })) {
-      if (entry.isFile() && entry.name.endsWith('.md')) {
-        results.push(entry.name.replace(/\.md$/, ''));
-      }
-    }
-  } catch { /* ignore */ }
-  const commonDir = path.join(rulesDir, 'common');
-  try {
-    for (const entry of fs.readdirSync(commonDir, { withFileTypes: true })) {
-      if (entry.isFile() && entry.name.endsWith('.md')) {
-        results.push('common/' + entry.name.replace(/\.md$/, ''));
-      }
-    }
-  } catch { /* ignore */ }
-  return results;
-}
-
-function parseHooksFromSettings(settingsPath, project) {
-  const results = [];
-  try {
-    const settings = JSON.parse(fs.readFileSync(settingsPath, 'utf8'));
-    if (!settings.hooks) return results;
-    for (const [event, entries] of Object.entries(settings.hooks)) {
-      if (!Array.isArray(entries)) continue;
-      for (const entry of entries) {
-        const matcher = entry.matcher || '';
-        const hooks = entry.hooks || [];
-        for (const hook of hooks) {
-          results.push({
-            name: matcher || event,
-            event,
-            matcher,
-            command: hook.command || '',
-            project,
-          });
-        }
-      }
-    }
-  } catch { /* no settings.json or invalid */ }
-  return results;
-}
-
-function getKnownHooks() {
-  const results = parseHooksFromSettings(path.join(CLAUDE_DIR, 'settings.json'), 'global');
-  for (const projPath of getKnownProjectPaths()) {
-    const projSettings = path.join(projPath, '.claude', 'settings.json');
-    results.push(...parseHooksFromSettings(projSettings, path.basename(projPath)));
-  }
-  return results;
-}
-
-// ---------------------------------------------------------------------------
-// CL sync: filesystem → DB (uses <repo>/cl/ paths)
-// ---------------------------------------------------------------------------
-
-function syncProjectsToDb(db) {
-  const registryPath = path.join(REPO_DIR, 'projects.json');
-  try {
-    const registry = JSON.parse(fs.readFileSync(registryPath, 'utf8'));
-    for (const [id, meta] of Object.entries(registry)) {
-      upsertClProject(db, {
-        project_id: id,
-        name: meta.name || id,
-        directory: meta.root || null,
-        first_seen_at: meta.created_at || new Date().toISOString(),
-        last_seen_at: meta.last_seen || new Date().toISOString(),
-        session_count: 0,
-      });
-    }
-  } catch { /* registry not found or invalid */ }
-}
-
-function syncInstinctsToDb(db) {
-  const syncDir = (dir, scope, projectId) => {
-    try {
-      const files = fs.readdirSync(dir).filter(f => f.endsWith('.md') || f.endsWith('.yaml'));
-      for (const file of files) {
-        const filePath = path.join(dir, file);
-        try {
-          const content = fs.readFileSync(filePath, 'utf8');
-          const meta = parseFrontmatter(content);
-          const bodyMatch = content.match(/^---[\s\S]*?---\s*([\s\S]*)$/);
-          const body = bodyMatch ? bodyMatch[1].trim() : content;
-          const now = new Date().toISOString();
-
-          upsertInstinct(db, {
-            instinct_id: meta.id || file.replace(/\.(md|yaml)$/, ''),
-            project_id: meta.project_id || (scope === 'global' ? '' : projectId),
-            category: meta.domain || meta.category || 'unknown',
-            pattern: meta.trigger || file.replace(/\.(md|yaml)$/, ''),
-            confidence: parseFloat(meta.confidence) || 0.5,
-            seen_count: 1,
-            first_seen: now,
-            last_seen: now,
-            instinct: body,
-          });
-        } catch { /* skip unreadable */ }
-      }
-    } catch { /* dir not found */ }
-  };
-
-  // Global instincts via <repo>/cl/ paths
-  syncDir(path.join(REPO_DIR, 'cl', 'instincts', 'personal'), 'global', '');
-  syncDir(path.join(REPO_DIR, 'cl', 'instincts', 'inherited'), 'global', '');
-
-  // Per-project instincts
-  const projectsDir = path.join(REPO_DIR, 'cl', 'projects');
-  try {
-    for (const entry of fs.readdirSync(projectsDir, { withFileTypes: true })) {
-      if (!entry.isDirectory()) continue;
-      syncDir(path.join(projectsDir, entry.name, 'instincts', 'personal'), 'project', entry.name);
-      syncDir(path.join(projectsDir, entry.name, 'instincts', 'inherited'), 'project', entry.name);
-    }
-  } catch { /* projects dir not found */ }
-}
-
-function syncAll(db) {
-  try {
-    syncProjectsToDb(db);
-    syncInstinctsToDb(db);
-  } catch { /* non-critical */ }
-}
-
-// ---------------------------------------------------------------------------
-// Component sync: filesystem → components table
-// ---------------------------------------------------------------------------
-
-let _syncDb = null;
-
-function syncComponentsWithDb(db) {
-  const now = new Date().toISOString();
-  const diskItems = [];
-
-  // Global skills
-  for (const name of getKnownSkills()) {
-    const filePath = path.join(CLAUDE_DIR, 'skills', name, 'SKILL.md');
-    const meta = readItemMetaFromFile(filePath);
-    diskItems.push({
-      type: 'skill', name, source: 'global', plugin: null, project: null,
-      file_path: filePath, description: meta.description, agent_class: null,
-      hook_event: null, hook_matcher: null, hook_command: null,
-    });
-  }
-
-  // Global agents
-  for (const name of getKnownAgents()) {
-    const filePath = path.join(CLAUDE_DIR, 'agents', name + '.md');
-    const meta = readItemMetaFromFile(filePath);
-    diskItems.push({
-      type: 'agent', name, source: 'global', plugin: null, project: null,
-      file_path: filePath, description: meta.description, agent_class: 'configured',
-      hook_event: null, hook_matcher: null, hook_command: null,
-    });
-  }
-
-  // Global rules
-  for (const name of getKnownRules()) {
-    const filePath = path.join(CLAUDE_DIR, 'rules', name + '.md');
-    const meta = readItemMetaFromFile(filePath);
-    diskItems.push({
-      type: 'rule', name, source: 'global', plugin: null, project: null,
-      file_path: filePath, description: meta.description, agent_class: null,
-      hook_event: null, hook_matcher: null, hook_command: null,
-    });
-  }
-
-  // Hooks (global + project)
-  for (const hook of getKnownHooks()) {
-    const isProject = hook.project && hook.project !== 'global';
-    diskItems.push({
-      type: 'hook', name: hook.name, source: isProject ? 'project' : 'global',
-      plugin: null, project: hook.project || null,
-      file_path: null, description: null, agent_class: null,
-      hook_event: hook.event, hook_matcher: hook.matcher, hook_command: hook.command,
-    });
-  }
-
-  // Plugin components (skills + agents)
-  for (const pItem of getPluginComponents('skills')) {
-    const meta = readItemMetaFromFile(pItem.filePath);
-    diskItems.push({
-      type: 'skill', name: pItem.qualifiedName, source: 'plugin',
-      plugin: pItem.plugin, project: pItem.projects.join(', '),
-      file_path: pItem.filePath, description: meta.description, agent_class: null,
-      hook_event: null, hook_matcher: null, hook_command: null,
-    });
-  }
-  for (const pItem of getPluginComponents('agents')) {
-    const meta = readItemMetaFromFile(pItem.filePath);
-    diskItems.push({
-      type: 'agent', name: pItem.qualifiedName, source: 'plugin',
-      plugin: pItem.plugin, project: pItem.projects.join(', '),
-      file_path: pItem.filePath, description: meta.description, agent_class: 'configured',
-      hook_event: null, hook_matcher: null, hook_command: null,
-    });
-  }
-
-  // Project agents
-  for (const projAgent of getProjectAgents()) {
-    const meta = readItemMetaFromFile(projAgent.filePath);
-    diskItems.push({
-      type: 'agent', name: projAgent.name, source: 'project',
-      plugin: null, project: projAgent.project,
-      file_path: projAgent.filePath, description: meta.description, agent_class: 'configured',
-      hook_event: null, hook_matcher: null, hook_command: null,
-    });
-  }
-
-  // UPSERT all disk items + DELETE stale items — atomically
-  const syncTx = db.transaction(() => {
-    for (const item of diskItems) {
-      upsertComponent(db, { ...item, first_seen_at: now, last_seen_at: now });
-    }
-    deleteComponentsNotSeenSince(db, now);
-  });
-  syncTx();
-
-  // COMPUTE ETag
-  const stats = db.prepare(
-    'SELECT COUNT(*) AS cnt, MAX(last_seen_at) AS latest FROM components'
-  ).get();
-  componentETag = crypto
-    .createHash('md5')
-    .update(`${stats.cnt}:${stats.latest || ''}`)
-    .digest('hex');
-}
-
-function syncComponents() {
-  if (_syncDb) syncComponentsWithDb(_syncDb);
-}
-
-// ---------------------------------------------------------------------------
-// Scanner: inventory all components, check for unused, produce report
-// ---------------------------------------------------------------------------
-
-function runScan(db) {
-  const skills = getKnownSkills();
-  const agents = getKnownAgents();
-  const hooks = getKnownHooks();
-  const rules = getKnownRules();
-
-  const usedSkills = new Set(
-    db.prepare("SELECT DISTINCT name FROM events WHERE event_type = 'skill_invoke'").all().map(r => r.name)
-  );
-  const usedAgents = new Set(
-    db.prepare("SELECT DISTINCT name FROM events WHERE event_type = 'agent_spawn'").all().map(r => r.name)
-  );
-
-  const usedSkillNames = [...usedSkills];
-  const unusedSkills = skills.filter(s =>
-    !usedSkills.has(s) && !usedSkillNames.some(u => u.startsWith(s + ':'))
-  );
-  const unusedAgents = agents.filter(a => !usedAgents.has(a));
-
-  const issues = [];
-  for (const s of unusedSkills) {
-    issues.push({ severity: 'low', message: `Unused skill: ${s}` });
-  }
-  for (const a of unusedAgents) {
-    issues.push({ severity: 'low', message: `Unused agent: ${a}` });
-  }
-
-  const report = {
-    scanned_at: new Date().toISOString(),
-    total_skills: skills.length,
-    total_agents: agents.length,
-    total_hooks: hooks.length,
-    total_rules: rules.length,
-    unused_skills: unusedSkills,
-    unused_agents: unusedAgents,
-    issues,
-  };
-
-  const issuesBySeverity = { critical: 0, high: 0, medium: 0, low: 0 };
-  for (const issue of issues) {
-    if (issue.severity in issuesBySeverity) issuesBySeverity[issue.severity]++;
-  }
-
-  insertScanResult(db, {
-    scanned_at: report.scanned_at,
-    report: JSON.stringify(report),
-    total_skills: report.total_skills,
-    total_agents: report.total_agents,
-    total_hooks: report.total_hooks,
-    total_rules: report.total_rules,
-    issues_critical: issuesBySeverity.critical,
-    issues_high: issuesBySeverity.high,
-    issues_medium: issuesBySeverity.medium,
-    issues_low: issuesBySeverity.low,
-  });
-
-  return report;
-}
-
-// ---------------------------------------------------------------------------
 // buildApp
 // ---------------------------------------------------------------------------
 
@@ -596,7 +115,7 @@ function buildApp(opts = {}) {
   // Initial sync
   syncAll(db);
   _syncDb = db;
-  try { syncComponentsWithDb(db); } catch { /* non-critical */ }
+  try { componentETag = syncComponentsWithDb(db); } catch { /* non-critical */ }
 
   const app = Fastify({ logger: false });
 
@@ -616,7 +135,7 @@ function buildApp(opts = {}) {
 
     timers.push(setInterval(() => {
       syncAll(db);
-      try { syncComponentsWithDb(db); } catch { /* non-critical */ }
+      try { componentETag = syncComponentsWithDb(db); } catch { /* non-critical */ }
     }, config.cl_sync_interval_ms || 60000));
 
     // Retention: run once on startup, then daily
@@ -829,6 +348,86 @@ function buildApp(opts = {}) {
       });
 
     return { session, events };
+  });
+
+  // ── Prompts ─────────────────────────────────────────────────────────────
+
+  app.get('/api/prompts', async (request) => {
+    const {
+      period = '7d', q, session_id, project,
+      page: pageStr, per_page: perPageStr,
+    } = request.query;
+
+    const page = Math.max(1, parseInt(pageStr) || 1);
+    const perPage = Math.min(50, Math.max(1, parseInt(perPageStr) || 20));
+    const offset = (page - 1) * perPage;
+    const since = periodToDate(period);
+
+    const conditions = [];
+    const params = {};
+
+    if (since) { conditions.push('p.timestamp >= @since'); params.since = since; }
+    if (q) { conditions.push('p.prompt_text LIKE @q'); params.q = '%' + q + '%'; }
+    if (session_id) { conditions.push('p.session_id = @session_id'); params.session_id = session_id; }
+    if (project) { conditions.push('s.working_directory LIKE @project'); params.project = '%/' + project; }
+
+    const where = conditions.length ? 'WHERE ' + conditions.join(' AND ') : '';
+
+    const total = db.prepare(
+      'SELECT COUNT(*) as count FROM prompts p LEFT JOIN sessions s ON s.session_id = p.session_id ' + where
+    ).get(params).count;
+
+    const rows = db.prepare(
+      'SELECT p.*, s.working_directory FROM prompts p LEFT JOIN sessions s ON s.session_id = p.session_id '
+      + where + ' ORDER BY p.timestamp DESC LIMIT @limit OFFSET @offset'
+    ).all({ ...params, limit: perPage, offset });
+
+    // Event breakdown per prompt
+    const breakdowns = {};
+    const promptIds = rows.map(r => r.id);
+    if (promptIds.length > 0) {
+      const placeholders = promptIds.map(() => '?').join(',');
+      const bdRows = db.prepare(
+        'SELECT prompt_id, event_type, COUNT(*) as count FROM events WHERE prompt_id IN (' + placeholders + ') GROUP BY prompt_id, event_type'
+      ).all(...promptIds);
+      for (const r of bdRows) {
+        if (!breakdowns[r.prompt_id]) breakdowns[r.prompt_id] = {};
+        breakdowns[r.prompt_id][r.event_type] = r.count;
+      }
+    }
+
+    const prompts = rows.map(r => ({
+      id: r.id, session_id: r.session_id, prompt_text: r.prompt_text,
+      timestamp: r.timestamp, event_count: r.event_count,
+      total_cost_usd: r.total_cost_usd, duration_ms: r.duration_ms,
+      project: r.working_directory ? path.basename(r.working_directory) : null,
+      event_breakdown: breakdowns[r.id] || {},
+    }));
+
+    return { prompts, total, page, per_page: perPage };
+  });
+
+  app.get('/api/prompts/:id', async (request, reply) => {
+    const { id } = request.params;
+    const row = db.prepare(
+      'SELECT p.*, s.working_directory FROM prompts p LEFT JOIN sessions s ON s.session_id = p.session_id WHERE p.id = ?'
+    ).get(id);
+
+    if (!row) { reply.code(404); return { error: 'Prompt not found' }; }
+
+    const events = db.prepare(
+      'SELECT id, timestamp, event_type, name, detail, duration_ms, success, estimated_cost_usd, tool_input, tool_response, seq_num, model FROM events WHERE prompt_id = ? ORDER BY seq_num ASC'
+    ).all(id);
+
+    return {
+      prompt: {
+        id: row.id, session_id: row.session_id, prompt_text: row.prompt_text,
+        timestamp: row.timestamp, event_count: row.event_count,
+        total_cost_usd: row.total_cost_usd, duration_ms: row.duration_ms,
+        project: row.working_directory ? path.basename(row.working_directory) : null,
+      },
+      events,
+    };
   });
 
   // ── Inventory ───────────────────────────────────────────────────────────
@@ -1207,6 +806,50 @@ function buildApp(opts = {}) {
     }
   });
 
+  // ── Translate instinct to Vietnamese ─────────────────────────────────────
+
+  app.post('/api/instincts/:id/translate', async (request, reply) => {
+    const id = parseInt(request.params.id);
+    if (isNaN(id)) return reply.code(400).send({ error: 'invalid id' });
+    const inst = getInstinct(db, id);
+    if (!inst) return reply.code(404).send({ error: 'not found' });
+    if (inst.instinct_vi) return { instinct_vi: inst.instinct_vi };
+    if (!inst.instinct) return reply.code(400).send({ error: 'no instinct content to translate' });
+
+    const prompt = 'Dịch toàn bộ đoạn văn bản sau sang tiếng Việt, bao gồm cả tiêu đề (## Action → ## Hành động, ## Evidence → ## Bằng chứng, v.v.). ' +
+      'Chỉ giữ nguyên: tên file, tên tool, code snippet, command. ' +
+      'Chỉ trả về bản dịch, không thêm giải thích.\n\n' + inst.instinct;
+
+    return new Promise((resolve) => {
+      const child = spawn('claude', ['--model', 'haiku', '--max-turns', '1', '--print'], {
+        timeout: 60000,
+        stdio: ['pipe', 'pipe', 'pipe'],
+      });
+      let stdout = '';
+      let stderr = '';
+      child.stdout.on('data', (d) => { stdout += d; });
+      child.stderr.on('data', (d) => { stderr += d; });
+      child.on('close', (code) => {
+        if (code !== 0) {
+          request.log.error({ code, stderr }, 'translate failed');
+          return resolve(reply.code(500).send({ error: 'Translation failed (exit ' + code + ')' }));
+        }
+        const translated = stdout.trim();
+        if (!translated) {
+          return resolve(reply.code(500).send({ error: 'Empty translation result' }));
+        }
+        updateInstinctVi(db, id, translated);
+        resolve({ instinct_vi: translated });
+      });
+      child.on('error', (err) => {
+        request.log.error({ err }, 'translate spawn error');
+        resolve(reply.code(500).send({ error: 'Translation failed: ' + err.message }));
+      });
+      child.stdin.write(prompt);
+      child.stdin.end();
+    });
+  });
+
   // ── Projects ─────────────────────────────────────────────────────────────
 
   app.get('/api/projects/:id/summary', async (request, reply) => {
@@ -1218,6 +861,47 @@ function buildApp(opts = {}) {
   app.get('/api/projects/:id/timeline', async (request) => {
     const weeks = Math.max(1, parseInt(request.query.weeks) || 8);
     return getProjectTimeline(db, request.params.id, weeks);
+  });
+
+  app.delete('/api/projects/:id', async (request, reply) => {
+    const projectId = request.params.id;
+
+    const project = db.prepare('SELECT * FROM cl_projects WHERE project_id = ?').get(projectId);
+    if (!project) return reply.code(404).send({ error: 'Project not found' });
+
+    // Refuse if observer is running
+    let observerRunning = false;
+    try {
+      const pidFile = path.join(REPO_DIR, 'projects', projectId, '.observer.pid');
+      const pid = parseInt(fs.readFileSync(pidFile, 'utf8').trim(), 10);
+      if (pid > 1) {
+        try { process.kill(pid, 0); observerRunning = true; } catch { /* not running */ }
+      }
+    } catch { /* no pid file */ }
+
+    if (observerRunning) {
+      return reply.code(409).send({ error: 'Observer is running. Stop it before deleting.' });
+    }
+
+    // DB deletion (transactional)
+    deleteProject(db, projectId);
+
+    // Filesystem cleanup
+    const clProjectDir = path.join(REPO_DIR, 'cl', 'projects', projectId);
+    try { fs.rmSync(clProjectDir, { recursive: true, force: true }); } catch { /* may not exist */ }
+
+    const projectDir = path.join(REPO_DIR, 'projects', projectId);
+    try { fs.rmSync(projectDir, { recursive: true, force: true }); } catch { /* may not exist */ }
+
+    // Remove from projects.json
+    const registryPath = path.join(REPO_DIR, 'projects.json');
+    try {
+      const registry = JSON.parse(fs.readFileSync(registryPath, 'utf8'));
+      delete registry[projectId];
+      fs.writeFileSync(registryPath, JSON.stringify(registry, null, 2), 'utf8');
+    } catch { /* registry may not exist */ }
+
+    return { deleted: true, project_id: projectId };
   });
 
   // ── Learning ──────────────────────────────────────────────────────────────
@@ -1272,6 +956,55 @@ function buildApp(opts = {}) {
     const { id } = request.params;
     updateSuggestionStatus(db, id, 'dismissed', 'user');
     return { success: true, id, status: 'dismissed' };
+  });
+
+  app.post('/api/suggestions/:id/translate', async (request, reply) => {
+    const { id } = request.params;
+    const all = querySuggestions(db, null, null);
+    const sug = all.find(s => s.id === id);
+    if (!sug) return reply.code(404).send({ error: 'not found' });
+    if (sug.description_vi) return { description_vi: sug.description_vi };
+    if (!sug.description) return reply.code(400).send({ error: 'no description to translate' });
+
+    const prompt =
+      'Giải thích đề xuất sau bằng tiếng Việt theo đúng format 3 dòng:\n' +
+      'Nghĩa là gì: [giải thích ngắn gọn đề xuất này nói gì]\n' +
+      'Vấn đề: [tại sao cần quan tâm — rủi ro hoặc cơ hội bị bỏ lỡ]\n' +
+      'Cách xử lý: [hành động cụ thể nên làm]\n\n' +
+      'Chỉ trả về 3 dòng trên, không thêm giải thích. Dùng đầy đủ dấu tiếng Việt.\n\n' +
+      'Description: ' + sug.description + '\n' +
+      'Category: ' + sug.category + '\n' +
+      'Type: ' + sug.type + '\n' +
+      (sug.action_data ? 'Action data: ' + sug.action_data + '\n' : '');
+
+    return new Promise((resolve) => {
+      const child = spawn('claude', ['--model', 'haiku', '--max-turns', '1', '--print'], {
+        timeout: 60000,
+        stdio: ['pipe', 'pipe', 'pipe'],
+      });
+      let stdout = '';
+      let stderr = '';
+      child.stdout.on('data', (d) => { stdout += d; });
+      child.stderr.on('data', (d) => { stderr += d; });
+      child.on('close', (code) => {
+        if (code !== 0) {
+          request.log.error({ code, stderr }, 'suggestion translate failed');
+          return resolve(reply.code(500).send({ error: 'Translation failed (exit ' + code + ')' }));
+        }
+        const translated = stdout.trim();
+        if (!translated) {
+          return resolve(reply.code(500).send({ error: 'Empty translation result' }));
+        }
+        updateSuggestionVi(db, id, translated);
+        resolve({ description_vi: translated });
+      });
+      child.on('error', (err) => {
+        request.log.error({ err }, 'suggestion translate spawn error');
+        resolve(reply.code(500).send({ error: 'Translation failed: ' + err.message }));
+      });
+      child.stdin.write(prompt);
+      child.stdin.end();
+    });
   });
 
   // ── Scanner ─────────────────────────────────────────────────────────────
@@ -1380,6 +1113,111 @@ function buildApp(opts = {}) {
       knowledge_session_lookback_days: config.knowledge_session_lookback_days ?? 30,
       knowledge_instinct_min_confidence: config.knowledge_instinct_min_confidence ?? 0.3,
     };
+  });
+
+  // ── Knowledge Base Notes ────────────────────────────────────────────────
+
+  app.get('/api/knowledge/notes', async (req) => {
+    const { project, search, tag, page, per_page } = req.query;
+    return queryKbNotes(db, {
+      projectId: project || undefined,
+      search: search || undefined,
+      tag: tag || undefined,
+      page: parseInt(page) || 1,
+      perPage: parseInt(per_page) || 20,
+    });
+  });
+
+  app.get('/api/knowledge/notes/:id', async (req) => {
+    const note = getKbNote(db, req.params.id);
+    if (!note) return { error: 'Not found' };
+    const backlinks = getKbNoteBacklinks(db, note.project_id, note.slug);
+    const refs = extractBacklinks(note.body);
+    return { ...note, backlinks, references: refs };
+  });
+
+  app.post('/api/knowledge/notes', async (req) => {
+    const { project_id, title, body, tags } = req.body;
+    if (!project_id || !title) return { error: 'project_id and title required' };
+    const existingSlugs = getAllKbNoteSlugs(db, project_id);
+    const slug = slugifyUnique(title, existingSlugs);
+    const id = `note:${crypto.randomUUID()}`;
+    const tagsJson = typeof tags === 'string' ? tags : JSON.stringify(tags || []);
+    insertKbNote(db, { id, project_id, slug, title, body: body || '', tags: tagsJson });
+    const note = getKbNote(db, id);
+    // Sync to disk + graph
+    const project = db.prepare('SELECT directory FROM cl_projects WHERE project_id = ?').get(project_id);
+    if (project?.directory) syncNoteToDisk(project.directory, note);
+    syncNoteToGraph(db, note);
+    return note;
+  });
+
+  app.put('/api/knowledge/notes/:id', async (req) => {
+    const existing = getKbNote(db, req.params.id);
+    if (!existing) return { error: 'Not found' };
+    const { title, body, tags } = req.body;
+    const fields = {};
+    if (title !== undefined) fields.title = title;
+    if (body !== undefined) fields.body = body;
+    if (tags !== undefined) fields.tags = typeof tags === 'string' ? tags : JSON.stringify(tags);
+    if (title !== undefined && title !== existing.title) {
+      const existingSlugs = getAllKbNoteSlugs(db, existing.project_id).filter(s => s !== existing.slug);
+      fields.slug = slugifyUnique(title, existingSlugs);
+      // Remove old disk file
+      const project = db.prepare('SELECT directory FROM cl_projects WHERE project_id = ?').get(existing.project_id);
+      if (project?.directory) deleteNoteFromDisk(project.directory, existing.slug);
+    }
+    updateKbNote(db, req.params.id, fields);
+    const updated = getKbNote(db, req.params.id);
+    const project = db.prepare('SELECT directory FROM cl_projects WHERE project_id = ?').get(existing.project_id);
+    if (project?.directory) syncNoteToDisk(project.directory, updated);
+    syncNoteToGraph(db, updated);
+    return updated;
+  });
+
+  app.delete('/api/knowledge/notes/:id', async (req) => {
+    const existing = getKbNote(db, req.params.id);
+    if (!existing) return { error: 'Not found' };
+    deleteKbNote(db, req.params.id);
+    const project = db.prepare('SELECT directory FROM cl_projects WHERE project_id = ?').get(existing.project_id);
+    if (project?.directory) deleteNoteFromDisk(project.directory, existing.slug);
+    removeNoteFromGraph(db, existing.slug);
+    return { deleted: true };
+  });
+
+  app.get('/api/knowledge/notes/:id/backlinks', async (req) => {
+    const note = getKbNote(db, req.params.id);
+    if (!note) return { error: 'Not found' };
+    return getKbNoteBacklinks(db, note.project_id, note.slug);
+  });
+
+  app.get('/api/knowledge/autocomplete', async (req) => {
+    const { project, q } = req.query;
+    const results = [];
+    // Note slugs
+    if (project) {
+      const slugs = getAllKbNoteSlugs(db, project);
+      for (const s of slugs) {
+        if (!q || s.includes(q.toLowerCase())) {
+          results.push({ type: 'note', value: `notes/${s}`, label: s });
+        }
+      }
+    }
+    // Auto-node names from kg_nodes
+    const { nodes } = getKgGraph(db);
+    for (const n of nodes) {
+      if (!q || n.name.toLowerCase().includes(q.toLowerCase()) || n.id.toLowerCase().includes(q.toLowerCase())) {
+        const vaultPath = `${n.type}s/${n.name}`;
+        results.push({ type: n.type, value: vaultPath, label: n.name });
+      }
+    }
+    return results.slice(0, 20);
+  });
+
+  app.get('/api/knowledge/discover', async (req) => {
+    const { project, context } = req.query;
+    if (!project || !context) return { error: 'project and context required' };
+    return discoverRelevantContent(db, project, context);
   });
 
   // ── Cleanup on close ───────────────────────────────────────────────────
