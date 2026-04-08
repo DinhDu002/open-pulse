@@ -298,11 +298,11 @@ function insertEventBatch(db, events) {
     INSERT INTO events
       (timestamp, session_id, event_type, name, detail, duration_ms, success,
        input_tokens, output_tokens, estimated_cost_usd, working_directory, model, user_prompt,
-       tool_input, tool_response, seq_num)
+       tool_input, tool_response, seq_num, prompt_id)
     VALUES
       (@timestamp, @session_id, @event_type, @name, @detail, @duration_ms, @success,
        @input_tokens, @output_tokens, @estimated_cost_usd, @working_directory, @model, @user_prompt,
-       @tool_input, @tool_response, @seq_num)
+       @tool_input, @tool_response, @seq_num, @prompt_id)
   `);
   const tx = db.transaction((rows) => {
     for (const row of rows) insert.run(withEventDefaults(row));
