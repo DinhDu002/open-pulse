@@ -690,4 +690,149 @@ describe('op-server', () => {
       assert.ok(body.data.length <= 1);
     });
   });
+
+  describe('route integration', () => {
+    it('GET /api/health returns ok status', async () => {
+      const res = await app.inject({ method: 'GET', url: '/api/health' });
+      assert.equal(res.statusCode, 200);
+      const body = JSON.parse(res.payload);
+      assert.equal(body.status, 'ok');
+      assert.ok('db_size_bytes' in body);
+      assert.ok('total_events' in body);
+    });
+
+    it('GET /api/overview returns stats', async () => {
+      const res = await app.inject({ method: 'GET', url: '/api/overview?period=7d' });
+      assert.equal(res.statusCode, 200);
+      const body = JSON.parse(res.payload);
+      assert.ok('total_sessions' in body);
+      assert.ok('total_cost' in body);
+    });
+
+    it('GET /api/events returns array', async () => {
+      const res = await app.inject({ method: 'GET', url: '/api/events' });
+      assert.equal(res.statusCode, 200);
+      const body = JSON.parse(res.payload);
+      assert.ok(Array.isArray(body));
+    });
+
+    it('GET /api/sessions returns array', async () => {
+      const res = await app.inject({ method: 'GET', url: '/api/sessions' });
+      assert.equal(res.statusCode, 200);
+      const body = JSON.parse(res.payload);
+      assert.ok(Array.isArray(body));
+    });
+
+    it('GET /api/cost returns rows', async () => {
+      const res = await app.inject({ method: 'GET', url: '/api/cost?group_by=day' });
+      assert.equal(res.statusCode, 200);
+      const body = JSON.parse(res.payload);
+      assert.ok('rows' in body);
+      assert.ok(Array.isArray(body.rows));
+    });
+
+    it('GET /api/instincts returns paginated result', async () => {
+      const res = await app.inject({ method: 'GET', url: '/api/instincts' });
+      assert.equal(res.statusCode, 200);
+      const body = JSON.parse(res.payload);
+      assert.ok('items' in body);
+      assert.ok('total' in body);
+    });
+
+    it('GET /api/suggestions returns array', async () => {
+      const res = await app.inject({ method: 'GET', url: '/api/suggestions' });
+      assert.equal(res.statusCode, 200);
+      const body = JSON.parse(res.payload);
+      assert.ok(Array.isArray(body));
+    });
+
+    it('GET /api/errors returns array', async () => {
+      const res = await app.inject({ method: 'GET', url: '/api/errors' });
+      assert.equal(res.statusCode, 200);
+      const body = JSON.parse(res.payload);
+      assert.ok(Array.isArray(body));
+    });
+
+    it('GET /api/config returns config object', async () => {
+      const res = await app.inject({ method: 'GET', url: '/api/config' });
+      assert.equal(res.statusCode, 200);
+      const body = JSON.parse(res.payload);
+      assert.ok('port' in body);
+    });
+
+    it('GET /api/knowledge/status returns status', async () => {
+      const res = await app.inject({ method: 'GET', url: '/api/knowledge/status' });
+      assert.equal(res.statusCode, 200);
+    });
+
+    it('GET /api/rules returns paginated response', async () => {
+      const res = await app.inject({ method: 'GET', url: '/api/rules' });
+      assert.equal(res.statusCode, 200);
+      const body = JSON.parse(res.payload);
+      assert.ok('data' in body);
+      assert.ok('total' in body);
+      assert.ok('page' in body);
+    });
+
+    it('GET /api/unused returns paginated response', async () => {
+      const res = await app.inject({ method: 'GET', url: '/api/unused' });
+      assert.equal(res.statusCode, 200);
+      const body = JSON.parse(res.payload);
+      assert.ok('data' in body);
+      assert.ok('total' in body);
+    });
+  });
+
+  describe('error handling', () => {
+    it('GET /api/inventory/invalid returns 400', async () => {
+      const res = await app.inject({ method: 'GET', url: '/api/inventory/invalid' });
+      assert.equal(res.statusCode, 400);
+      const body = JSON.parse(res.payload);
+      assert.ok(body.error);
+    });
+
+    it('GET /api/inventory/invalid/foo returns 400', async () => {
+      const res = await app.inject({ method: 'GET', url: '/api/inventory/invalid/foo' });
+      assert.equal(res.statusCode, 400);
+    });
+
+    it('GET /api/sessions/nonexistent returns empty or 404', async () => {
+      const res = await app.inject({ method: 'GET', url: '/api/sessions/nonexistent-session-id' });
+      // May return 200 with empty data or 404
+      assert.ok(res.statusCode === 200 || res.statusCode === 404);
+    });
+
+    it('GET /api/instincts/99999 returns 404', async () => {
+      const res = await app.inject({ method: 'GET', url: '/api/instincts/99999' });
+      assert.equal(res.statusCode, 404);
+    });
+
+    it('GET /api/knowledge/discover without params returns 400', async () => {
+      const res = await app.inject({ method: 'GET', url: '/api/knowledge/discover' });
+      assert.equal(res.statusCode, 400);
+    });
+  });
+
+  describe('pagination clamping', () => {
+    it('clamps negative page to 1', async () => {
+      const res = await app.inject({ method: 'GET', url: '/api/rules?page=-5&per_page=10' });
+      assert.equal(res.statusCode, 200);
+      const body = JSON.parse(res.payload);
+      assert.equal(body.page, 1);
+    });
+
+    it('clamps per_page to max 50', async () => {
+      const res = await app.inject({ method: 'GET', url: '/api/rules?page=1&per_page=999' });
+      assert.equal(res.statusCode, 200);
+      const body = JSON.parse(res.payload);
+      assert.equal(body.per_page, 50);
+    });
+
+    it('uses default per_page when not provided', async () => {
+      const res = await app.inject({ method: 'GET', url: '/api/instincts' });
+      assert.equal(res.statusCode, 200);
+      const body = JSON.parse(res.payload);
+      assert.ok(body.per_page > 0);
+    });
+  });
 });
