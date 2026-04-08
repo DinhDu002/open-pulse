@@ -4,9 +4,10 @@ const path = require('path');
 
 function run(db) {
   const sessions = db.prepare(
-    `SELECT DISTINCT session_id FROM events
-     WHERE prompt_id IS NULL AND user_prompt IS NOT NULL
-     ORDER BY session_id`
+    `SELECT DISTINCT e.session_id FROM events e
+     INNER JOIN sessions s ON s.session_id = e.session_id
+     WHERE e.prompt_id IS NULL AND e.user_prompt IS NOT NULL
+     ORDER BY e.session_id`
   ).all();
 
   let totalPrompts = 0;
