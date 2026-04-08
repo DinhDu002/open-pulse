@@ -1,40 +1,17 @@
 // Learning — Projects sub-module
-import { get, post } from './api.js';
+import { get, post, del } from './api.js';
+import { fmtDate, fmtDateShort, escHtml, truncate } from './utils.js';
 
 // ── Chart management ──────────────────────────────────────────────────────────
 
 let charts = [];
 
-function destroyCharts() {
+export function destroyCharts() {
   charts.forEach(function(c) { c.destroy(); });
   charts = [];
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
-
-function fmtDate(ts) {
-  if (!ts) return '\u2014';
-  return dayjs(ts).format('MMM D, YYYY HH:mm');
-}
-
-function fmtDateShort(ts) {
-  if (!ts) return '';
-  return dayjs(ts).format('MMM D');
-}
-
-function escHtml(str) {
-  return String(str || '')
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;');
-}
-
-function truncate(str, len) {
-  if (!str) return '';
-  if (str.length <= len) return str;
-  return str.slice(0, len) + '\u2026';
-}
 
 function pct(value) {
   if (value == null) return '\u2014';
@@ -94,7 +71,6 @@ function renderComparisonSection(el, projects) {
   var chartDefs = [
     { id: 'op-proj-instincts-chart', title: 'Instincts per project', color: '#6c5ce7' },
     { id: 'op-proj-confidence-chart', title: 'Avg confidence per project', color: '#00b894' },
-    { id: 'op-proj-obs-chart', title: 'Observations per project', color: '#74b9ff' },
     { id: 'op-proj-approve-chart', title: 'Approve rate % per project', color: '#fdcb6e' },
   ];
 
@@ -167,11 +143,6 @@ function renderComparisonCharts(projects) {
     '#00b894'
   );
   makeHBar(
-    'op-proj-obs-chart',
-    projects.map(function(p) { return p.observations || 0; }),
-    '#74b9ff'
-  );
-  makeHBar(
     'op-proj-approve-chart',
     projects.map(function(p) { return p.approve_rate != null ? Math.round(p.approve_rate * 100) : 0; }),
     '#fdcb6e'
@@ -209,7 +180,6 @@ function buildProjectCard(proj, listEl) {
     '<div style="display:flex;gap:16px;font-size:13px;color:var(--text-muted);margin-bottom:12px">' +
       '<span>Sessions: <strong style="color:var(--text)">' + (proj.session_count || 0) + '</strong></span>' +
       '<span>Instincts: <strong style="color:var(--text)">' + (proj.instincts || 0) + '</strong></span>' +
-      '<span>Observations: <strong style="color:var(--text)">' + (proj.observations || 0) + '</strong></span>' +
       (proj.approve_rate != null
         ? '<span>Approve rate: <strong style="color:var(--success)">' + pct(proj.approve_rate) + '</strong></span>'
         : '') +
@@ -239,11 +209,29 @@ function buildProjectCard(proj, listEl) {
   viewBtn.textContent = 'View';
   viewBtn.addEventListener('click', function(e) {
     e.stopPropagation();
-    location.hash = '#learning/projects/' + encodeURIComponent(proj.id);
+    location.hash = '#projects/' + encodeURIComponent(proj.id);
+  });
+
+  var deleteBtn = document.createElement('button');
+  deleteBtn.className = 'btn btn-danger';
+  deleteBtn.textContent = 'Delete';
+  deleteBtn.addEventListener('click', function(e) {
+    e.stopPropagation();
+    if (!confirm('Delete project "' + escHtml(proj.name || proj.id) + '" and ALL its data (instincts, suggestions, notes)? This cannot be undone.')) return;
+    deleteBtn.disabled = true;
+    deleteBtn.textContent = 'Deleting\u2026';
+    del('/projects/' + encodeURIComponent(proj.id))
+      .then(function() { renderList(listEl); })
+      .catch(function(err) {
+        alert('Delete failed: ' + err.message);
+        deleteBtn.disabled = false;
+        deleteBtn.textContent = 'Delete';
+      });
   });
 
   actionsRow.appendChild(syncBtn);
   actionsRow.appendChild(viewBtn);
+  actionsRow.appendChild(deleteBtn);
 
   return card;
 }
@@ -275,7 +263,7 @@ function renderDetailContent(el, summary, projMeta, projectId) {
   var breadcrumb = document.createElement('div');
   breadcrumb.className = 'learning-breadcrumb';
   breadcrumb.innerHTML =
-    '<a href="#learning/projects">Projects</a> / ' +
+    '<a href="#projects">Projects</a> / ' +
     escHtml(summary.name || projectId);
   el.appendChild(breadcrumb);
 
@@ -298,10 +286,9 @@ function renderDetailContent(el, summary, projMeta, projectId) {
       'overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' +
       escHtml(summary.directory || '\u2014') +
     '</div>' +
-    '<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;font-size:13px;margin-bottom:12px">' +
+    '<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px;font-size:13px;margin-bottom:12px">' +
       statCell('Sessions', summary.session_count || 0) +
       statCell('Instincts', summary.instinct_count || 0) +
-      statCell('Observations', summary.observation_count || 0) +
       statCell('First seen', fmtDate(summary.first_seen)) +
     '</div>' +
     '<div id="proj-header-actions" style="display:flex;gap:8px"></div>';
@@ -331,7 +318,24 @@ function renderDetailContent(el, summary, projMeta, projectId) {
       syncBtn.textContent = 'Sync';
     });
   });
+  var deleteBtn = document.createElement('button');
+  deleteBtn.className = 'btn btn-danger';
+  deleteBtn.textContent = 'Delete Project';
+  deleteBtn.addEventListener('click', function() {
+    if (!confirm('Delete project "' + escHtml(summary.name || projectId) + '" and ALL its data (instincts, suggestions, notes)? This cannot be undone.')) return;
+    deleteBtn.disabled = true;
+    deleteBtn.textContent = 'Deleting\u2026';
+    del('/projects/' + encodeURIComponent(projectId))
+      .then(function() { location.hash = '#projects'; })
+      .catch(function(err) {
+        alert('Delete failed: ' + err.message);
+        deleteBtn.disabled = false;
+        deleteBtn.textContent = 'Delete Project';
+      });
+  });
+
   headerActions.appendChild(syncBtn);
+  headerActions.appendChild(deleteBtn);
 
   el.appendChild(headerCard);
 
@@ -463,56 +467,6 @@ function renderDetailContent(el, summary, projMeta, projectId) {
     .catch(function() {
       instinctsCard.querySelector('#op-proj-instincts-body').innerHTML =
         '<p style="color:var(--danger);padding:16px">Failed to load instincts</p>';
-    });
-
-  // ── Recent 5 observations ─────────────────────────────────────────────────
-
-  var obsCard = document.createElement('div');
-  obsCard.className = 'card';
-  obsCard.style.marginBottom = '1rem';
-  obsCard.innerHTML =
-    '<div style="display:flex;align-items:center;margin-bottom:12px">' +
-      '<div class="card-title" style="margin:0;flex:1">Recent Observations</div>' +
-      '<a href="#learning/observations" style="font-size:12px;color:var(--accent);text-decoration:none">View all \u2192</a>' +
-    '</div>' +
-    '<div id="op-proj-obs-body"><div class="empty-state"><span class="spinner"></span></div></div>';
-  el.appendChild(obsCard);
-
-  get('/observations?project=' + encodeURIComponent(projectId) + '&per_page=5')
-    .then(function(data) {
-      var body = obsCard.querySelector('#op-proj-obs-body');
-      var items = data.items || [];
-      if (items.length === 0) {
-        body.innerHTML = '<div class="empty-state" style="padding:16px">No observations yet</div>';
-        return;
-      }
-      body.innerHTML = '';
-      items.forEach(function(obs) {
-        var row = document.createElement('div');
-        row.style.cssText = 'border-bottom:1px solid var(--border);padding:8px 0;cursor:pointer;';
-        row.innerHTML =
-          '<div style="display:flex;align-items:center;gap:8px;margin-bottom:2px">' +
-            '<span style="font-size:11px;color:var(--text-muted);font-family:monospace">' +
-              escHtml(fmtDate(obs.observed_at)) +
-            '</span>' +
-            (obs.category
-              ? '<span class="badge">' + escHtml(obs.category) + '</span>'
-              : '') +
-          '</div>' +
-          '<div style="font-size:13px;color:var(--text)">' +
-            escHtml(truncate(obs.observation || '', 120)) +
-          '</div>';
-        row.addEventListener('click', function() {
-          location.hash = '#learning/observations/' + obs.id;
-        });
-        row.addEventListener('mouseenter', function() { row.style.borderColor = 'var(--accent)'; });
-        row.addEventListener('mouseleave', function() { row.style.borderColor = ''; });
-        body.appendChild(row);
-      });
-    })
-    .catch(function() {
-      obsCard.querySelector('#op-proj-obs-body').innerHTML =
-        '<p style="color:var(--danger);padding:16px">Failed to load observations</p>';
     });
 
   // ── Suggestions summary ───────────────────────────────────────────────────

@@ -1,4 +1,5 @@
-import { get, post } from './api.js';
+import { get, post, put, del } from './api.js';
+import { escHtml, debounce } from './utils.js';
 
 // ── Utilities ─────────────────────────────────────────────────────────────────
 
@@ -15,14 +16,6 @@ function timeAgo(isoString) {
   return days + 'd ago';
 }
 
-function debounce(fn, delay) {
-  let timer;
-  return function(...args) {
-    clearTimeout(timer);
-    timer = setTimeout(() => fn.apply(this, args), delay);
-  };
-}
-
 // ── Node colors ───────────────────────────────────────────────────────────────
 
 const NODE_COLORS = {
@@ -32,354 +25,11 @@ const NODE_COLORS = {
   instinct:  '#00cec9',
   session:   '#636e72',
   project:   '#fdcb6e',
+  note:      '#74b9ff',
 };
 
 function nodeColor(type) {
   return NODE_COLORS[type] || '#8b8fa3';
-}
-
-// ── Tab 1: Graph Explorer ─────────────────────────────────────────────────────
-
-let cyInstance = null;
-
-function buildCytoscapeStyles() {
-  return [
-    {
-      selector: 'node',
-      style: {
-        'background-color': 'data(color)',
-        'label': 'data(label)',
-        'color': '#e1e4eb',
-        'font-size': '11px',
-        'text-valign': 'bottom',
-        'text-halign': 'center',
-        'text-margin-y': '4px',
-        'width': 'data(size)',
-        'height': 'data(size)',
-        'border-width': '1px',
-        'border-color': 'rgba(255,255,255,0.1)',
-      },
-    },
-    {
-      selector: 'node:selected',
-      style: {
-        'border-width': '2px',
-        'border-color': '#6c5ce7',
-      },
-    },
-    {
-      selector: 'edge',
-      style: {
-        'width': 'data(width)',
-        'line-color': 'rgba(139,143,163,0.4)',
-        'target-arrow-color': 'rgba(139,143,163,0.4)',
-        'target-arrow-shape': 'triangle',
-        'curve-style': 'bezier',
-        'arrow-scale': 0.8,
-      },
-    },
-    {
-      selector: 'node.dimmed',
-      style: { 'opacity': 0.15 },
-    },
-    {
-      selector: 'edge.dimmed',
-      style: { 'opacity': 0.05 },
-    },
-  ];
-}
-
-function buildElements(graphData) {
-  const nodes = (graphData.nodes || []).map(n => {
-    const degree = n.degree || 1;
-    const size = Math.min(Math.max(12 + Math.log2(degree + 1) * 6, 12), 48);
-    return {
-      data: {
-        id: String(n.id),
-        label: n.label || n.name || String(n.id),
-        type: n.type || 'tool',
-        color: nodeColor(n.type),
-        size,
-        properties: n,
-      },
-    };
-  });
-
-  const edges = (graphData.edges || []).map(e => {
-    const weight = e.weight || 1;
-    const width = Math.min(Math.max(Math.log2(weight), 1), 5);
-    return {
-      data: {
-        id: 'e-' + e.source_id + '-' + e.target_id + '-' + Math.random().toString(36).slice(2),
-        source: String(e.source_id),
-        target: String(e.target_id),
-        weight,
-        width,
-        label: e.label || e.relationship || '',
-      },
-    };
-  });
-
-  return [...nodes, ...edges];
-}
-
-function renderDetail(detailEl, node, nodeData) {
-  detailEl.textContent = '';
-  detailEl.style.display = 'block';
-
-  const title = document.createElement('div');
-  title.style.cssText = 'font-size:14px; font-weight:600; margin-bottom:12px; color:var(--text); word-break:break-word;';
-  title.textContent = node.data('label');
-  detailEl.appendChild(title);
-
-  const color = nodeColor(node.data('type'));
-  const typeBadge = document.createElement('span');
-  typeBadge.style.cssText = 'display:inline-block; padding:2px 10px; border-radius:999px; font-size:11px; font-weight:600; margin-bottom:14px; background:' + color + '30; color:' + color + ';';
-  typeBadge.textContent = node.data('type') || 'unknown';
-  detailEl.appendChild(typeBadge);
-
-  const rawNode = node.data('properties') || {};
-  let parsedProps = {};
-  try {
-    parsedProps = rawNode.properties ? JSON.parse(rawNode.properties) : {};
-  } catch (_) {
-    parsedProps = {};
-  }
-  const props = Object.assign({}, rawNode, parsedProps);
-  const skip = new Set(['id', 'label', 'name', 'type', 'color', 'size', 'degree', 'properties']);
-  const keys = Object.keys(props).filter(k => !skip.has(k));
-
-  if (keys.length > 0) {
-    const propList = document.createElement('div');
-    propList.style.cssText = 'font-size:12px; color:var(--text-muted); border-top:1px solid var(--border); padding-top:10px; margin-bottom:10px;';
-    keys.forEach(k => {
-      const row = document.createElement('div');
-      row.style.cssText = 'display:flex; justify-content:space-between; padding:4px 0; border-bottom:1px solid rgba(255,255,255,0.04);';
-      const kEl = document.createElement('span');
-      kEl.style.color = 'var(--text-muted)';
-      kEl.textContent = k;
-      const vEl = document.createElement('span');
-      vEl.style.cssText = 'color:var(--text); font-family:monospace; font-size:11px; max-width:120px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;';
-      const val = props[k];
-      vEl.textContent = val === null || val === undefined ? '—' : String(val);
-      row.appendChild(kEl);
-      row.appendChild(vEl);
-      propList.appendChild(row);
-    });
-    detailEl.appendChild(propList);
-  }
-
-  // Connections section
-  const connSection = document.createElement('div');
-  connSection.style.cssText = 'font-size:12px; color:var(--text-muted); border-top:1px solid var(--border); padding-top:10px;';
-  const connTitle = document.createElement('div');
-  connTitle.style.cssText = 'font-size:11px; text-transform:uppercase; letter-spacing:0.5px; margin-bottom:8px; color:var(--text-muted);';
-  connTitle.textContent = 'Connections';
-  connSection.appendChild(connTitle);
-  detailEl.appendChild(connSection);
-
-  if (nodeData) {
-    const conns = nodeData.connections || [];
-    if (conns.length === 0) {
-      const none = document.createElement('div');
-      none.style.color = 'var(--text-muted)';
-      none.textContent = 'No connections';
-      connSection.appendChild(none);
-    } else {
-      conns.slice(0, 8).forEach(c => {
-        const item = document.createElement('div');
-        item.style.cssText = 'padding:3px 0; display:flex; align-items:center; gap:6px;';
-        const dot = document.createElement('span');
-        dot.style.cssText = 'width:6px; height:6px; border-radius:50%; background:' + nodeColor(c.type) + '; flex-shrink:0;';
-        const label = document.createElement('span');
-        label.style.cssText = 'font-size:12px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;';
-        label.textContent = c.label || c.name || String(c.id || '');
-        item.appendChild(dot);
-        item.appendChild(label);
-        connSection.appendChild(item);
-      });
-      if (conns.length > 8) {
-        const more = document.createElement('div');
-        more.style.cssText = 'font-size:11px; color:var(--text-muted); margin-top:4px;';
-        more.textContent = '+' + (conns.length - 8) + ' more';
-        connSection.appendChild(more);
-      }
-    }
-  } else {
-    const loading = document.createElement('span');
-    loading.className = 'spinner';
-    connSection.appendChild(loading);
-  }
-}
-
-function renderGraphExplorer(el) {
-  // Controls bar
-  const controls = document.createElement('div');
-  controls.style.cssText = 'display:flex; align-items:center; gap:10px; margin-bottom:16px; flex-wrap:wrap;';
-
-  const typeFilter = document.createElement('select');
-  typeFilter.style.cssText = 'padding:6px 10px; background:var(--surface); border:1px solid var(--border); border-radius:6px; color:var(--text); font-size:13px;';
-  [['', 'All'], ['tool', 'Tools'], ['component', 'Components'], ['pattern', 'Patterns'], ['instinct', 'Instincts']].forEach(([val, label]) => {
-    const o = document.createElement('option');
-    o.value = val;
-    o.textContent = label;
-    typeFilter.appendChild(o);
-  });
-
-  const searchInput = document.createElement('input');
-  searchInput.type = 'text';
-  searchInput.placeholder = 'Search nodes\u2026';
-  searchInput.style.cssText = 'padding:6px 10px; background:var(--surface); border:1px solid var(--border); border-radius:6px; color:var(--text); font-size:13px; flex:1; min-width:160px;';
-
-  const statsWrap = document.createElement('div');
-  statsWrap.style.cssText = 'display:flex; gap:8px; margin-left:auto;';
-
-  const nodesBadge = document.createElement('span');
-  nodesBadge.style.cssText = 'padding:3px 10px; border-radius:999px; font-size:12px; background:rgba(108,92,231,0.15); color:var(--accent);';
-  nodesBadge.textContent = '0 nodes';
-
-  const edgesBadge = document.createElement('span');
-  edgesBadge.style.cssText = 'padding:3px 10px; border-radius:999px; font-size:12px; background:rgba(99,110,114,0.15); color:var(--text-muted);';
-  edgesBadge.textContent = '0 edges';
-
-  statsWrap.appendChild(nodesBadge);
-  statsWrap.appendChild(edgesBadge);
-  controls.appendChild(typeFilter);
-  controls.appendChild(searchInput);
-  controls.appendChild(statsWrap);
-  el.appendChild(controls);
-
-  // Graph + detail panel layout
-  const graphLayout = document.createElement('div');
-  graphLayout.style.cssText = 'display:flex; gap:16px; align-items:flex-start;';
-
-  const cyWrap = document.createElement('div');
-  cyWrap.style.cssText = 'flex:1; min-width:0;';
-
-  const cyContainer = document.createElement('div');
-  cyContainer.id = 'cy-container';
-  cyContainer.style.cssText = 'width:100%; height:500px; background:var(--surface); border:1px solid var(--border); border-radius:10px; position:relative;';
-  cyWrap.appendChild(cyContainer);
-  graphLayout.appendChild(cyWrap);
-
-  const detailPanel = document.createElement('div');
-  detailPanel.style.cssText = 'width:220px; flex-shrink:0; background:var(--surface); border:1px solid var(--border); border-radius:10px; padding:16px; display:none; max-height:500px; overflow-y:auto;';
-
-  const closeBtn = document.createElement('button');
-  closeBtn.className = 'btn';
-  closeBtn.textContent = '\u00d7';
-  closeBtn.style.cssText = 'float:right; padding:2px 8px; font-size:16px; line-height:1; margin-bottom:8px;';
-  closeBtn.addEventListener('click', () => {
-    detailPanel.style.display = 'none';
-    if (cyInstance) cyInstance.elements().removeClass('dimmed');
-  });
-  detailPanel.appendChild(closeBtn);
-  graphLayout.appendChild(detailPanel);
-  el.appendChild(graphLayout);
-
-  // Loading indicator inside cy container
-  const loadingEl = document.createElement('div');
-  loadingEl.className = 'empty-state';
-  loadingEl.style.cssText = 'position:absolute; top:50%; left:50%; transform:translate(-50%,-50%);';
-  const sp = document.createElement('span');
-  sp.className = 'spinner';
-  loadingEl.appendChild(sp);
-  cyContainer.appendChild(loadingEl);
-
-  function applyFilters() {
-    if (!cyInstance) return;
-    const typeVal = typeFilter.value;
-    const searchVal = searchInput.value.trim().toLowerCase();
-
-    cyInstance.batch(() => {
-      cyInstance.nodes().forEach(n => {
-        const matchType = !typeVal || n.data('type') === typeVal;
-        const matchSearch = !searchVal || (n.data('label') || '').toLowerCase().includes(searchVal);
-        const visible = matchType && matchSearch;
-        n.style('opacity', visible ? 1 : 0.08);
-        if (visible) n.removeClass('dimmed');
-        else n.addClass('dimmed');
-      });
-      cyInstance.edges().forEach(e => {
-        const srcDimmed = e.source().hasClass('dimmed');
-        const tgtDimmed = e.target().hasClass('dimmed');
-        e.style('opacity', (!srcDimmed && !tgtDimmed) ? 1 : 0.05);
-      });
-    });
-
-    const visibleNodes = cyInstance.nodes().filter(n => !n.hasClass('dimmed'));
-    const visibleEdges = cyInstance.edges().filter(e => !e.hasClass('dimmed'));
-    nodesBadge.textContent = visibleNodes.length + ' nodes';
-    edgesBadge.textContent = visibleEdges.length + ' edges';
-  }
-
-  typeFilter.addEventListener('change', applyFilters);
-  searchInput.addEventListener('input', debounce(applyFilters, 250));
-
-  get('/knowledge/graph').then(graphData => {
-    cyContainer.removeChild(loadingEl);
-
-    if (!graphData || (!(graphData.nodes || []).length && !(graphData.edges || []).length)) {
-      const empty = document.createElement('div');
-      empty.className = 'empty-state';
-      empty.style.cssText = 'position:absolute; top:50%; left:50%; transform:translate(-50%,-50%);';
-      empty.textContent = 'No graph data available. Run sync first.';
-      cyContainer.appendChild(empty);
-      return;
-    }
-
-    const elements = buildElements(graphData);
-    nodesBadge.textContent = (graphData.nodes || []).length + ' nodes';
-    edgesBadge.textContent = (graphData.edges || []).length + ' edges';
-
-    // cytoscape is a CDN global
-    cyInstance = cytoscape({
-      container: cyContainer,
-      elements,
-      style: buildCytoscapeStyles(),
-      layout: {
-        name: 'cose',
-        animate: false,
-        randomize: true,
-        nodeRepulsion: 400000,
-        idealEdgeLength: 80,
-        edgeElasticity: 100,
-        gravity: 80,
-        numIter: 1000,
-        initialTemp: 200,
-        coolingFactor: 0.95,
-        minTemp: 1,
-      },
-    });
-
-    cyInstance.on('tap', 'node', function(evt) {
-      const node = evt.target;
-      cyInstance.elements().addClass('dimmed');
-      node.removeClass('dimmed');
-      node.neighborhood().removeClass('dimmed');
-
-      renderDetail(detailPanel, node, null);
-      detailPanel.style.display = 'block';
-
-      get('/knowledge/node/' + encodeURIComponent(node.id())).then(nodeData => {
-        renderDetail(detailPanel, node, nodeData);
-      }).catch(() => {
-        renderDetail(detailPanel, node, { connections: [] });
-      });
-    });
-
-    cyInstance.on('tap', function(evt) {
-      if (evt.target === cyInstance) {
-        detailPanel.style.display = 'none';
-        cyInstance.elements().removeClass('dimmed');
-        applyFilters();
-      }
-    });
-
-  }).catch(err => {
-    loadingEl.textContent = 'Failed to load graph: ' + err.message;
-    loadingEl.style.color = 'var(--danger)';
-  });
 }
 
 // ── Tab 2: Projects & Sync ────────────────────────────────────────────────────
@@ -555,18 +205,444 @@ function renderProjectsSync(el) {
   loadStatus();
 }
 
+// ── Tab 3: Notes ─────────────────────────────────────────────────────────────
+
+function renderMarkdown(md) {
+  // All user content is HTML-escaped first to prevent XSS (local-only tool)
+  let html = escHtml(md);
+  html = html.replace(/```(\w*)\n([\s\S]*?)```/g, '<pre style="background:var(--bg);padding:12px;border-radius:6px;overflow-x:auto;font-size:12px;"><code>$2</code></pre>');
+  html = html.replace(/^#### (.+)$/gm, '<h4>$1</h4>');
+  html = html.replace(/^### (.+)$/gm, '<h3>$1</h3>');
+  html = html.replace(/^## (.+)$/gm, '<h2 style="font-size:16px;margin:16px 0 8px;">$1</h2>');
+  html = html.replace(/^# (.+)$/gm, '<h1 style="font-size:20px;margin:16px 0 8px;">$1</h1>');
+  html = html.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+  html = html.replace(/\*(.+?)\*/g, '<em>$1</em>');
+  html = html.replace(/`([^`]+)`/g, '<code style="background:var(--bg);padding:2px 6px;border-radius:3px;font-size:12px;">$1</code>');
+  html = html.replace(/\[\[([^\]]+)\]\]/g, (_, ref) => {
+    const a = document.createElement('a');
+    a.href = '#';
+    a.dataset.ref = escHtml(ref);
+    a.className = 'note-backlink';
+    a.style.cssText = 'color:var(--accent);text-decoration:none;border-bottom:1px dashed var(--accent);';
+    a.textContent = '[[' + ref + ']]';
+    return a.outerHTML;
+  });
+  html = html.replace(/^- (.+)$/gm, '<li style="margin-left:16px;">$1</li>');
+  html = html.replace(/\n\n/g, '</p><p>');
+  html = '<p>' + html + '</p>';
+  html = html.replace(/<p><\/p>/g, '');
+  return html;
+}
+
+let notesState = { project: '', search: '', page: 1, perPage: 15 };
+
+function renderNotesList(el) {
+  el.textContent = '';
+
+  const header = document.createElement('div');
+  header.style.cssText = 'display:flex; align-items:center; gap:10px; margin-bottom:16px; flex-wrap:wrap;';
+
+  const projectSelect = document.createElement('select');
+  projectSelect.style.cssText = 'padding:6px 10px; background:var(--surface); border:1px solid var(--border); border-radius:6px; color:var(--text); font-size:13px;';
+  const allOpt = document.createElement('option');
+  allOpt.value = '';
+  allOpt.textContent = 'All Projects';
+  projectSelect.appendChild(allOpt);
+
+  const searchInput = document.createElement('input');
+  searchInput.type = 'text';
+  searchInput.placeholder = 'Search notes\u2026';
+  searchInput.value = notesState.search;
+  searchInput.style.cssText = 'padding:6px 10px; background:var(--surface); border:1px solid var(--border); border-radius:6px; color:var(--text); font-size:13px; flex:1; min-width:160px;';
+
+  const newBtn = document.createElement('button');
+  newBtn.className = 'btn btn-primary';
+  newBtn.textContent = '+ New Note';
+  newBtn.style.cssText = 'margin-left:auto; padding:6px 16px; font-size:13px;';
+  newBtn.addEventListener('click', () => { location.hash = '#knowledge/notes/new'; });
+
+  header.appendChild(projectSelect);
+  header.appendChild(searchInput);
+  header.appendChild(newBtn);
+  el.appendChild(header);
+
+  const listEl = document.createElement('div');
+  el.appendChild(listEl);
+
+  const paginationEl = document.createElement('div');
+  paginationEl.className = 'pagination';
+  el.appendChild(paginationEl);
+
+  get('/knowledge/projects').then(projects => {
+    (projects || []).forEach(p => {
+      const o = document.createElement('option');
+      o.value = p.project_id;
+      o.textContent = p.name || p.project_id;
+      projectSelect.appendChild(o);
+    });
+    if (notesState.project) projectSelect.value = notesState.project;
+  });
+
+  function loadList() {
+    listEl.textContent = '';
+    const qs = new URLSearchParams();
+    if (notesState.project) qs.set('project', notesState.project);
+    if (notesState.search) qs.set('search', notesState.search);
+    qs.set('page', notesState.page);
+    qs.set('per_page', notesState.perPage);
+
+    const loading = document.createElement('div');
+    loading.className = 'empty-state';
+    const sp = document.createElement('span');
+    sp.className = 'spinner';
+    loading.appendChild(sp);
+    listEl.appendChild(loading);
+
+    get('/knowledge/notes?' + qs.toString()).then(data => {
+      listEl.textContent = '';
+      if (data.items.length === 0) {
+        const empty = document.createElement('div');
+        empty.className = 'empty-state';
+        empty.textContent = notesState.search ? 'No notes match your search.' : 'No notes yet. Create your first note!';
+        listEl.appendChild(empty);
+        paginationEl.textContent = '';
+        return;
+      }
+
+      data.items.forEach(note => {
+        const card = document.createElement('div');
+        card.className = 'card';
+        card.style.cssText = 'margin-bottom:10px; cursor:pointer; transition:border-color 0.15s;';
+        card.addEventListener('mouseenter', () => { card.style.borderColor = 'var(--accent)'; });
+        card.addEventListener('mouseleave', () => { card.style.borderColor = ''; });
+        card.addEventListener('click', () => { location.hash = '#knowledge/notes/' + note.id; });
+
+        const titleRow = document.createElement('div');
+        titleRow.style.cssText = 'display:flex; align-items:center; gap:8px; margin-bottom:6px;';
+        const titleEl = document.createElement('span');
+        titleEl.style.cssText = 'font-size:14px; font-weight:600; color:var(--text);';
+        titleEl.textContent = note.title;
+        titleRow.appendChild(titleEl);
+
+        const tags = typeof note.tags === 'string' ? JSON.parse(note.tags) : (note.tags || []);
+        tags.forEach(t => {
+          const badge = document.createElement('span');
+          badge.className = 'badge';
+          badge.style.cssText = 'font-size:10px; padding:1px 8px;';
+          badge.textContent = t;
+          titleRow.appendChild(badge);
+        });
+        card.appendChild(titleRow);
+
+        const excerpt = document.createElement('div');
+        excerpt.style.cssText = 'font-size:12px; color:var(--text-muted); line-height:1.5; overflow:hidden; max-height:36px;';
+        excerpt.textContent = note.body.replace(/[#*\[\]`]/g, '').slice(0, 120);
+        card.appendChild(excerpt);
+
+        const meta = document.createElement('div');
+        meta.style.cssText = 'font-size:11px; color:var(--text-muted); margin-top:6px;';
+        meta.textContent = timeAgo(note.updated_at);
+        card.appendChild(meta);
+
+        listEl.appendChild(card);
+      });
+
+      paginationEl.textContent = '';
+      const totalPages = Math.ceil(data.total / data.perPage);
+      if (totalPages > 1) {
+        const prev = document.createElement('button');
+        prev.className = 'btn';
+        prev.textContent = '\u2190 Prev';
+        prev.disabled = notesState.page <= 1;
+        prev.addEventListener('click', () => { notesState.page--; loadList(); });
+
+        const info = document.createElement('span');
+        info.className = 'page-info';
+        info.textContent = 'Page ' + notesState.page + ' of ' + totalPages;
+
+        const next = document.createElement('button');
+        next.className = 'btn';
+        next.textContent = 'Next \u2192';
+        next.disabled = notesState.page >= totalPages;
+        next.addEventListener('click', () => { notesState.page++; loadList(); });
+
+        paginationEl.appendChild(prev);
+        paginationEl.appendChild(info);
+        paginationEl.appendChild(next);
+      }
+    });
+  }
+
+  projectSelect.addEventListener('change', () => { notesState.project = projectSelect.value; notesState.page = 1; loadList(); });
+  searchInput.addEventListener('input', debounce(() => { notesState.search = searchInput.value; notesState.page = 1; loadList(); }, 300));
+
+  loadList();
+}
+
+// ── Note Editor ──────────────────────────────────────────────────────────────
+
+function renderNoteEditor(el, noteId) {
+  el.textContent = '';
+  const isNew = noteId === 'new';
+
+  const breadcrumb = document.createElement('div');
+  breadcrumb.style.cssText = 'margin-bottom:16px; font-size:13px; color:var(--text-muted);';
+  const bcLink = document.createElement('a');
+  bcLink.href = '#knowledge/notes';
+  bcLink.style.cssText = 'color:var(--accent);text-decoration:none;';
+  bcLink.textContent = 'Notes';
+  breadcrumb.appendChild(bcLink);
+  breadcrumb.appendChild(document.createTextNode(' / ' + (isNew ? 'New Note' : 'Edit')));
+  el.appendChild(breadcrumb);
+
+  const layout = document.createElement('div');
+  layout.style.cssText = 'display:flex; gap:16px; align-items:flex-start;';
+  const editorCol = document.createElement('div');
+  editorCol.style.cssText = 'flex:1; min-width:0;';
+  const previewCol = document.createElement('div');
+  previewCol.style.cssText = 'flex:1; min-width:0;';
+  layout.appendChild(editorCol);
+  layout.appendChild(previewCol);
+  el.appendChild(layout);
+
+  // Project selector (new note only)
+  const projectSelect = document.createElement('select');
+  projectSelect.style.cssText = 'width:100%; padding:8px 10px; background:var(--bg); border:1px solid var(--border); border-radius:6px; color:var(--text); font-size:13px; margin-bottom:12px;';
+
+  const titleInput = document.createElement('input');
+  titleInput.type = 'text';
+  titleInput.placeholder = 'Note title';
+  titleInput.style.cssText = 'width:100%; padding:8px 10px; background:var(--bg); border:1px solid var(--border); border-radius:6px; color:var(--text); font-size:15px; font-weight:600; box-sizing:border-box; margin-bottom:12px;';
+
+  const tagsInput = document.createElement('input');
+  tagsInput.type = 'text';
+  tagsInput.placeholder = 'Tags: api, architecture, deployment';
+  tagsInput.style.cssText = 'width:100%; padding:8px 10px; background:var(--bg); border:1px solid var(--border); border-radius:6px; color:var(--text); font-size:13px; box-sizing:border-box; margin-bottom:12px;';
+
+  const bodyWrap = document.createElement('div');
+  bodyWrap.style.cssText = 'position:relative; margin-bottom:12px;';
+  const bodyTextarea = document.createElement('textarea');
+  bodyTextarea.placeholder = 'Write in Markdown... Use [[slug]] to link.';
+  bodyTextarea.style.cssText = 'width:100%; min-height:400px; padding:12px; background:var(--bg); border:1px solid var(--border); border-radius:6px; color:var(--text); font-size:13px; font-family:"SF Mono",Monaco,Consolas,monospace; line-height:1.6; resize:vertical; box-sizing:border-box;';
+
+  const acDropdown = document.createElement('div');
+  acDropdown.style.cssText = 'position:absolute; background:var(--surface); border:1px solid var(--border); border-radius:6px; max-height:200px; overflow-y:auto; z-index:100; display:none; min-width:240px; box-shadow:0 4px 12px rgba(0,0,0,0.3);';
+  bodyWrap.appendChild(bodyTextarea);
+  bodyWrap.appendChild(acDropdown);
+
+  const actionsRow = document.createElement('div');
+  actionsRow.style.cssText = 'display:flex; gap:8px;';
+  const saveBtn = document.createElement('button');
+  saveBtn.className = 'btn btn-primary';
+  saveBtn.textContent = isNew ? 'Create Note' : 'Save Changes';
+  const deleteBtn = document.createElement('button');
+  deleteBtn.className = 'btn btn-danger';
+  deleteBtn.textContent = 'Delete';
+  deleteBtn.style.display = isNew ? 'none' : '';
+  actionsRow.appendChild(saveBtn);
+  actionsRow.appendChild(deleteBtn);
+
+  if (isNew) editorCol.appendChild(projectSelect);
+  editorCol.appendChild(titleInput);
+  editorCol.appendChild(tagsInput);
+  editorCol.appendChild(bodyWrap);
+  editorCol.appendChild(actionsRow);
+
+  // Preview
+  const previewCard = document.createElement('div');
+  previewCard.className = 'card';
+  previewCard.style.cssText = 'max-height:500px; overflow-y:auto;';
+  const previewTitle = document.createElement('div');
+  previewTitle.className = 'card-title';
+  previewTitle.textContent = 'Preview';
+  const previewBody = document.createElement('div');
+  previewBody.style.cssText = 'font-size:13px; line-height:1.7; color:var(--text);';
+  previewBody.textContent = 'Preview appears here...';
+  previewCard.appendChild(previewTitle);
+  previewCard.appendChild(previewBody);
+  previewCol.appendChild(previewCard);
+
+  // Backlinks
+  const backlinksCard = document.createElement('div');
+  backlinksCard.className = 'card';
+  backlinksCard.style.cssText = 'margin-top:12px;';
+  const backlinksTitle = document.createElement('div');
+  backlinksTitle.className = 'card-title';
+  backlinksTitle.textContent = 'What links here';
+  const backlinksList = document.createElement('div');
+  backlinksList.style.cssText = 'font-size:12px;';
+  backlinksCard.appendChild(backlinksTitle);
+  backlinksCard.appendChild(backlinksList);
+  previewCol.appendChild(backlinksCard);
+
+  function updatePreview() {
+    const md = bodyTextarea.value;
+    if (md) {
+      // Content is HTML-escaped inside renderMarkdown before any transformation
+      previewBody.innerHTML = renderMarkdown(md);
+    } else {
+      previewBody.textContent = 'Preview appears here...';
+    }
+  }
+  bodyTextarea.addEventListener('input', debounce(updatePreview, 200));
+
+  // Autocomplete for [[
+  let acActive = false;
+  let noteData = null;
+
+  bodyTextarea.addEventListener('input', () => {
+    const val = bodyTextarea.value;
+    const pos = bodyTextarea.selectionStart;
+    const before = val.slice(0, pos);
+    const match = before.match(/\[\[([^\]]*?)$/);
+
+    if (match) {
+      const query = match[1];
+      const projectId = isNew ? projectSelect.value : (noteData && noteData.project_id);
+      if (!projectId) { acDropdown.style.display = 'none'; return; }
+
+      get('/knowledge/autocomplete?project=' + encodeURIComponent(projectId) + '&q=' + encodeURIComponent(query)).then(results => {
+        acDropdown.textContent = '';
+        if (results.length === 0) { acDropdown.style.display = 'none'; return; }
+        results.slice(0, 12).forEach(r => {
+          const item = document.createElement('div');
+          item.style.cssText = 'padding:6px 12px; cursor:pointer; font-size:13px; display:flex; align-items:center; gap:6px;';
+          item.addEventListener('mouseenter', () => { item.style.background = 'rgba(108,92,231,0.1)'; });
+          item.addEventListener('mouseleave', () => { item.style.background = ''; });
+
+          const dot = document.createElement('span');
+          dot.style.cssText = 'width:6px; height:6px; border-radius:50%; flex-shrink:0; background:' + nodeColor(r.type) + ';';
+          const label = document.createElement('span');
+          label.textContent = r.label;
+          const typeTag = document.createElement('span');
+          typeTag.style.cssText = 'font-size:10px; color:var(--text-muted); margin-left:auto;';
+          typeTag.textContent = r.type;
+          item.appendChild(dot);
+          item.appendChild(label);
+          item.appendChild(typeTag);
+
+          item.addEventListener('click', () => {
+            const insertVal = r.value + ']]';
+            bodyTextarea.value = before.slice(0, before.length - match[1].length) + insertVal + val.slice(pos);
+            bodyTextarea.focus();
+            const newPos = before.length - match[1].length + insertVal.length;
+            bodyTextarea.setSelectionRange(newPos, newPos);
+            acDropdown.style.display = 'none';
+            acActive = false;
+            updatePreview();
+          });
+          acDropdown.appendChild(item);
+        });
+        acDropdown.style.display = 'block';
+        acDropdown.style.top = (bodyTextarea.offsetHeight + 4) + 'px';
+        acDropdown.style.left = '0px';
+        acActive = true;
+      });
+    } else {
+      acDropdown.style.display = 'none';
+      acActive = false;
+    }
+  });
+
+  bodyTextarea.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && acActive) { acDropdown.style.display = 'none'; acActive = false; e.preventDefault(); }
+  });
+
+  // Load data
+  if (isNew) {
+    get('/knowledge/projects').then(projects => {
+      (projects || []).forEach(p => {
+        const o = document.createElement('option');
+        o.value = p.project_id;
+        o.textContent = p.name || p.project_id;
+        projectSelect.appendChild(o);
+      });
+    });
+  } else {
+    get('/knowledge/notes/' + noteId).then(data => {
+      noteData = data;
+      if (data.error) {
+        el.textContent = '';
+        const err = document.createElement('div');
+        err.className = 'empty-state';
+        err.textContent = 'Note not found.';
+        el.appendChild(err);
+        return;
+      }
+      titleInput.value = data.title;
+      const tags = typeof data.tags === 'string' ? JSON.parse(data.tags) : (data.tags || []);
+      tagsInput.value = tags.join(', ');
+      bodyTextarea.value = data.body;
+      breadcrumb.lastChild.textContent = ' / ' + data.title;
+      updatePreview();
+
+      (data.backlinks || []).forEach(bl => {
+        const link = document.createElement('a');
+        link.href = '#knowledge/notes/' + bl.id;
+        link.style.cssText = 'display:block; padding:4px 0; color:var(--accent); text-decoration:none;';
+        link.textContent = bl.title;
+        backlinksList.appendChild(link);
+      });
+      if ((data.backlinks || []).length === 0) {
+        backlinksList.textContent = 'No backlinks yet.';
+        backlinksList.style.color = 'var(--text-muted)';
+      }
+    });
+  }
+
+  // Save
+  saveBtn.addEventListener('click', () => {
+    const title = titleInput.value.trim();
+    if (!title) { alert('Title is required'); return; }
+    const tags = tagsInput.value.split(',').map(t => t.trim()).filter(Boolean);
+    const body = bodyTextarea.value;
+    saveBtn.disabled = true;
+    saveBtn.textContent = 'Saving\u2026';
+
+    if (isNew) {
+      const project_id = projectSelect.value;
+      if (!project_id) { alert('Select a project'); saveBtn.disabled = false; saveBtn.textContent = 'Create Note'; return; }
+      post('/knowledge/notes', { project_id, title, body, tags }).then(created => {
+        location.hash = '#knowledge/notes/' + created.id;
+      }).catch(err => { alert('Error: ' + err.message); saveBtn.disabled = false; saveBtn.textContent = 'Create Note'; });
+    } else {
+      put('/knowledge/notes/' + noteId, { title, body, tags }).then(() => {
+        saveBtn.textContent = 'Saved!';
+        setTimeout(() => { saveBtn.disabled = false; saveBtn.textContent = 'Save Changes'; }, 1500);
+      }).catch(err => { alert('Error: ' + err.message); saveBtn.disabled = false; saveBtn.textContent = 'Save Changes'; });
+    }
+  });
+
+  deleteBtn.addEventListener('click', () => {
+    if (!confirm('Delete this note permanently?')) return;
+    del('/knowledge/notes/' + noteId).then(() => { location.hash = '#knowledge/notes'; }).catch(err => alert('Error: ' + err.message));
+  });
+}
+
 // ── Mount / Unmount ───────────────────────────────────────────────────────────
 
 const TABS = [
-  { key: 'graph', label: 'Graph Explorer' },
+  { key: 'notes', label: 'Notes' },
   { key: 'projects', label: 'Projects & Sync' },
 ];
-let activeTab = 'graph';
+let activeTab = 'notes';
 
-export function mount(el) {
+export function mount(el, { params } = {}) {
+  let subRoute = null;
+  if (params) {
+    const parts = params.split('/').filter(Boolean);
+    if (parts[0] === 'notes' && parts.length >= 2) {
+      subRoute = parts.slice(1).join('/');
+      activeTab = 'notes';
+    } else if (parts[0] === 'projects') {
+      activeTab = 'projects';
+    } else if (parts[0] === 'notes') {
+      activeTab = 'notes';
+    }
+  }
+
   const tabsEl = document.createElement('div');
   tabsEl.className = 'tabs';
-
   const content = document.createElement('div');
 
   TABS.forEach(tab => {
@@ -577,7 +653,7 @@ export function mount(el) {
     btn.addEventListener('click', () => {
       activeTab = tab.key;
       tabsEl.querySelectorAll('.tab-btn').forEach(b => b.classList.toggle('active', b.dataset.tab === tab.key));
-      loadTab(tab.key);
+      location.hash = '#knowledge/' + tab.key;
     });
     tabsEl.appendChild(btn);
   });
@@ -587,7 +663,10 @@ export function mount(el) {
 
   function loadTab(tab) {
     content.textContent = '';
-    if (tab === 'graph') renderGraphExplorer(content);
+    if (tab === 'notes') {
+      if (subRoute) renderNoteEditor(content, subRoute);
+      else renderNotesList(content);
+    }
     else if (tab === 'projects') renderProjectsSync(content);
   }
 
@@ -595,8 +674,4 @@ export function mount(el) {
 }
 
 export function unmount() {
-  if (cyInstance) {
-    cyInstance.destroy();
-    cyInstance = null;
-  }
 }

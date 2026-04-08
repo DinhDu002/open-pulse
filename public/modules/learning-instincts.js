@@ -1,5 +1,6 @@
 // Learning — Instincts sub-module
-import { get, put, del } from './api.js';
+import { get, post, put, del } from './api.js';
+import { fmtDate, confColor, confLabel, escHtml, confidenceBarHtml } from './utils.js';
 
 // ── Chart management ──────────────────────────────────────────────────────────
 
@@ -12,19 +13,6 @@ function destroyCharts() {
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-function fmtDate(ts) {
-  if (!ts) return '—';
-  return dayjs(ts).format('MMM D, YYYY HH:mm');
-}
-
-function confColor(c) {
-  return c < 0.3 ? '#e17055' : c < 0.6 ? '#fdcb6e' : '#00b894';
-}
-
-function confLabel(c) {
-  return c < 0.3 ? 'Low' : c < 0.6 ? 'Medium' : 'High';
-}
-
 function domainClass(domain) {
   if (!domain) return '';
   var d = domain.toLowerCase();
@@ -34,25 +22,6 @@ function domainClass(domain) {
   return '';
 }
 
-function escHtml(str) {
-  return String(str || '')
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;');
-}
-
-function confidenceBarHtml(conf) {
-  var color = confColor(conf);
-  var pct = Math.round(conf * 100);
-  return (
-    '<span class="confidence-bar">' +
-      '<span class="fill" style="display:block;width:' + pct + '%;height:100%;' +
-        'background:' + color + ';border-radius:4px;"></span>' +
-    '</span>'
-  );
-}
-
 // ── List View ─────────────────────────────────────────────────────────────────
 
 export function renderList(el, initialState) {
@@ -60,7 +29,7 @@ export function renderList(el, initialState) {
   el.innerHTML = '';
 
   var state = Object.assign(
-    { domain: '', project: '', search: '', page: 1, per_page: 20, chartsOpen: false },
+    { domain: '', project: '', search: '', sort: 'confidence', page: 1, per_page: 20, chartsOpen: false },
     initialState || {}
   );
 
@@ -76,6 +45,21 @@ export function renderList(el, initialState) {
   var projectSelect = document.createElement('select');
   projectSelect.innerHTML = '<option value="">All projects</option>';
 
+  var sortOptions = [
+    { value: 'confidence', label: 'Confidence' },
+    { value: 'recent', label: 'Recently seen' },
+    { value: 'seen', label: 'Most seen' },
+    { value: 'newest', label: 'Newest' },
+  ];
+  var sortSelect = document.createElement('select');
+  sortOptions.forEach(function(o) {
+    var opt = document.createElement('option');
+    opt.value = o.value;
+    opt.textContent = o.label;
+    if (o.value === state.sort) opt.selected = true;
+    sortSelect.appendChild(opt);
+  });
+
   var searchInput = document.createElement('input');
   searchInput.type = 'text';
   searchInput.placeholder = 'Search instincts\u2026';
@@ -84,6 +68,7 @@ export function renderList(el, initialState) {
 
   filterRow.appendChild(domainSelect);
   filterRow.appendChild(projectSelect);
+  filterRow.appendChild(sortSelect);
   filterRow.appendChild(searchInput);
   el.appendChild(filterRow);
 
@@ -150,8 +135,8 @@ export function renderList(el, initialState) {
 
     (projects || []).forEach(function(p) {
       var opt = document.createElement('option');
-      opt.value = p.project_id || p.name || '';
-      opt.textContent = p.name || p.project_id || '';
+      opt.value = p.id || p.project_id || p.name || '';
+      opt.textContent = p.name || p.id || '';
       if (opt.value === state.project) opt.selected = true;
       projectSelect.appendChild(opt);
     });
@@ -227,6 +212,7 @@ export function renderList(el, initialState) {
 
   function loadList() {
     var qs = '?page=' + state.page + '&per_page=' + state.per_page;
+    if (state.sort && state.sort !== 'confidence') qs += '&sort=' + encodeURIComponent(state.sort);
     if (state.domain) qs += '&domain=' + encodeURIComponent(state.domain);
     if (state.project) qs += '&project=' + encodeURIComponent(state.project);
     if (state.search) qs += '&search=' + encodeURIComponent(state.search);
@@ -280,12 +266,71 @@ export function renderList(el, initialState) {
           '</div>' +
           '<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">' +
             confidenceBarHtml(conf) +
-            '<span style="font-size:12px;color:' + color + ';font-family:monospace">' + conf.toFixed(2) + '</span>' +
+            '<span class="conf-value" style="font-size:12px;color:' + color + ';font-family:monospace">' + conf.toFixed(2) + '</span>' +
             '<span style="font-size:12px;color:var(--text-muted);margin-left:4px">\u00b7 seen ' + seenCount + 'x</span>' +
           '</div>' +
           '<div style="font-size:12px;color:var(--text-muted);font-family:\'SF Mono\',monospace;line-height:1.5">' +
             escHtml(snippet) +
           '</div>';
+
+        // Validate / Reject quick actions
+        var actionsDiv = document.createElement('div');
+        actionsDiv.style.cssText = 'display:flex;gap:8px;margin-top:8px;';
+        actionsDiv.addEventListener('click', function(e) { e.stopPropagation(); });
+
+        var vBtn = document.createElement('button');
+        vBtn.className = 'btn btn-sm';
+        vBtn.style.cssText = 'font-size:11px;padding:2px 10px;background:rgba(0,184,148,0.15);color:var(--success);border:1px solid var(--success);';
+        vBtn.textContent = '\u2713 Validate';
+        vBtn.addEventListener('click', (function(instId, cardEl) {
+          return function() {
+            vBtn.disabled = true;
+            vBtn.textContent = '\u2026';
+            put('/instincts/' + encodeURIComponent(instId) + '/validate')
+              .then(function(res) {
+                var cs = cardEl.querySelector('.conf-value');
+                if (cs && res.confidence != null) {
+                  cs.textContent = res.confidence.toFixed(2);
+                  cs.style.color = '#00b894';
+                  setTimeout(function() { cs.style.color = confColor(res.confidence); }, 1200);
+                }
+                vBtn.disabled = false; vBtn.textContent = '\u2713 Validate';
+              })
+              .catch(function() { vBtn.disabled = false; vBtn.textContent = '\u2713 Validate'; });
+          };
+        })(inst.id, card));
+
+        var rBtn = document.createElement('button');
+        rBtn.className = 'btn btn-sm';
+        rBtn.style.cssText = 'font-size:11px;padding:2px 10px;background:rgba(225,112,85,0.15);color:var(--danger);border:1px solid var(--danger);';
+        rBtn.textContent = '\u2717 Reject';
+        rBtn.addEventListener('click', (function(instId, cardEl) {
+          return function() {
+            rBtn.disabled = true;
+            rBtn.textContent = '\u2026';
+            put('/instincts/' + encodeURIComponent(instId) + '/reject')
+              .then(function(res) {
+                if (res.archived) {
+                  cardEl.style.opacity = '0';
+                  cardEl.style.transition = 'opacity 0.3s';
+                  setTimeout(function() { cardEl.remove(); }, 300);
+                } else {
+                  var cs = cardEl.querySelector('.conf-value');
+                  if (cs && res.confidence != null) {
+                    cs.textContent = res.confidence.toFixed(2);
+                    cs.style.color = '#e17055';
+                    setTimeout(function() { cs.style.color = confColor(res.confidence); }, 1200);
+                  }
+                  rBtn.disabled = false; rBtn.textContent = '\u2717 Reject';
+                }
+              })
+              .catch(function() { rBtn.disabled = false; rBtn.textContent = '\u2717 Reject'; });
+          };
+        })(inst.id, card));
+
+        actionsDiv.appendChild(vBtn);
+        actionsDiv.appendChild(rBtn);
+        card.appendChild(actionsDiv);
 
         card.addEventListener('mouseenter', function() { card.style.borderColor = 'var(--accent)'; });
         card.addEventListener('mouseleave', function() { card.style.borderColor = ''; });
@@ -329,6 +374,12 @@ export function renderList(el, initialState) {
       listWrap.innerHTML = '<p style="color:var(--danger);padding:20px">Error: ' + escHtml(err.message) + '</p>';
     });
   }
+
+  sortSelect.addEventListener('change', function() {
+    state.sort = sortSelect.value;
+    state.page = 1;
+    loadList();
+  });
 
   domainSelect.addEventListener('change', function() {
     state.domain = domainSelect.value;
@@ -421,6 +472,50 @@ function renderDetailContent(el, inst) {
     '</div>';
   el.appendChild(metaCard);
 
+  // Vietnamese translation card
+  var viCard = document.createElement('div');
+  viCard.className = 'card';
+  viCard.style.marginBottom = '1rem';
+
+  var viTitle = document.createElement('div');
+  viTitle.className = 'card-title';
+  viTitle.textContent = 'Bản dịch tiếng Việt';
+  viCard.appendChild(viTitle);
+
+  var viBody = document.createElement('div');
+  viBody.id = 'instinct-vi-body';
+  viCard.appendChild(viBody);
+
+  if (inst.instinct_vi) {
+    var viPre = document.createElement('pre');
+    viPre.style.cssText = 'white-space:pre-wrap;word-break:break-word;font-size:12px;color:var(--text);line-height:1.6;margin:0';
+    viPre.textContent = inst.instinct_vi;
+    viBody.appendChild(viPre);
+  } else {
+    var translateBtn = document.createElement('button');
+    translateBtn.className = 'btn btn-primary';
+    translateBtn.textContent = 'Dịch sang tiếng Việt';
+    translateBtn.addEventListener('click', function() {
+      translateBtn.disabled = true;
+      translateBtn.textContent = 'Đang dịch…';
+      post('/instincts/' + encodeURIComponent(inst.id) + '/translate')
+        .then(function(res) {
+          viBody.innerHTML = '';
+          var pre = document.createElement('pre');
+          pre.style.cssText = 'white-space:pre-wrap;word-break:break-word;font-size:12px;color:var(--text);line-height:1.6;margin:0';
+          pre.textContent = res.instinct_vi;
+          viBody.appendChild(pre);
+        })
+        .catch(function(err) {
+          translateBtn.disabled = false;
+          translateBtn.textContent = 'Dịch sang tiếng Việt';
+          alert('Lỗi: ' + err.message);
+        });
+    });
+    viBody.appendChild(translateBtn);
+  }
+  el.appendChild(viCard);
+
   // Action buttons
   var actionsRow = document.createElement('div');
   actionsRow.style.cssText = 'display:flex;gap:8px;margin-bottom:1rem;';
@@ -437,7 +532,7 @@ function renderDetailContent(el, inst) {
       return;
     }
     put('/instincts/' + encodeURIComponent(inst.id), { confidence: val })
-      .then(function() { location.hash = '#learning/instincts/' + inst.id; })
+      .then(function() { renderDetail(el, inst.id); })
       .catch(function(err) { alert('Error: ' + err.message); });
   });
 
@@ -461,6 +556,34 @@ function renderDetailContent(el, inst) {
       .catch(function(err) { alert('Error: ' + err.message); });
   });
 
+  var validateBtn = document.createElement('button');
+  validateBtn.className = 'btn';
+  validateBtn.style.cssText = 'background:rgba(0,184,148,0.15);color:var(--success);border:1px solid var(--success)';
+  validateBtn.textContent = '\u2713 Validate (+0.15)';
+  validateBtn.addEventListener('click', function() {
+    validateBtn.disabled = true;
+    put('/instincts/' + encodeURIComponent(inst.id) + '/validate')
+      .then(function() { renderDetail(el, inst.id); })
+      .catch(function(err) { validateBtn.disabled = false; alert('Error: ' + err.message); });
+  });
+
+  var rejectBtn = document.createElement('button');
+  rejectBtn.className = 'btn';
+  rejectBtn.style.cssText = 'background:rgba(225,112,85,0.15);color:var(--danger);border:1px solid var(--danger)';
+  rejectBtn.textContent = '\u2717 Reject (-0.2)';
+  rejectBtn.addEventListener('click', function() {
+    if (!confirm('Reject this instinct? Confidence -0.2. After 3 rejections it will be archived.')) return;
+    rejectBtn.disabled = true;
+    put('/instincts/' + encodeURIComponent(inst.id) + '/reject')
+      .then(function(res) {
+        if (res.archived) { alert('Instinct archived after 3 rejections.'); location.hash = '#learning/instincts'; }
+        else { renderDetail(el, inst.id); }
+      })
+      .catch(function(err) { rejectBtn.disabled = false; alert('Error: ' + err.message); });
+  });
+
+  actionsRow.appendChild(validateBtn);
+  actionsRow.appendChild(rejectBtn);
   actionsRow.appendChild(editBtn);
   actionsRow.appendChild(archiveBtn);
   actionsRow.appendChild(deleteBtn);
@@ -477,54 +600,6 @@ function renderDetailContent(el, inst) {
       escHtml(inst.instinct || '') +
     '</pre>';
   el.appendChild(contentCard);
-
-  // Related observations
-  var obsCard = document.createElement('div');
-  obsCard.className = 'card';
-  obsCard.style.marginBottom = '1rem';
-  obsCard.innerHTML =
-    '<div class="card-title">Related Observations</div>' +
-    '<div id="obs-body" class="empty-state"><span class="spinner"></span></div>';
-  el.appendChild(obsCard);
-
-  get('/instincts/' + encodeURIComponent(inst.id) + '/observations')
-    .then(function(observations) {
-      var obsBody = obsCard.querySelector('#obs-body');
-      if (!observations || observations.length === 0) {
-        obsBody.textContent = 'No related observations';
-        return;
-      }
-      obsBody.className = '';
-      observations.forEach(function(obs) {
-        var item = document.createElement('div');
-        item.style.cssText = 'border-bottom:1px solid var(--border);padding:10px 0;';
-        var catCls = domainClass(obs.category || '');
-        var catBadge = catCls
-          ? '<span class="badge ' + catCls + '">' + escHtml(obs.category || '') + '</span>'
-          : '<span class="badge">' + escHtml(obs.category || '') + '</span>';
-        var sessionLink = obs.session_id
-          ? ' <a href="#sessions/' + encodeURIComponent(obs.session_id) + '" ' +
-              'style="color:var(--accent);font-size:11px;text-decoration:none;font-family:monospace">' +
-              escHtml(obs.session_id.slice(0, 8)) + '\u2026</a>'
-          : '';
-        item.innerHTML =
-          '<div style="display:flex;align-items:center;gap:8px;margin-bottom:4px">' +
-            '<span style="font-size:11px;color:var(--text-muted);font-family:monospace">' +
-              escHtml(fmtDate(obs.observed_at)) +
-            '</span>' +
-            catBadge +
-            sessionLink +
-          '</div>' +
-          '<div style="font-size:13px;color:var(--text);line-height:1.5">' +
-            escHtml(obs.observation || '') +
-          '</div>';
-        obsBody.appendChild(item);
-      });
-    })
-    .catch(function(err) {
-      obsCard.querySelector('#obs-body').innerHTML =
-        '<p style="color:var(--danger)">Error: ' + escHtml(err.message) + '</p>';
-    });
 
   // Related suggestions
   var sugCard = document.createElement('div');

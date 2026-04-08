@@ -1,4 +1,5 @@
 import { get } from './api.js';
+import { truncate } from './utils.js';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -28,12 +29,6 @@ function formatJson(str) {
   } catch (_) {
     return str;
   }
-}
-
-function truncate(str, max) {
-  if (!str) return '';
-  if (str.length <= max) return str;
-  return str.slice(0, max) + '…';
 }
 
 // ── Color maps ────────────────────────────────────────────────────────────────
