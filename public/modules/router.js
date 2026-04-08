@@ -4,15 +4,17 @@
 const ROUTES = {
   dashboard: () => import('./dashboard.js'),
   sessions: () => import('./sessions.js'),
+  prompts: () => import('./prompts.js'),
   inventory: () => import('./inventory.js'),
   expert: () => import('./expert.js'),
+  projects: () => import('./projects.js'),
   learning: () => import('./learning.js'),
   knowledge: () => import('./knowledge.js'),
   settings: () => import('./settings.js'),
 };
 
 // Pages that hide the period selector
-const NO_PERIOD = new Set(['settings', 'learning', 'knowledge']);
+const NO_PERIOD = new Set(['settings', 'learning', 'knowledge', 'projects']);
 
 let currentModule = null;
 let currentPeriod = '30d';

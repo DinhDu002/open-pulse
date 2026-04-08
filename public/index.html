@@ -714,6 +714,104 @@
     .chart-toggle { cursor: pointer; color: var(--accent); font-size: 0.85rem; margin-bottom: 0.5rem; }
     .filter-row { display: flex; flex-wrap: wrap; gap: 0.6rem; margin-bottom: 1rem; }
     .filter-row select, .filter-row input { background: var(--surface); border: 1px solid var(--border); color: var(--text); padding: 0.4rem 0.6rem; border-radius: 4px; font-size: 0.85rem; }
+
+    /* ── Prompt cards ── */
+    .card.clickable { cursor: pointer; transition: border-color 0.2s; }
+    .card.clickable:hover { border-color: var(--accent); }
+    .card-list { display: flex; flex-direction: column; gap: 10px; }
+
+    /* ── Filter bar ── */
+    .filter-bar {
+      display: flex; gap: 12px; margin-bottom: 20px;
+      align-items: center; flex-wrap: wrap;
+    }
+    .filter-input { flex: 1; min-width: 200px; }
+    .filter-select { min-width: 140px; }
+
+    /* ── Pagination (prompts) ── */
+    .btn.active {
+      background: var(--accent); color: #fff; border-color: var(--accent);
+    }
+
+    /* ── Flow timeline ── */
+    .flow-timeline {
+      border: 1px solid var(--border); border-radius: 8px;
+      overflow: hidden;
+    }
+    .flow-event {
+      display: flex; align-items: center; gap: 12px;
+      padding: 12px 16px;
+      border-bottom: 1px solid var(--border);
+      cursor: pointer;
+      transition: background 0.1s;
+    }
+    .flow-event:last-child { border-bottom: none; }
+    .flow-event:hover { background: rgba(108, 92, 231, 0.06); }
+    .flow-event.expanded { background: var(--surface); }
+    .flow-seq {
+      color: var(--text-muted); font-size: 11px;
+      width: 20px; text-align: right; flex-shrink: 0;
+    }
+    .flow-dot {
+      width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0;
+    }
+    .flow-main { flex: 1; display: flex; align-items: center; gap: 0; min-width: 0; }
+    .flow-name { font-weight: 500; font-family: 'SF Mono', monospace; font-size: 12px; }
+    .flow-detail {
+      color: var(--text-muted); margin-left: 8px; font-size: 12px;
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+    .flow-duration { color: var(--text-muted); font-size: 11px; flex-shrink: 0; }
+    .flow-status { font-size: 11px; width: 16px; text-align: center; flex-shrink: 0; }
+    .flow-detail-panel {
+      padding: 12px 16px 12px 56px;
+      border-bottom: 1px solid var(--border);
+      background: var(--bg);
+      border-left: 3px solid var(--accent);
+    }
+    .flow-detail-panel:last-child { border-bottom: none; }
+    .flow-detail-label {
+      font-size: 12px; color: var(--text-muted);
+      margin-bottom: 4px; font-weight: 600;
+    }
+    .flow-detail-pre {
+      background: var(--surface); padding: 8px 12px;
+      border-radius: 4px; font-size: 11px; overflow-x: auto;
+      margin: 0 0 8px 0; white-space: pre-wrap;
+      font-family: 'SF Mono', 'Fira Code', monospace;
+    }
+
+    /* ── Prompt group headers in session detail ── */
+    .prompt-group-header {
+      padding: 10px 16px;
+      background: var(--bg);
+      border-bottom: 1px solid var(--border);
+      display: flex; justify-content: space-between; align-items: center;
+    }
+    .prompt-group-header.clickable { cursor: pointer; }
+    .prompt-group-header.clickable:hover { background: var(--surface); }
+    .prompt-group-text { font-weight: 500; font-size: 13px; }
+    .prompt-group-stats { font-size: 11px; color: var(--text-muted); }
+
+    /* ── Prompt detail header ── */
+    .prompt-header { margin-bottom: 20px; }
+    .prompt-text { font-size: 16px; margin-bottom: 6px; line-height: 1.4; }
+    .back-link {
+      color: var(--accent); text-decoration: none; font-size: 13px;
+      display: inline-block; margin-bottom: 12px;
+    }
+    .back-link:hover { text-decoration: underline; }
+
+    /* ── Prompt card title ── */
+    .prompt-card-title {
+      font-size: 14px; line-height: 1.4; margin-bottom: 8px;
+      color: var(--text); word-break: break-word;
+    }
+    .prompt-card-meta {
+      display: flex; gap: 16px; font-size: 12px;
+      color: var(--text-muted); margin-bottom: 10px; flex-wrap: wrap;
+    }
+    .badge-row { display: flex; gap: 6px; flex-wrap: wrap; }
   </style>
 </head>
 <body>
@@ -723,8 +821,10 @@
       <nav id="nav">
         <a href="#dashboard" class="active">Dashboard</a>
         <a href="#sessions">Sessions</a>
+        <a href="#prompts">Prompts</a>
         <a href="#inventory">Inventory</a>
         <a href="#expert">Expert</a>
+        <a href="#projects">Projects</a>
         <a href="#learning">Learning</a>
         <a href="#knowledge" class="nav-link">Knowledge</a>
         <a href="#settings">Settings</a>
