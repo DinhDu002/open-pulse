@@ -272,7 +272,10 @@ function createDb(dbPath) {
 
 function withEventDefaults(evt) {
   return {
-    tool_input: null, tool_response: null, seq_num: null,
+    detail: null, duration_ms: null, success: null,
+    input_tokens: null, output_tokens: null, estimated_cost_usd: null,
+    working_directory: null, model: null, user_prompt: null,
+    tool_input: null, tool_response: null, seq_num: null, prompt_id: null,
     ...evt,
   };
 }
@@ -282,11 +285,11 @@ function insertEvent(db, evt) {
     INSERT INTO events
       (timestamp, session_id, event_type, name, detail, duration_ms, success,
        input_tokens, output_tokens, estimated_cost_usd, working_directory, model, user_prompt,
-       tool_input, tool_response, seq_num)
+       tool_input, tool_response, seq_num, prompt_id)
     VALUES
       (@timestamp, @session_id, @event_type, @name, @detail, @duration_ms, @success,
        @input_tokens, @output_tokens, @estimated_cost_usd, @working_directory, @model, @user_prompt,
-       @tool_input, @tool_response, @seq_num)
+       @tool_input, @tool_response, @seq_num, @prompt_id)
   `).run(withEventDefaults(evt));
 }
 
@@ -305,6 +308,42 @@ function insertEventBatch(db, events) {
     for (const row of rows) insert.run(withEventDefaults(row));
   });
   tx(events);
+}
+
+// ---------------------------------------------------------------------------
+// Prompts
+// ---------------------------------------------------------------------------
+
+function insertPrompt(db, p) {
+  const result = db.prepare(`
+    INSERT INTO prompts (session_id, prompt_text, seq_start, timestamp)
+    VALUES (@session_id, @prompt_text, @seq_start, @timestamp)
+  `).run({
+    session_id: p.session_id,
+    prompt_text: p.prompt_text,
+    seq_start: p.seq_start,
+    timestamp: p.timestamp,
+  });
+  return Number(result.lastInsertRowid);
+}
+
+function getLatestPromptForSession(db, sessionId) {
+  return db.prepare(
+    'SELECT * FROM prompts WHERE session_id = ? ORDER BY id DESC LIMIT 1'
+  ).get(sessionId);
+}
+
+function updatePromptStats(db, promptId, { seq_end, cost, timestamp }) {
+  db.prepare(`
+    UPDATE prompts
+    SET event_count = event_count + 1,
+        total_cost_usd = total_cost_usd + @cost,
+        seq_end = @seq_end,
+        duration_ms = CAST(
+          (julianday(@timestamp) - julianday(timestamp)) * 86400000 AS INTEGER
+        )
+    WHERE id = @id
+  `).run({ id: promptId, seq_end, cost: cost || 0, timestamp });
 }
 
 // ---------------------------------------------------------------------------
@@ -968,6 +1007,9 @@ module.exports = {
   createDb,
   insertEvent,
   insertEventBatch,
+  insertPrompt,
+  getLatestPromptForSession,
+  updatePromptStats,
   upsertSession,
   upsertSessionBatch,
   updateSessionEnd,

@@ -285,6 +285,103 @@ describe('op-db', () => {
     assert.equal(mod.getKgSyncState(db, 'missing_key'), null);
   });
 
+  // ─── prompts ───────────────────────────────────────────────────────────────
+
+  describe('prompts', () => {
+    before(() => {
+      // Seed sessions required by prompts FK constraint
+      for (const sid of ['sess-prompt-1', 'sess-prompt-2', 'sess-prompt-3', 'sess-prompt-4']) {
+        mod.upsertSession(db, {
+          session_id: sid,
+          started_at: '2026-04-08T10:00:00Z',
+          working_directory: '/tmp',
+          model: 'haiku',
+        });
+      }
+    });
+
+    it('insertPrompt creates a prompt record', () => {
+      const id = mod.insertPrompt(db, {
+        session_id: 'sess-prompt-1',
+        prompt_text: 'add auth feature',
+        seq_start: 1,
+        timestamp: '2026-04-08T10:00:00Z',
+      });
+      assert.ok(id > 0);
+      const row = db.prepare('SELECT * FROM prompts WHERE id = ?').get(id);
+      assert.equal(row.session_id, 'sess-prompt-1');
+      assert.equal(row.prompt_text, 'add auth feature');
+      assert.equal(row.seq_start, 1);
+      assert.equal(row.event_count, 0);
+    });
+
+    it('getLatestPromptForSession returns most recent prompt', () => {
+      mod.insertPrompt(db, {
+        session_id: 'sess-prompt-2',
+        prompt_text: 'first prompt',
+        seq_start: 1,
+        timestamp: '2026-04-08T10:00:00Z',
+      });
+      const id2 = mod.insertPrompt(db, {
+        session_id: 'sess-prompt-2',
+        prompt_text: 'second prompt',
+        seq_start: 5,
+        timestamp: '2026-04-08T10:01:00Z',
+      });
+      const latest = mod.getLatestPromptForSession(db, 'sess-prompt-2');
+      assert.equal(latest.id, id2);
+      assert.equal(latest.prompt_text, 'second prompt');
+    });
+
+    it('getLatestPromptForSession returns undefined when no prompts', () => {
+      const result = mod.getLatestPromptForSession(db, 'nonexistent-session');
+      assert.equal(result, undefined);
+    });
+
+    it('updatePromptStats increments event_count and cost', () => {
+      const id = mod.insertPrompt(db, {
+        session_id: 'sess-prompt-3',
+        prompt_text: 'test prompt',
+        seq_start: 1,
+        timestamp: '2026-04-08T10:00:00Z',
+      });
+      mod.updatePromptStats(db, id, {
+        seq_end: 3,
+        cost: 0.05,
+        timestamp: '2026-04-08T10:00:30Z',
+      });
+      mod.updatePromptStats(db, id, {
+        seq_end: 4,
+        cost: 0.10,
+        timestamp: '2026-04-08T10:01:00Z',
+      });
+      const row = db.prepare('SELECT * FROM prompts WHERE id = ?').get(id);
+      assert.equal(row.event_count, 2);
+      assert.ok(Math.abs(row.total_cost_usd - 0.15) < 0.001);
+      assert.equal(row.seq_end, 4);
+    });
+
+    it('insertEvent includes prompt_id', () => {
+      const promptId = mod.insertPrompt(db, {
+        session_id: 'sess-prompt-4',
+        prompt_text: 'with prompt_id',
+        seq_start: 1,
+        timestamp: '2026-04-08T10:00:00Z',
+      });
+      mod.insertEvent(db, {
+        timestamp: '2026-04-08T10:00:05Z',
+        session_id: 'sess-prompt-4',
+        event_type: 'tool_call',
+        name: 'Read',
+        prompt_id: promptId,
+      });
+      const evt = db.prepare(
+        'SELECT prompt_id FROM events WHERE session_id = ? AND name = ?'
+      ).get('sess-prompt-4', 'Read');
+      assert.equal(evt.prompt_id, promptId);
+    });
+  });
+
   // ─── deleteProject ─────────────────────────────────────────────────────────
 
   describe('deleteProject', () => {
