@@ -110,12 +110,12 @@ function buildElements(graphData) {
     const width = Math.min(Math.max(Math.log2(weight), 1), 5);
     return {
       data: {
-        id: 'e-' + e.source + '-' + e.target + '-' + Math.random().toString(36).slice(2),
-        source: String(e.source),
-        target: String(e.target),
+        id: 'e-' + e.source_id + '-' + e.target_id + '-' + Math.random().toString(36).slice(2),
+        source: String(e.source_id),
+        target: String(e.target_id),
         weight,
         width,
-        label: e.label || '',
+        label: e.label || e.relationship || '',
       },
     };
   });
@@ -138,8 +138,15 @@ function renderDetail(detailEl, node, nodeData) {
   typeBadge.textContent = node.data('type') || 'unknown';
   detailEl.appendChild(typeBadge);
 
-  const props = node.data('properties') || {};
-  const skip = new Set(['id', 'label', 'name', 'type', 'color', 'size']);
+  const rawNode = node.data('properties') || {};
+  let parsedProps = {};
+  try {
+    parsedProps = rawNode.properties ? JSON.parse(rawNode.properties) : {};
+  } catch (_) {
+    parsedProps = {};
+  }
+  const props = Object.assign({}, rawNode, parsedProps);
+  const skip = new Set(['id', 'label', 'name', 'type', 'color', 'size', 'degree', 'properties']);
   const keys = Object.keys(props).filter(k => !skip.has(k));
 
   if (keys.length > 0) {
@@ -411,14 +418,14 @@ function renderProjectsSync(el) {
   el.appendChild(tableCard);
 
   function loadStatus() {
-    get('/knowledge/status').then(status => {
+    Promise.all([get('/knowledge/status'), get('/knowledge/projects')]).then(([status, projects]) => {
       el.removeChild(summaryLoading);
 
       const statsData = [
-        { label: 'Projects', value: (status.projects || []).length },
-        { label: 'Nodes', value: status.node_count || 0 },
-        { label: 'Edges', value: status.edge_count || 0 },
-        { label: 'Last Sync', value: status.last_sync_at ? timeAgo(status.last_sync_at) : 'Never' },
+        { label: 'Projects', value: (projects || []).length },
+        { label: 'Nodes', value: status.nodeCount || 0 },
+        { label: 'Edges', value: status.edgeCount || 0 },
+        { label: 'Last Sync', value: status.lastSync ? timeAgo(status.lastSync) : 'Never' },
       ];
       statsData.forEach(c => {
         const card = document.createElement('div');
@@ -436,8 +443,8 @@ function renderProjectsSync(el) {
       });
       el.insertBefore(summaryGrid, tableCard);
 
-      const projects = status.projects || [];
-      if (projects.length === 0) {
+      const projects2 = projects || [];
+      if (projects2.length === 0) {
         const empty = document.createElement('div');
         empty.className = 'empty-state';
         empty.textContent = 'No projects found. Run sync to discover projects.';
@@ -455,7 +462,7 @@ function renderProjectsSync(el) {
         table.appendChild(thead);
 
         const tbody = document.createElement('tbody');
-        projects.forEach(proj => {
+        projects2.forEach(proj => {
           const tr = document.createElement('tr');
           tr.style.cursor = 'default';
 
