@@ -32,18 +32,6 @@ function normaliseEvent(raw) {
   };
 }
 
-function normaliseSession(raw) {
-  return {
-    session_id:          raw.session_id          ?? null,
-    started_at:          raw.started_at          ?? raw.ended_at ?? raw.ts ?? null,
-    ended_at:            raw.ended_at            ?? raw.ts ?? null,
-    working_directory:   raw.working_directory   ?? raw.work_dir ?? null,
-    model:               raw.model               ?? null,
-    total_input_tokens:  raw.total_input_tokens  ?? raw.input_tokens ?? 0,
-    total_output_tokens: raw.total_output_tokens ?? raw.output_tokens ?? 0,
-    total_cost_usd:      raw.total_cost_usd      ?? raw.estimated_cost_usd ?? 0,
-  };
-}
 
 function normaliseSuggestion(raw) {
   return {
@@ -63,34 +51,6 @@ function normaliseSuggestion(raw) {
   };
 }
 
-// ---------------------------------------------------------------------------
-// Session upsert with full fields
-// ---------------------------------------------------------------------------
-
-function upsertSessionFull(db, sessions) {
-  // First upsert core fields via the shared batch function
-  const coreRows = sessions.map(s => ({
-    session_id:        s.session_id,
-    started_at:        s.started_at,
-    working_directory: s.working_directory,
-    model:             s.model,
-  }));
-  upsertSessionBatch(db, coreRows);
-
-  // Then update token/cost fields
-  const update = db.prepare(`
-    UPDATE sessions SET
-      ended_at            = @ended_at,
-      total_input_tokens  = @total_input_tokens,
-      total_output_tokens = @total_output_tokens,
-      total_cost_usd      = @total_cost_usd
-    WHERE session_id = @session_id
-  `);
-  const tx = db.transaction((rows) => {
-    for (const row of rows) update.run(row);
-  });
-  tx(sessions);
-}
 
 // ---------------------------------------------------------------------------
 // Parse JSONL — returns { rows, errors }
@@ -220,8 +180,6 @@ function processContent(db, processingPath, type) {
       linkEventsToPrompts(db, events);
       insertEventBatch(db, events);
       updatePromptStatsAfterInsert(db, events);
-    } else if (type === 'sessions') {
-      upsertSessionFull(db, rows.map(normaliseSession));
     } else if (type === 'suggestions') {
       insertSuggestionBatch(db, rows.map(normaliseSuggestion));
     }
@@ -243,7 +201,7 @@ function processContent(db, processingPath, type) {
  *
  * @param {import('better-sqlite3').Database} db
  * @param {string} filePath  - full path to the .jsonl file
- * @param {'events'|'sessions'|'suggestions'} type
+ * @param {'events'|'suggestions'} type
  * @returns {{ processed: number, errors: number }}
  */
 function ingestFile(db, filePath, type) {
@@ -298,15 +256,15 @@ function ingestFile(db, filePath, type) {
 // ---------------------------------------------------------------------------
 
 /**
- * Ingest all three JSONL files from a data directory.
+ * Ingest all JSONL files from a data directory.
  *
  * @param {import('better-sqlite3').Database} db
  * @param {string} dataDir
- * @returns {{ events: object, sessions: object, suggestions: object }}
+ * @returns {{ events: object, suggestions: object }}
  */
 function ingestAll(db, dataDir) {
   const results = {};
-  for (const type of ['events', 'sessions', 'suggestions']) {
+  for (const type of ['events', 'suggestions']) {
     const filePath = path.join(dataDir, `${type}.jsonl`);
     results[type] = ingestFile(db, filePath, type);
   }

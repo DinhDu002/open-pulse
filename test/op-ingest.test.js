@@ -25,7 +25,7 @@ describe('op-ingest', () => {
   });
 
   beforeEach(() => {
-    for (const f of ['events.jsonl', 'sessions.jsonl', 'suggestions.jsonl']) {
+    for (const f of ['events.jsonl', 'suggestions.jsonl']) {
       const p = path.join(TEST_DIR, 'data', f);
       for (const suffix of ['', '.processing', '.retries', '.failed']) {
         const fp = p + suffix;
@@ -51,21 +51,6 @@ describe('op-ingest', () => {
     assert.equal(rows.length, 1);
   });
 
-  it('ingestFile processes sessions.jsonl into DB', () => {
-    const filePath = path.join(TEST_DIR, 'data', 'sessions.jsonl');
-    const session = {
-      session_id: 'ingest-sess-1', started_at: '2026-04-06T10:00:00Z',
-      ended_at: '2026-04-06T10:05:00Z', working_directory: '/tmp', model: 'opus',
-      total_input_tokens: 5000, total_output_tokens: 3000, total_cost_usd: 0.15,
-    };
-    fs.writeFileSync(filePath, JSON.stringify(session) + '\n');
-    const result = ingest.ingestFile(db, filePath, 'sessions');
-    assert.equal(result.processed, 1);
-    const row = db.prepare('SELECT * FROM sessions WHERE session_id = ?').get('ingest-sess-1');
-    assert.ok(row);
-    assert.equal(row.total_cost_usd, 0.15);
-  });
-
   it('ingestFile processes suggestions.jsonl into DB', () => {
     const filePath = path.join(TEST_DIR, 'data', 'suggestions.jsonl');
     const suggestion = {
@@ -78,23 +63,6 @@ describe('op-ingest', () => {
     assert.equal(result.processed, 1);
     const rows = db.prepare('SELECT * FROM suggestions').all();
     assert.ok(rows.some(r => r.id === 'sugg-ingest-1'));
-  });
-
-  it('ingestFile handles old-format session fields', () => {
-    const filePath = path.join(TEST_DIR, 'data', 'sessions.jsonl');
-    const oldFormat = {
-      ts: '2026-04-06T11:00:00Z', session_id: 'old-fmt-1',
-      work_dir: '/old/path', model: 'opus',
-      input_tokens: 2000, output_tokens: 1000, estimated_cost_usd: 0.08,
-    };
-    fs.writeFileSync(filePath, JSON.stringify(oldFormat) + '\n');
-    const result = ingest.ingestFile(db, filePath, 'sessions');
-    assert.equal(result.processed, 1);
-    const row = db.prepare('SELECT * FROM sessions WHERE session_id = ?').get('old-fmt-1');
-    assert.ok(row, 'session should be inserted');
-    assert.equal(row.started_at, '2026-04-06T11:00:00Z');
-    assert.equal(row.total_input_tokens, 2000);
-    assert.equal(row.total_cost_usd, 0.08);
   });
 
   it('ingestFile skips empty/missing file', () => {
@@ -314,6 +282,23 @@ describe('op-ingest', () => {
     assert.equal(session.total_output_tokens, 4000);
     assert.equal(session.total_cost_usd, 0.25);
     assert.equal(session.ended_at, '2026-04-09T10:00:05Z');
+  });
+
+  it('ingestAll does not process sessions.jsonl', () => {
+    const sessPath = path.join(TEST_DIR, 'data', 'sessions.jsonl');
+    fs.writeFileSync(sessPath, JSON.stringify({
+      session_id: 'ignored-sess', started_at: '2026-04-09T10:00:00Z',
+      working_directory: '/tmp', model: 'opus',
+      total_input_tokens: 1000, total_output_tokens: 500, total_cost_usd: 0.05,
+    }) + '\n');
+
+    const results = ingest.ingestAll(db, path.join(TEST_DIR, 'data'));
+
+    assert.equal(results.sessions, undefined, 'sessions key should not exist');
+    assert.ok(fs.existsSync(sessPath), 'sessions.jsonl should not be consumed');
+
+    const row = db.prepare('SELECT * FROM sessions WHERE session_id = ?').get('ignored-sess');
+    assert.equal(row, undefined, 'should not insert from sessions.jsonl');
   });
 
   // -------------------------------------------------------------------------
