@@ -100,8 +100,7 @@ function linkEventsToPrompts(db, events) {
       evt.prompt_id = null;
       continue;
     }
-    // Skip prompt linking if the session record doesn't exist yet (e.g. events
-    // ingested before sessions.jsonl, or in tests that only write event files)
+    // Skip prompt linking if the session record doesn't exist yet
     if (!sessionExists.get(evt.session_id)) {
       evt.prompt_id = null;
       continue;
