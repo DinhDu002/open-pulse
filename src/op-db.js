@@ -106,7 +106,6 @@ CREATE TABLE IF NOT EXISTS suggestions (
   confidence    REAL    DEFAULT 0,
   description   TEXT,
   evidence      TEXT,
-  instinct_id   TEXT,
   status        TEXT    NOT NULL DEFAULT 'pending',
   resolved_at   TEXT,
   resolved_by   TEXT
@@ -118,8 +117,6 @@ CREATE TABLE IF NOT EXISTS scan_results (
   report           TEXT,
   total_skills     INTEGER DEFAULT 0,
   total_agents     INTEGER DEFAULT 0,
-  total_hooks      INTEGER DEFAULT 0,
-  total_rules      INTEGER DEFAULT 0,
   issues_critical  INTEGER DEFAULT 0,
   issues_high      INTEGER DEFAULT 0,
   issues_medium    INTEGER DEFAULT 0,
@@ -136,9 +133,6 @@ CREATE TABLE IF NOT EXISTS components (
   file_path     TEXT,
   description   TEXT,
   agent_class   TEXT,
-  hook_event    TEXT,
-  hook_matcher  TEXT,
-  hook_command  TEXT,
   first_seen_at TEXT    NOT NULL,
   last_seen_at  TEXT    NOT NULL
 );
@@ -197,6 +191,29 @@ CREATE TABLE IF NOT EXISTS kb_notes (
 );
 CREATE UNIQUE INDEX IF NOT EXISTS idx_kb_notes_project_slug ON kb_notes(project_id, slug);
 CREATE INDEX IF NOT EXISTS idx_kb_notes_project ON kb_notes(project_id);
+
+CREATE TABLE IF NOT EXISTS insights (
+  id                TEXT PRIMARY KEY,
+  source            TEXT NOT NULL,
+  category          TEXT NOT NULL,
+  target_type       TEXT,
+  title             TEXT NOT NULL,
+  description       TEXT NOT NULL,
+  confidence        REAL DEFAULT 0.3,
+  observation_count INTEGER DEFAULT 1,
+  validation_count  INTEGER DEFAULT 0,
+  rejection_count   INTEGER DEFAULT 0,
+  status            TEXT DEFAULT 'active',
+  action_data       TEXT,
+  promoted_to       TEXT,
+  project_id        TEXT,
+  created_at        TEXT NOT NULL,
+  updated_at        TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_insights_source ON insights(source);
+CREATE INDEX IF NOT EXISTS idx_insights_status ON insights(status);
+CREATE INDEX IF NOT EXISTS idx_insights_target ON insights(target_type);
+CREATE INDEX IF NOT EXISTS idx_insights_project ON insights(project_id);
 `;
 
 // ---------------------------------------------------------------------------
@@ -213,10 +230,10 @@ function createDb(dbPath) {
     'ALTER TABLE events ADD COLUMN tool_input TEXT',
     'ALTER TABLE events ADD COLUMN tool_response TEXT',
     'ALTER TABLE events ADD COLUMN seq_num INTEGER',
-    'ALTER TABLE suggestions ADD COLUMN instinct_id TEXT',
     'ALTER TABLE suggestions ADD COLUMN category TEXT',
     'ALTER TABLE suggestions ADD COLUMN action_data TEXT',
     'ALTER TABLE suggestions ADD COLUMN description_vi TEXT',
+    'ALTER TABLE suggestions ADD COLUMN action_summary TEXT',
     'ALTER TABLE sessions ADD COLUMN rules_loaded TEXT',
   ];
   for (const sql of migrations) {
@@ -274,6 +291,32 @@ function createDb(dbPath) {
   db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_projects_directory ON cl_projects(directory) WHERE directory IS NOT NULL');
   db.exec('CREATE INDEX IF NOT EXISTS idx_suggestions_category ON suggestions(category)');
 
+  // Migrate: remove hook/rule components and hook-specific columns
+  db.exec("DELETE FROM components WHERE type IN ('hook', 'rule')");
+  const hasHookEvent = db.prepare(
+    "SELECT COUNT(*) AS cnt FROM pragma_table_info('components') WHERE name = 'hook_event'"
+  ).get();
+  if (hasHookEvent.cnt > 0) {
+    db.exec('ALTER TABLE components DROP COLUMN hook_event');
+    db.exec('ALTER TABLE components DROP COLUMN hook_matcher');
+    db.exec('ALTER TABLE components DROP COLUMN hook_command');
+  }
+  const hasTotalHooks = db.prepare(
+    "SELECT COUNT(*) AS cnt FROM pragma_table_info('scan_results') WHERE name = 'total_hooks'"
+  ).get();
+  if (hasTotalHooks.cnt > 0) {
+    db.exec('ALTER TABLE scan_results DROP COLUMN total_hooks');
+    db.exec('ALTER TABLE scan_results DROP COLUMN total_rules');
+  }
+
+  // Migrate: drop instinct_id from suggestions (dead column — suggestion agent never populated it)
+  const hasSuggInstinctId = db.prepare(
+    "SELECT COUNT(*) AS cnt FROM pragma_table_info('suggestions') WHERE name = 'instinct_id'"
+  ).get();
+  if (hasSuggInstinctId.cnt > 0) {
+    db.exec('ALTER TABLE suggestions DROP COLUMN instinct_id');
+  }
+
   return db;
 }
 
@@ -287,6 +330,7 @@ const instincts = require('./db/instincts');
 const suggestions = require('./db/suggestions');
 const knowledge = require('./db/knowledge');
 const components = require('./db/components');
+const insights = require('./db/insights');
 
 module.exports = {
   DEFAULT_DB_PATH,
@@ -297,4 +341,5 @@ module.exports = {
   ...suggestions,
   ...knowledge,
   ...components,
+  ...insights,
 };

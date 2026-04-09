@@ -96,7 +96,7 @@ describe('op-db', () => {
     mod.insertSuggestion(db, {
       id: 'sugg-1',
       created_at: '2026-04-06T10:00:00Z',
-      type: 'hook',
+      type: 'skill',
       confidence: 0.8,
       description: 'Auto-format after edit',
       evidence: JSON.stringify(['session:abc']),
@@ -120,8 +120,6 @@ describe('op-db', () => {
       report: JSON.stringify({ issues: [] }),
       total_skills: 5,
       total_agents: 3,
-      total_hooks: 10,
-      total_rules: 8,
       issues_critical: 0,
       issues_high: 1,
       issues_medium: 2,
@@ -155,7 +153,6 @@ describe('op-db', () => {
       type: 'skill', name: 'test-skill', source: 'global',
       plugin: null, project: null, file_path: '/tmp/skills/test-skill',
       description: 'A test skill', agent_class: null,
-      hook_event: null, hook_matcher: null, hook_command: null,
       first_seen_at: now, last_seen_at: now,
     });
     const row = db.prepare("SELECT * FROM components WHERE name = 'test-skill'").get();
@@ -169,7 +166,6 @@ describe('op-db', () => {
       type: 'skill', name: 'test-skill', source: 'global',
       plugin: null, project: null, file_path: '/tmp/skills/test-skill',
       description: 'A test skill', agent_class: null,
-      hook_event: null, hook_matcher: null, hook_command: null,
       first_seen_at: now, last_seen_at: later,
     });
     const updated = db.prepare("SELECT * FROM components WHERE name = 'test-skill'").get();
@@ -183,7 +179,6 @@ describe('op-db', () => {
       type: 'skill', name: 'stale-skill', source: 'global',
       plugin: null, project: null, file_path: '/tmp/skills/stale',
       description: '', agent_class: null,
-      hook_event: null, hook_matcher: null, hook_command: null,
       first_seen_at: old, last_seen_at: old,
     });
     const cutoff = '2026-04-07T09:30:00Z';
@@ -199,7 +194,6 @@ describe('op-db', () => {
       type: 'agent', name: 'test-agent', source: 'global',
       plugin: null, project: null, file_path: '/tmp/agents/test-agent.md',
       description: 'An agent', agent_class: 'configured',
-      hook_event: null, hook_matcher: null, hook_command: null,
       first_seen_at: '2026-04-07T10:00:00Z', last_seen_at: '2026-04-07T11:00:00Z',
     });
     const skills = mod.getComponentsByType(db, 'skill');
@@ -413,7 +407,7 @@ describe('op-db', () => {
           id: pid + '-sugg-1', created_at: '2026-01-01T00:00:00Z',
           type: 'adoption', confidence: 0.6,
           description: 'test suggestion', evidence: 'ev',
-          instinct_id: pid + '-inst-1', status: 'pending',
+          status: 'pending',
         });
         mod.insertKbNote(db, {
           id: pid + '-note-1', project_id: pid, slug: 'note-1',
@@ -439,12 +433,6 @@ describe('op-db', () => {
       const instincts = db.prepare('SELECT * FROM cl_instincts WHERE project_id = ?').all(P1);
       assert.equal(instincts.length, 0);
 
-      // Suggestions linked to P1 instincts gone
-      const suggs = db.prepare(
-        "SELECT * FROM suggestions WHERE instinct_id LIKE ?"
-      ).all(P1 + '%');
-      assert.equal(suggs.length, 0);
-
       // kb_notes gone
       const notes = db.prepare('SELECT * FROM kb_notes WHERE project_id = ?').all(P1);
       assert.equal(notes.length, 0);
@@ -468,16 +456,248 @@ describe('op-db', () => {
       const instincts = db.prepare('SELECT * FROM cl_instincts WHERE project_id = ?').all(P2);
       assert.equal(instincts.length, 2);
 
-      const suggs = db.prepare(
-        "SELECT * FROM suggestions WHERE instinct_id LIKE ?"
-      ).all(P2 + '%');
-      assert.equal(suggs.length, 1);
-
       const notes = db.prepare('SELECT * FROM kb_notes WHERE project_id = ?').all(P2);
       assert.equal(notes.length, 1);
 
       const hashes = db.prepare('SELECT * FROM kg_vault_hashes WHERE project_id = ?').all(P2);
       assert.equal(hashes.length, 1);
+    });
+  });
+
+  // ─── insights ──────────────────────────────────────────────────────────────
+
+  describe('insights', () => {
+    it('creates insights table', () => {
+      const tables = db.prepare(
+        "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name"
+      ).all().map(r => r.name);
+      assert.ok(tables.includes('insights'));
+    });
+
+    it('upsertInsight inserts new insight with all fields', () => {
+      mod.upsertInsight(db, {
+        id: 'insight-001',
+        source: 'observer',
+        category: 'pattern',
+        target_type: 'rule',
+        title: 'Always use immutable data',
+        description: 'Immutable data should always be used',
+        confidence: 0.85,
+        observation_count: 1,
+        validation_count: 0,
+        rejection_count: 0,
+        status: 'active',
+        action_data: '{"type":"rule"}',
+        project_id: 'proj-1',
+        created_at: '2026-04-09T10:00:00Z',
+        updated_at: '2026-04-09T10:00:00Z',
+      });
+
+      const row = mod.getInsight(db, 'insight-001');
+      assert.ok(row);
+      assert.equal(row.source, 'observer');
+      assert.equal(row.title, 'Always use immutable data');
+      assert.equal(row.confidence, 0.85);
+      assert.equal(row.target_type, 'rule');
+      assert.equal(row.observation_count, 1);
+    });
+
+    it('upsertInsight increments observation_count on conflict', () => {
+      mod.upsertInsight(db, {
+        id: 'insight-002',
+        source: 'observer',
+        category: 'pattern',
+        title: 'Test insight',
+        description: 'Test description',
+        confidence: 0.5,
+        created_at: '2026-04-09T10:00:00Z',
+        updated_at: '2026-04-09T10:00:00Z',
+      });
+
+      const first = mod.getInsight(db, 'insight-002');
+      assert.equal(first.observation_count, 1);
+
+      // Upsert again with different confidence
+      mod.upsertInsight(db, {
+        id: 'insight-002',
+        source: 'observer',
+        category: 'pattern',
+        title: 'Test insight',
+        description: 'Updated description',
+        confidence: 0.7,
+        created_at: '2026-04-09T10:00:00Z',
+        updated_at: '2026-04-09T10:00:00Z',
+      });
+
+      const updated = mod.getInsight(db, 'insight-002');
+      assert.equal(updated.observation_count, 2);
+      assert.equal(updated.confidence, 0.7);
+      assert.equal(updated.description, 'Updated description');
+    });
+
+    it('queryInsights filters by source and status', () => {
+      mod.upsertInsight(db, {
+        id: 'insight-filter-003',
+        source: 'filter-observer',
+        category: 'pattern',
+        title: 'Active insight',
+        description: 'This should be active',
+        status: 'active',
+        created_at: '2026-04-09T10:00:00Z',
+        updated_at: '2026-04-09T10:00:00Z',
+      });
+
+      mod.upsertInsight(db, {
+        id: 'insight-filter-004',
+        source: 'filter-observer',
+        category: 'pattern',
+        title: 'Archived insight',
+        description: 'This should be archived',
+        status: 'archived',
+        created_at: '2026-04-09T10:00:00Z',
+        updated_at: '2026-04-09T10:00:00Z',
+      });
+
+      mod.upsertInsight(db, {
+        id: 'insight-filter-005',
+        source: 'filter-validator',
+        category: 'pattern',
+        title: 'Another source insight',
+        description: 'From different source',
+        status: 'active',
+        created_at: '2026-04-09T10:00:00Z',
+        updated_at: '2026-04-09T10:00:00Z',
+      });
+
+      // Query by source and status
+      const result = mod.queryInsights(db, {
+        source: 'filter-observer',
+        status: 'active',
+      });
+
+      assert.equal(result.rows.length, 1);
+      assert.ok(result.rows.every(r => r.source === 'filter-observer' && r.status === 'active'));
+      assert.ok(result.total >= 1);
+    });
+
+    it('updateInsightFeedback adjusts confidence on validate', () => {
+      mod.upsertInsight(db, {
+        id: 'insight-006',
+        source: 'observer',
+        category: 'pattern',
+        title: 'Test validate',
+        description: 'Test',
+        confidence: 0.5,
+        created_at: '2026-04-09T10:00:00Z',
+        updated_at: '2026-04-09T10:00:00Z',
+      });
+
+      mod.updateInsightFeedback(db, 'insight-006', 'validate');
+      const row = mod.getInsight(db, 'insight-006');
+
+      assert.equal(row.confidence, 0.65); // 0.5 + 0.15
+      assert.equal(row.validation_count, 1);
+    });
+
+    it('updateInsightFeedback archives after 3 rejections', () => {
+      mod.upsertInsight(db, {
+        id: 'insight-007',
+        source: 'observer',
+        category: 'pattern',
+        title: 'Test reject',
+        description: 'Test',
+        confidence: 0.8,
+        created_at: '2026-04-09T10:00:00Z',
+        updated_at: '2026-04-09T10:00:00Z',
+      });
+
+      mod.updateInsightFeedback(db, 'insight-007', 'reject');
+      let row = mod.getInsight(db, 'insight-007');
+      assert.equal(row.rejection_count, 1);
+      assert.equal(row.status, 'active');
+
+      mod.updateInsightFeedback(db, 'insight-007', 'reject');
+      row = mod.getInsight(db, 'insight-007');
+      assert.equal(row.rejection_count, 2);
+      assert.equal(row.status, 'active');
+
+      mod.updateInsightFeedback(db, 'insight-007', 'reject');
+      row = mod.getInsight(db, 'insight-007');
+      assert.equal(row.rejection_count, 3);
+      assert.equal(row.status, 'archived');
+    });
+
+    it('classifyTargetType returns correct types from keywords', () => {
+      assert.equal(mod.classifyTargetType('you should always do this'), 'rule');
+      assert.equal(mod.classifyTargetType('never use mutable state'), 'rule');
+      assert.equal(mod.classifyTargetType('automatically run tests'), 'hook');
+      assert.equal(mod.classifyTargetType('before saving, validate data'), 'hook');
+      assert.equal(mod.classifyTargetType('step-by-step procedure'), 'skill');
+      assert.equal(mod.classifyTargetType('workflow guide'), 'skill');
+      assert.equal(mod.classifyTargetType('delegate to specialized agent'), 'agent');
+      assert.equal(mod.classifyTargetType('isolated subagent'), 'agent');
+      assert.equal(mod.classifyTargetType('this fact contains important data'), 'knowledge');
+      assert.equal(mod.classifyTargetType('has 10 items'), 'knowledge');
+      assert.equal(mod.classifyTargetType('no keywords here'), null);
+    });
+
+    it('queryInsights supports pagination', () => {
+      // Insert 5 insights
+      for (let i = 0; i < 5; i++) {
+        mod.upsertInsight(db, {
+          id: `insight-page-${i}`,
+          source: 'observer',
+          category: 'pattern',
+          title: `Test ${i}`,
+          description: 'Test',
+          created_at: '2026-04-09T10:00:00Z',
+          updated_at: '2026-04-09T10:00:00Z',
+        });
+      }
+
+      const page1 = mod.queryInsights(db, { source: 'observer', page: 1, per_page: 2 });
+      assert.equal(page1.rows.length, 2);
+      assert.equal(page1.page, 1);
+      assert.equal(page1.per_page, 2);
+      assert.ok(page1.total >= 5);
+
+      const page2 = mod.queryInsights(db, { source: 'observer', page: 2, per_page: 2 });
+      assert.equal(page2.rows.length, 2);
+      assert.equal(page2.page, 2);
+
+      // Verify no duplicates between pages
+      const ids1 = new Set(page1.rows.map(r => r.id));
+      const ids2 = new Set(page2.rows.map(r => r.id));
+      for (const id of ids1) {
+        assert.ok(!ids2.has(id), `Duplicate ID ${id} across pages`);
+      }
+    });
+
+    it('deleteInsight removes insight', () => {
+      mod.upsertInsight(db, {
+        id: 'insight-delete-test',
+        source: 'observer',
+        category: 'pattern',
+        title: 'To delete',
+        description: 'Delete me',
+        created_at: '2026-04-09T10:00:00Z',
+        updated_at: '2026-04-09T10:00:00Z',
+      });
+
+      let row = mod.getInsight(db, 'insight-delete-test');
+      assert.ok(row);
+
+      mod.deleteInsight(db, 'insight-delete-test');
+      row = mod.getInsight(db, 'insight-delete-test');
+      assert.equal(row, undefined);
+    });
+
+    it('getInsightStats returns counts by source/status/target_type', () => {
+      const stats = mod.getInsightStats(db);
+      assert.ok(stats.bySource);
+      assert.ok(Array.isArray(stats.bySource));
+      assert.ok(stats.byStatus);
+      assert.ok(stats.byTargetType);
     });
   });
 });
