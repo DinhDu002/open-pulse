@@ -22,7 +22,6 @@ describe('op-server', () => {
 
     fs.mkdirSync(path.join(TEST_DIR, '.claude', 'skills'), { recursive: true });
     fs.mkdirSync(path.join(TEST_DIR, '.claude', 'agents'), { recursive: true });
-    fs.mkdirSync(path.join(TEST_DIR, '.claude', 'rules'), { recursive: true });
 
     const { buildApp } = require('../src/op-server');
     app = buildApp({ disableTimers: true });
@@ -138,8 +137,8 @@ describe('op-server', () => {
     const db = dbMod.createDb(process.env.OPEN_PULSE_DB);
     dbMod.insertSuggestion(db, {
       id: 'sugg-approve-1', created_at: '2026-04-06T10:00:00Z',
-      type: 'hook', confidence: 0.6, description: 'test suggestion',
-      evidence: '[]', instinct_id: null, status: 'pending',
+      type: 'skill', confidence: 0.6, description: 'test suggestion',
+      evidence: '[]', status: 'pending',
     });
     db.close();
 
@@ -154,8 +153,8 @@ describe('op-server', () => {
     const db = dbMod.createDb(process.env.OPEN_PULSE_DB);
     dbMod.insertSuggestion(db, {
       id: 'sugg-dismiss-1', created_at: '2026-04-06T10:00:00Z',
-      type: 'rule', confidence: 0.7, description: 'test suggestion',
-      evidence: '[]', instinct_id: null, status: 'pending',
+      type: 'agent', confidence: 0.7, description: 'test suggestion',
+      evidence: '[]', status: 'pending',
     });
     db.close();
 
@@ -534,7 +533,7 @@ describe('op-server', () => {
         id: 'del-sugg-1', created_at: '2026-01-01T00:00:00Z',
         type: 'adoption', confidence: 0.6,
         description: 'test', evidence: 'ev',
-        instinct_id: 'del-inst-1', status: 'pending',
+        status: 'pending',
       });
       insertKbNote(db, {
         id: 'del-note-1', project_id: pid, slug: 'note-del',
@@ -643,28 +642,6 @@ describe('op-server', () => {
     });
   });
 
-  describe('pagination: /api/rules', () => {
-    it('GET /api/rules returns paginated response', async () => {
-      const res = await app.inject({ method: 'GET', url: '/api/rules?page=1&per_page=10' });
-      assert.equal(res.statusCode, 200);
-      const body = JSON.parse(res.payload);
-      assert.ok('data' in body, 'should have data');
-      assert.ok('total' in body, 'should have total');
-      assert.ok('page' in body, 'should have page');
-      assert.ok('per_page' in body, 'should have per_page');
-      assert.ok(Array.isArray(body.data), 'data should be array');
-      assert.equal(body.page, 1);
-      assert.equal(body.per_page, 10);
-    });
-
-    it('GET /api/rules clamps per_page to max 50', async () => {
-      const res = await app.inject({ method: 'GET', url: '/api/rules?per_page=999' });
-      assert.equal(res.statusCode, 200);
-      const body = JSON.parse(res.payload);
-      assert.equal(body.per_page, 50);
-    });
-  });
-
   describe('pagination: /api/unused', () => {
     it('GET /api/unused returns paginated flat list', async () => {
       const res = await app.inject({ method: 'GET', url: '/api/unused' });
@@ -677,7 +654,7 @@ describe('op-server', () => {
       assert.ok(Array.isArray(body.data), 'data should be array');
       // Each item in data should have type and name
       for (const item of body.data) {
-        assert.ok(['skill', 'agent', 'rule'].includes(item.type), 'item.type should be skill/agent/rule');
+        assert.ok(['skill', 'agent'].includes(item.type), 'item.type should be skill/agent');
         assert.ok(typeof item.name === 'string', 'item.name should be string');
       }
     });
@@ -765,15 +742,6 @@ describe('op-server', () => {
       assert.equal(res.statusCode, 200);
     });
 
-    it('GET /api/rules returns paginated response', async () => {
-      const res = await app.inject({ method: 'GET', url: '/api/rules' });
-      assert.equal(res.statusCode, 200);
-      const body = JSON.parse(res.payload);
-      assert.ok('data' in body);
-      assert.ok('total' in body);
-      assert.ok('page' in body);
-    });
-
     it('GET /api/unused returns paginated response', async () => {
       const res = await app.inject({ method: 'GET', url: '/api/unused' });
       assert.equal(res.statusCode, 200);
@@ -815,14 +783,14 @@ describe('op-server', () => {
 
   describe('pagination clamping', () => {
     it('clamps negative page to 1', async () => {
-      const res = await app.inject({ method: 'GET', url: '/api/rules?page=-5&per_page=10' });
+      const res = await app.inject({ method: 'GET', url: '/api/instincts?page=-5&per_page=10' });
       assert.equal(res.statusCode, 200);
       const body = JSON.parse(res.payload);
       assert.equal(body.page, 1);
     });
 
     it('clamps per_page to max 50', async () => {
-      const res = await app.inject({ method: 'GET', url: '/api/rules?page=1&per_page=999' });
+      const res = await app.inject({ method: 'GET', url: '/api/instincts?page=1&per_page=999' });
       assert.equal(res.statusCode, 200);
       const body = JSON.parse(res.payload);
       assert.equal(body.per_page, 50);
@@ -833,6 +801,230 @@ describe('op-server', () => {
       assert.equal(res.statusCode, 200);
       const body = JSON.parse(res.payload);
       assert.ok(body.per_page > 0);
+    });
+  });
+
+  describe('insights API', () => {
+    it('GET /api/insights returns paginated list', async () => {
+      const res = await app.inject({ method: 'GET', url: '/api/insights' });
+      assert.equal(res.statusCode, 200);
+      const body = JSON.parse(res.body);
+      assert.ok(Array.isArray(body.rows));
+      assert.ok(typeof body.total === 'number');
+      assert.ok(typeof body.page === 'number');
+      assert.ok(typeof body.per_page === 'number');
+    });
+
+    it('PUT /api/insights/:id/validate increases confidence', async () => {
+      const dbMod = require('../src/op-db');
+      const db = dbMod.createDb(process.env.OPEN_PULSE_DB);
+      dbMod.upsertInsight(db, {
+        id: 'srv-val-test',
+        source: 'observer',
+        category: 'workflow',
+        title: 'Test Validate',
+        description: 'test insight',
+        confidence: 0.5,
+      });
+      db.close();
+
+      const res = await app.inject({ method: 'PUT', url: '/api/insights/srv-val-test/validate' });
+      assert.equal(res.statusCode, 200);
+      const body = JSON.parse(res.body);
+      assert.equal(body.confidence, 0.65);
+      assert.equal(body.validation_count, 1);
+    });
+
+    it('PUT /api/insights/:id/reject decreases confidence', async () => {
+      const dbMod = require('../src/op-db');
+      const db = dbMod.createDb(process.env.OPEN_PULSE_DB);
+      dbMod.upsertInsight(db, {
+        id: 'srv-rej-test',
+        source: 'observer',
+        category: 'workflow',
+        title: 'Test Reject',
+        description: 'test insight',
+        confidence: 0.5,
+      });
+      db.close();
+
+      const res = await app.inject({ method: 'PUT', url: '/api/insights/srv-rej-test/reject' });
+      assert.equal(res.statusCode, 200);
+      const body = JSON.parse(res.body);
+      assert.equal(body.confidence, 0.3);
+      assert.equal(body.rejection_count, 1);
+    });
+
+    it('GET /api/insights/:id returns single insight', async () => {
+      const dbMod = require('../src/op-db');
+      const db = dbMod.createDb(process.env.OPEN_PULSE_DB);
+      dbMod.upsertInsight(db, {
+        id: 'srv-get-test',
+        source: 'daily_analysis',
+        category: 'cleanup',
+        title: 'Clean Up Dead Code',
+        description: 'Remove dead code',
+        confidence: 0.7,
+      });
+      db.close();
+
+      const res = await app.inject({ method: 'GET', url: '/api/insights/srv-get-test' });
+      assert.equal(res.statusCode, 200);
+      const body = JSON.parse(res.body);
+      assert.equal(body.id, 'srv-get-test');
+      assert.equal(body.title, 'Clean Up Dead Code');
+      assert.equal(body.source, 'daily_analysis');
+    });
+
+    it('GET /api/insights/:id returns 404 for non-existent', async () => {
+      const res = await app.inject({ method: 'GET', url: '/api/insights/nonexistent-id' });
+      assert.equal(res.statusCode, 404);
+      const body = JSON.parse(res.body);
+      assert.ok(body.error);
+    });
+
+    it('GET /api/insights?source=observer filters by source', async () => {
+      const dbMod = require('../src/op-db');
+      const db = dbMod.createDb(process.env.OPEN_PULSE_DB);
+      dbMod.upsertInsight(db, {
+        id: 'srv-src-obs-1',
+        source: 'observer',
+        category: 'workflow',
+        title: 'Observer Insight',
+        description: 'from observer',
+        confidence: 0.5,
+      });
+      dbMod.upsertInsight(db, {
+        id: 'srv-src-daily-1',
+        source: 'daily_analysis',
+        category: 'cleanup',
+        title: 'Daily Insight',
+        description: 'from daily',
+        confidence: 0.6,
+      });
+      db.close();
+
+      const res = await app.inject({ method: 'GET', url: '/api/insights?source=observer' });
+      assert.equal(res.statusCode, 200);
+      const body = JSON.parse(res.body);
+      assert.ok(body.rows.every(r => r.source === 'observer'));
+    });
+
+    it('GET /api/insights?status=active filters by status', async () => {
+      const res = await app.inject({ method: 'GET', url: '/api/insights?status=active' });
+      assert.equal(res.statusCode, 200);
+      const body = JSON.parse(res.body);
+      assert.ok(body.rows.every(r => r.status === 'active' || body.rows.length === 0));
+    });
+
+    it('GET /api/insights/stats returns counts by source and status', async () => {
+      const res = await app.inject({ method: 'GET', url: '/api/insights/stats' });
+      assert.equal(res.statusCode, 200);
+      const body = JSON.parse(res.body);
+      assert.ok(Array.isArray(body.bySource));
+      assert.ok(Array.isArray(body.byStatus));
+      assert.ok(Array.isArray(body.byTargetType));
+    });
+
+    it('DELETE /api/insights/:id removes insight', async () => {
+      const dbMod = require('../src/op-db');
+      const db = dbMod.createDb(process.env.OPEN_PULSE_DB);
+      dbMod.upsertInsight(db, {
+        id: 'srv-del-test',
+        source: 'observer',
+        category: 'workflow',
+        title: 'To Delete',
+        description: 'will be deleted',
+        confidence: 0.5,
+      });
+      db.close();
+
+      const res = await app.inject({ method: 'DELETE', url: '/api/insights/srv-del-test' });
+      assert.equal(res.statusCode, 200);
+      const body = JSON.parse(res.body);
+      assert.equal(body.ok, true);
+
+      // Verify it's gone
+      const getRes = await app.inject({ method: 'GET', url: '/api/insights/srv-del-test' });
+      assert.equal(getRes.statusCode, 404);
+    });
+
+    it('GET /api/insights respects pagination', async () => {
+      const dbMod = require('../src/op-db');
+      const db = dbMod.createDb(process.env.OPEN_PULSE_DB);
+      for (let i = 0; i < 5; i++) {
+        dbMod.upsertInsight(db, {
+          id: `srv-page-test-${i}`,
+          source: 'observer',
+          category: 'workflow',
+          title: `Insight ${i}`,
+          description: `test ${i}`,
+          confidence: 0.5,
+        });
+      }
+      db.close();
+
+      const res = await app.inject({ method: 'GET', url: '/api/insights?per_page=2&page=1' });
+      assert.equal(res.statusCode, 200);
+      const body = JSON.parse(res.body);
+      assert.equal(body.per_page, 2);
+      assert.equal(body.page, 1);
+      assert.ok(body.rows.length <= 2);
+      assert.ok(body.total >= 5);
+    });
+
+    it('PUT /api/insights/:id/validate returns 404 for non-existent', async () => {
+      const res = await app.inject({ method: 'PUT', url: '/api/insights/nonexistent-id/validate' });
+      assert.equal(res.statusCode, 404);
+    });
+
+    it('PUT /api/insights/:id/reject returns 404 for non-existent', async () => {
+      const res = await app.inject({ method: 'PUT', url: '/api/insights/nonexistent-id/reject' });
+      assert.equal(res.statusCode, 404);
+    });
+
+    it('PUT /api/insights/:id/reject auto-archives after 3 rejections', async () => {
+      const dbMod = require('../src/op-db');
+      const db = dbMod.createDb(process.env.OPEN_PULSE_DB);
+      dbMod.upsertInsight(db, {
+        id: 'srv-archive-test',
+        source: 'observer',
+        category: 'workflow',
+        title: 'Archive Test',
+        description: 'test archival',
+        confidence: 0.7,
+      });
+      db.close();
+
+      // Reject 3 times
+      for (let i = 0; i < 3; i++) {
+        await app.inject({ method: 'PUT', url: '/api/insights/srv-archive-test/reject' });
+      }
+
+      const res = await app.inject({ method: 'GET', url: '/api/insights/srv-archive-test' });
+      assert.equal(res.statusCode, 200);
+      const body = JSON.parse(res.body);
+      assert.equal(body.status, 'archived');
+    });
+
+    it('GET /api/insights/:id parses action_data JSON', async () => {
+      const dbMod = require('../src/op-db');
+      const db = dbMod.createDb(process.env.OPEN_PULSE_DB);
+      dbMod.upsertInsight(db, {
+        id: 'srv-action-test',
+        source: 'observer',
+        category: 'workflow',
+        title: 'Action Data Test',
+        description: 'test action data',
+        confidence: 0.5,
+        action_data: JSON.stringify({ foo: 'bar', count: 42 }),
+      });
+      db.close();
+
+      const res = await app.inject({ method: 'GET', url: '/api/insights/srv-action-test' });
+      assert.equal(res.statusCode, 200);
+      const body = JSON.parse(res.body);
+      assert.deepEqual(body.action_data, { foo: 'bar', count: 42 });
     });
   });
 });

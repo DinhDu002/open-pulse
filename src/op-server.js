@@ -141,6 +141,7 @@ function buildApp(opts = {}) {
   app.register(require('./routes/inventory'), routeOpts);
   app.register(require('./routes/instincts'), routeOpts);
   app.register(require('./routes/suggestions'), routeOpts);
+  app.register(require('./routes/insights'), routeOpts);
   app.register(require('./routes/knowledge'), routeOpts);
 
   // ── Cleanup on close ───────────────────────────────────────────────────
