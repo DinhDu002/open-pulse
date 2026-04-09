@@ -64,6 +64,16 @@ module.exports = async function insightsRoutes(app, opts) {
     reply.send(updated);
   });
 
+  // PUT /api/insights/:id/revert
+  app.put('/api/insights/:id/revert', (req, reply) => {
+    const existing = getInsight(db, req.params.id);
+    if (!existing) return errorReply(reply, 404, 'Insight not found');
+    if (existing.status !== 'promoted') return errorReply(reply, 400, 'Only promoted insights can be reverted');
+    const { revertInsight } = require('../op-promote');
+    revertInsight(db, req.params.id);
+    reply.send(getInsight(db, req.params.id));
+  });
+
   // DELETE /api/insights/:id
   app.delete('/api/insights/:id', (req, reply) => {
     deleteInsight(db, req.params.id);

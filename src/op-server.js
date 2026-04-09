@@ -11,6 +11,7 @@ const { generateAllVaults } = require('./op-vault-generator');
 const { ingestAll } = require('./op-ingest');
 const { runRetention } = require('./op-retention');
 const { parseQualifiedName } = require('./op-helpers');
+const { runPromotionCheck } = require('./op-promote');
 const {
   syncAll,
   syncComponentsWithDb,
@@ -89,6 +90,11 @@ function buildApp(opts = {}) {
     timers.push(setInterval(() => {
       syncAll(db);
       try { componentETag = syncComponentsWithDb(db); } catch { /* non-critical */ }
+    }, config.cl_sync_interval_ms || 60000));
+
+    // Promote timer: auto-promote ready insights
+    timers.push(setInterval(() => {
+      try { runPromotionCheck(db); } catch { /* non-critical */ }
     }, config.cl_sync_interval_ms || 60000));
 
     // Retention: run once on startup, then daily

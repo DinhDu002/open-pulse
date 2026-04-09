@@ -956,5 +956,44 @@ describe('op-server', () => {
       const body = JSON.parse(res.body);
       assert.deepEqual(body.action_data, { foo: 'bar', count: 42 });
     });
+
+    it('PUT /api/insights/:id/revert reverts promoted insight', async () => {
+      const dbMod = require('../src/op-db');
+      const db = dbMod.createDb(process.env.OPEN_PULSE_DB);
+      dbMod.upsertInsight(db, {
+        id: 'srv-revert-test',
+        source: 'observer',
+        category: 'workflow',
+        target_type: 'rule',
+        title: 'Revert me',
+        description: 'test',
+        confidence: 0.9,
+      });
+      dbMod.updateInsightStatus(db, 'srv-revert-test', 'promoted', '/tmp/fake-promoted-file.md');
+      db.close();
+
+      const res = await app.inject({ method: 'PUT', url: '/api/insights/srv-revert-test/revert' });
+      assert.equal(res.statusCode, 200);
+      const body = JSON.parse(res.body);
+      assert.equal(body.status, 'reverted');
+    });
+
+    it('PUT /api/insights/:id/revert rejects non-promoted', async () => {
+      const dbMod = require('../src/op-db');
+      const db = dbMod.createDb(process.env.OPEN_PULSE_DB);
+      dbMod.upsertInsight(db, {
+        id: 'srv-revert-fail',
+        source: 'observer',
+        category: 'workflow',
+        target_type: 'rule',
+        title: 'Not promoted',
+        description: 'test',
+        confidence: 0.5,
+      });
+      db.close();
+
+      const res = await app.inject({ method: 'PUT', url: '/api/insights/srv-revert-fail/revert' });
+      assert.equal(res.statusCode, 400);
+    });
   });
 });
