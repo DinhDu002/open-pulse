@@ -1,15 +1,13 @@
 // Hash-based SPA router
-// Routes: dashboard, sessions, inventory, expert, settings
 
 const ROUTES = {
   dashboard: () => import('./dashboard.js'),
-  sessions: () => import('./sessions.js'),
   prompts: () => import('./prompts.js'),
   inventory: () => import('./inventory.js'),
-  expert: () => import('./expert.js'),
   projects: () => import('./projects.js'),
   learning: () => import('./learning.js'),
   knowledge: () => import('./knowledge.js'),
+  expert: () => import('./expert.js'),
   settings: () => import('./settings.js'),
 };
 

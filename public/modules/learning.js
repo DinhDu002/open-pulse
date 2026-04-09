@@ -1,10 +1,9 @@
 // Learning page — sidebar orchestrator with sub-routing
+// NOTE: innerHTML usage below is safe — only static strings (no user input) are assigned.
 import { get } from './api.js';
 
 const SECTIONS = [
   { key: 'instincts', label: 'Instincts' },
-  { key: 'observations', label: 'Observations' },
-  { key: 'projects', label: 'Projects' },
   { key: 'suggestions', label: 'Suggestions' },
 ];
 
@@ -14,8 +13,6 @@ let currentSection = 'instincts';
 
 const loaders = {
   instincts: () => import('./learning-instincts.js'),
-  observations: () => import('./learning-observations.js'),
-  projects: () => import('./learning-projects.js'),
   suggestions: () => import('./learning-suggestions.js'),
 };
 let loadedModules = {};
@@ -32,14 +29,11 @@ async function loadStats(statsEl) {
   try {
     var results = await Promise.all([
       get('/instincts?per_page=1'),
-      get('/observations/activity?days=1'),
       get('/suggestions?status=pending'),
     ]);
-    var todayObs = results[1].reduce(function(s, d) { return s + d.count; }, 0);
     statsEl.innerHTML =
       '<div>Instincts: <span>' + results[0].total + '</span></div>' +
-      '<div>Obs. today: <span>' + todayObs + '</span></div>' +
-      '<div>Pending: <span>' + results[2].length + '</span></div>';
+      '<div>Pending: <span>' + results[1].length + '</span></div>';
   } catch(e) { statsEl.innerHTML = '<div>Stats unavailable</div>'; }
 }
 
