@@ -334,19 +334,8 @@ async function main() {
     const eventWithPrompt = userPrompt ? { ...event, user_prompt: userPrompt } : event;
     appendToFile(path.join(repoDir, 'data', 'events.jsonl'), eventWithPrompt);
 
-    // ── stop: also write session summary ──────────────────────────────────
+    // Clean up per-session prompt file when session ends
     if (hookType === 'stop') {
-      const session = {
-        session_id:          sessionId,
-        ended_at:            event.ts,
-        working_directory:   workDir,
-        model,
-        total_input_tokens:  event.input_tokens,
-        total_output_tokens: event.output_tokens,
-        total_cost_usd:      event.estimated_cost_usd,
-        last_prompt:         readLastPrompt(repoDir, sessionId),
-      };
-      appendToFile(path.join(repoDir, 'data', 'sessions.jsonl'), session);
       cleanLastPrompt(repoDir, sessionId);
     }
   } catch (err) {

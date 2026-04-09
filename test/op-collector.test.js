@@ -21,10 +21,8 @@ describe('op-collector', () => {
   });
 
   beforeEach(() => {
-    for (const f of ['events.jsonl', 'sessions.jsonl']) {
-      const p = path.join(TEST_DIR, 'data', f);
-      if (fs.existsSync(p)) fs.unlinkSync(p);
-    }
+    const p = path.join(TEST_DIR, 'data', 'events.jsonl');
+    if (fs.existsSync(p)) fs.unlinkSync(p);
   });
 
   it('parseEvent returns tool_call for Read tool', () => {
