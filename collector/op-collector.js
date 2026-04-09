@@ -2,13 +2,15 @@
 
 const fs = require('fs');
 const path = require('path');
-const os = require('os');
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
 const MAX_DETAIL_LENGTH = 500;
+const MAX_TOOL_DATA_LENGTH = 5000;
 const MAX_STDIN = 1024 * 1024;
 const MAX_PROMPT_LENGTH = 1000;
+
+const SECRET_PATTERN = /(api_key|token|secret|password|authorization|credentials|auth)['"]?\s*[:=]\s*['"]?[A-Za-z0-9_\-\/.+=]{8,}/gi;
 
 const TOKEN_RATES = {
   haiku:  { input: 0.8,  output: 4.0  },
@@ -28,6 +30,40 @@ function truncate(str, maxLen) {
   if (typeof str !== 'string') return str;
   if (str.length <= maxLen) return str;
   return str.slice(0, maxLen) + '…';
+}
+
+/**
+ * Redact potential secrets from a string.
+ * @param {string} str
+ * @returns {string}
+ */
+function scrubSecrets(str) {
+  if (typeof str !== 'string') return str;
+  return str.replace(SECRET_PATTERN, (match) => {
+    const sepIdx = match.search(/[:=]/);
+    if (sepIdx === -1) return '[REDACTED]';
+    return match.slice(0, sepIdx + 1) + ' [REDACTED]';
+  });
+}
+
+/**
+ * Stringify and truncate tool data (input or response) for CL analysis.
+ * @param {*} data
+ * @returns {string|null}
+ */
+function serializeToolData(data) {
+  if (data == null) return null;
+  const str = typeof data === 'string' ? data : JSON.stringify(data);
+  return scrubSecrets(truncate(str, MAX_TOOL_DATA_LENGTH));
+}
+
+/**
+ * Generate a monotonic sequence number using millisecond timestamp.
+ * No file I/O — eliminates .seq-* state files.
+ * @returns {number}
+ */
+function nextSeqNum() {
+  return Date.now();
 }
 
 /**
@@ -59,44 +95,48 @@ function appendToFile(filePath, data) {
 
 // ─── Repo Discovery ───────────────────────────────────────────────────────────
 
-/**
- * Read ~/.open-pulse-path to find the repo directory.
- * @returns {string|null}
- */
 function getRepoDir() {
-  const pointer = path.join(os.homedir(), '.open-pulse-path');
-  try {
-    return fs.readFileSync(pointer, 'utf8').trim();
-  } catch {
-    return null;
-  }
+  return path.resolve(__dirname, '..');
 }
 
 // ─── Last Prompt ──────────────────────────────────────────────────────────────
 
 /**
  * Persist the last prompt for correlation with subsequent events.
+ * Scoped per session to avoid cross-contamination between concurrent sessions.
  * @param {string} repoDir
+ * @param {string} sessionId
  * @param {string} prompt
  */
-function saveLastPrompt(repoDir, prompt) {
-  const filePath = path.join(repoDir, 'data', '.last-prompt');
+function saveLastPrompt(repoDir, sessionId, prompt) {
+  const filePath = path.join(repoDir, 'data', `.last-prompt-${sessionId}`);
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
   fs.writeFileSync(filePath, truncate(prompt, MAX_PROMPT_LENGTH), 'utf8');
 }
 
 /**
- * Read the persisted last prompt.
+ * Read the persisted last prompt for a specific session.
  * @param {string} repoDir
+ * @param {string} sessionId
  * @returns {string}
  */
-function readLastPrompt(repoDir) {
-  const filePath = path.join(repoDir, 'data', '.last-prompt');
+function readLastPrompt(repoDir, sessionId) {
+  const filePath = path.join(repoDir, 'data', `.last-prompt-${sessionId}`);
   try {
     return fs.readFileSync(filePath, 'utf8');
   } catch {
     return '';
   }
+}
+
+/**
+ * Clean up per-session prompt file when session ends.
+ * @param {string} repoDir
+ * @param {string} sessionId
+ */
+function cleanLastPrompt(repoDir, sessionId) {
+  const filePath = path.join(repoDir, 'data', `.last-prompt-${sessionId}`);
+  try { fs.unlinkSync(filePath); } catch { /* already gone */ }
 }
 
 // ─── Event Parsing ────────────────────────────────────────────────────────────
@@ -113,9 +153,10 @@ function readLastPrompt(repoDir) {
  * @param {string} sessionId
  * @param {string} workDir
  * @param {string} model
+ * @param {object} opts       { seqNum }
  * @returns {object}
  */
-function parseEvent(hookType, input, sessionId, workDir, model) {
+function parseEvent(hookType, input, sessionId, workDir, model, opts = {}) {
   const now = new Date().toISOString();
   const base = {
     // Short-form
@@ -150,9 +191,16 @@ function parseEvent(hookType, input, sessionId, workDir, model) {
   }
 
   // ── tool hooks ───────────────────────────────────────────────────────────
-  const toolName   = input.tool_name   || '';
-  const toolInput  = input.tool_input  || {};
-  const durationMs = input.duration_ms || null;
+  const toolName     = input.tool_name     || '';
+  const toolInput    = input.tool_input    || {};
+  const toolResponse = input.tool_response ?? null;
+  const durationMs   = input.duration_ms   || null;
+  const success      = input.is_error != null ? !input.is_error : null;
+  const seqNum       = opts.seqNum ?? null;
+
+  // Full tool data for CL analysis (scrubbed + truncated)
+  const fullInput    = serializeToolData(toolInput);
+  const fullResponse = serializeToolData(toolResponse);
 
   // Skill tool
   if (toolName === 'Skill') {
@@ -163,10 +211,14 @@ function parseEvent(hookType, input, sessionId, workDir, model) {
       type:   'skill_invoke',
       name:   skillName,
       dur:    durationMs,
-      detail: truncate(toolInput.args || '', MAX_DETAIL_LENGTH),
+      detail: scrubSecrets(truncate(toolInput.args || '', MAX_DETAIL_LENGTH)),
       // DB-form
-      event_type:  'skill_invoke',
-      duration_ms: durationMs,
+      event_type:    'skill_invoke',
+      duration_ms:   durationMs,
+      tool_input:    fullInput,
+      tool_response: fullResponse,
+      seq_num:       seqNum,
+      success,
     };
   }
 
@@ -179,10 +231,14 @@ function parseEvent(hookType, input, sessionId, workDir, model) {
       type:   'agent_spawn',
       name:   agentName,
       dur:    durationMs,
-      detail: truncate(toolInput.description || '', MAX_DETAIL_LENGTH),
+      detail: scrubSecrets(truncate(toolInput.description || '', MAX_DETAIL_LENGTH)),
       // DB-form
-      event_type:  'agent_spawn',
-      duration_ms: durationMs,
+      event_type:    'agent_spawn',
+      duration_ms:   durationMs,
+      tool_input:    fullInput,
+      tool_response: fullResponse,
+      seq_num:       seqNum,
+      success,
     };
   }
 
@@ -199,10 +255,14 @@ function parseEvent(hookType, input, sessionId, workDir, model) {
     type:   'tool_call',
     name:   toolName,
     dur:    durationMs,
-    detail: truncate(String(detailSource), MAX_DETAIL_LENGTH),
+    detail: scrubSecrets(truncate(String(detailSource), MAX_DETAIL_LENGTH)),
     // DB-form
-    event_type:  'tool_call',
-    duration_ms: durationMs,
+    event_type:    'tool_call',
+    duration_ms:   durationMs,
+    tool_input:    fullInput,
+    tool_response: fullResponse,
+    seq_num:       seqNum,
+    success,
   };
 }
 
@@ -228,6 +288,11 @@ async function main() {
 
   // Always pass through to stdout for hook chaining
   process.stdout.write(rawInput);
+
+  // Skip collection for automated sessions (e.g. observer's Haiku analysis)
+  if (process.env.OP_SKIP_COLLECT === '1') {
+    process.exit(0);
+  }
 
   const repoDir = getRepoDir();
   if (!repoDir) {
@@ -258,27 +323,31 @@ async function main() {
     // ── prompt hook: save last prompt ──────────────────────────────────────
     if (hookType === 'prompt') {
       const prompt = input.prompt || '';
-      saveLastPrompt(repoDir, prompt);
+      saveLastPrompt(repoDir, sessionId, prompt);
       process.exit(0);
     }
 
     // ── all other hooks: parse + write event ───────────────────────────────
-    const event = parseEvent(hookType, input, sessionId, workDir, model);
-    appendToFile(path.join(repoDir, 'data', 'events.jsonl'), event);
+    const seqNum = nextSeqNum();
+    const event = parseEvent(hookType, input, sessionId, workDir, model, { seqNum });
+    const userPrompt = readLastPrompt(repoDir, sessionId);
+    const eventWithPrompt = userPrompt ? { ...event, user_prompt: userPrompt } : event;
+    appendToFile(path.join(repoDir, 'data', 'events.jsonl'), eventWithPrompt);
 
     // ── stop: also write session summary ──────────────────────────────────
     if (hookType === 'stop') {
       const session = {
-        ts:                  event.ts,
         session_id:          sessionId,
-        work_dir:            workDir,
+        ended_at:            event.ts,
+        working_directory:   workDir,
         model,
-        input_tokens:        event.input_tokens,
-        output_tokens:       event.output_tokens,
-        estimated_cost_usd:  event.estimated_cost_usd,
-        last_prompt:         readLastPrompt(repoDir),
+        total_input_tokens:  event.input_tokens,
+        total_output_tokens: event.output_tokens,
+        total_cost_usd:      event.estimated_cost_usd,
+        last_prompt:         readLastPrompt(repoDir, sessionId),
       };
       appendToFile(path.join(repoDir, 'data', 'sessions.jsonl'), session);
+      cleanLastPrompt(repoDir, sessionId);
     }
   } catch (err) {
     appendToFile(path.join(repoDir, 'data', 'errors.jsonl'), {
@@ -316,7 +385,7 @@ function readStdin() {
 
 // ─── Exports ──────────────────────────────────────────────────────────────────
 
-module.exports = { parseEvent, estimateCost, appendToFile, truncate };
+module.exports = { parseEvent, estimateCost, appendToFile, truncate, scrubSecrets, serializeToolData, nextSeqNum, saveLastPrompt, readLastPrompt, cleanLastPrompt };
 
 if (require.main === module) {
   main().catch(err => {
