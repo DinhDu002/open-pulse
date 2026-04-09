@@ -995,5 +995,15 @@ describe('op-server', () => {
       const res = await app.inject({ method: 'PUT', url: '/api/insights/srv-revert-fail/revert' });
       assert.equal(res.statusCode, 400);
     });
+
+    it('POST /api/insights/:id/execute returns 404 for missing', async () => {
+      const res = await app.inject({ method: 'POST', url: '/api/insights/nonexistent/execute' });
+      assert.equal(res.statusCode, 404);
+    });
+
+    it('POST /api/insights/:id/generate-prompt returns 404 for missing', async () => {
+      const res = await app.inject({ method: 'POST', url: '/api/insights/nonexistent/generate-prompt' });
+      assert.equal(res.statusCode, 404);
+    });
   });
 });
