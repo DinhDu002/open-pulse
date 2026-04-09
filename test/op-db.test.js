@@ -653,5 +653,27 @@ describe('op-db', () => {
       assert.ok(stats.byStatus);
       assert.ok(stats.byTargetType);
     });
+
+    it('getPromotableInsights returns insights meeting threshold', () => {
+      mod.upsertInsight(db, {
+        id: 'promo-ready', source: 'observer', category: 'workflow',
+        target_type: 'rule', title: 'Always lint', description: 'Always run lint', confidence: 0.9,
+      });
+      for (let i = 0; i < 9; i++) {
+        mod.upsertInsight(db, { id: 'promo-ready', source: 'observer', category: 'workflow',
+          target_type: 'rule', title: 'Always lint', description: 'Always run lint', confidence: 0.9 });
+      }
+      const ready = mod.getPromotableInsights(db);
+      assert.ok(ready.some(r => r.id === 'promo-ready'));
+    });
+
+    it('getPromotableInsights excludes low confidence', () => {
+      mod.upsertInsight(db, {
+        id: 'promo-low', source: 'observer', category: 'workflow',
+        target_type: 'rule', title: 'Low conf', description: 'test', confidence: 0.3,
+      });
+      const ready = mod.getPromotableInsights(db);
+      assert.ok(!ready.some(r => r.id === 'promo-low'));
+    });
   });
 });

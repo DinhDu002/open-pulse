@@ -285,6 +285,21 @@ function getInsightStats(db) {
 }
 
 // ---------------------------------------------------------------------------
+// Promotion threshold
+// ---------------------------------------------------------------------------
+
+function getPromotableInsights(db) {
+  return db.prepare(`
+    SELECT * FROM insights
+    WHERE confidence >= 0.85
+      AND observation_count >= 10
+      AND rejection_count = 0
+      AND target_type IS NOT NULL
+      AND status = 'active'
+  `).all();
+}
+
+// ---------------------------------------------------------------------------
 // Module exports
 // ---------------------------------------------------------------------------
 
@@ -299,4 +314,5 @@ module.exports = {
   updateInsightActionData,
   deleteInsight,
   getInsightStats,
+  getPromotableInsights,
 };
