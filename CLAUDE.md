@@ -129,6 +129,9 @@ open-pulse/
 | GET | `/api/insights/:id` | Single insight detail |
 | PUT | `/api/insights/:id/validate` | Validate insight (+0.15 confidence) |
 | PUT | `/api/insights/:id/reject` | Reject insight (-0.2, auto-archive at 3) |
+| PUT | `/api/insights/:id/revert` | Revert promoted insight (deletes component file) |
+| POST | `/api/insights/:id/execute` | Auto-execute insight (spawns Claude session) |
+| POST | `/api/insights/:id/generate-prompt` | Generate action prompt via Haiku |
 | DELETE | `/api/insights/:id` | Delete insight |
 | POST | `/api/scanner/run` | Run setup scan |
 | GET | `/api/scanner/latest` | Latest scan result |
