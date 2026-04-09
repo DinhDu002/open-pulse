@@ -216,12 +216,8 @@ function exportAnalysisData(db) {
     LIMIT 20
   `).all(days30Ago);
 
-  // Quality instincts from CL observer
-  const qualityInstincts = db.prepare(`
-    SELECT instinct_id, pattern, confidence, last_seen, instinct
-    FROM cl_instincts WHERE category = 'component-quality'
-    ORDER BY confidence DESC LIMIT 20
-  `).all();
+  // Quality instincts from CL observer (cl_instincts table dropped; always empty)
+  const qualityInstincts = [];
 
   // Agent spawn patterns (for agent_creation suggestions)
   const agentSpawns = db.prepare(`
@@ -266,25 +262,26 @@ function exportAnalysisData(db) {
     ORDER BY shared_sessions DESC LIMIT 20
   `).all(days30Ago);
 
-  // Previous suggestions feedback (calibration)
-  const prevSuggestions = db.prepare(`
+  // Previous insights feedback (calibration) — from insights table
+  const prevInsights = db.prepare(`
     SELECT
-      COUNT(CASE WHEN status = 'pending' THEN 1 END) AS pending,
-      COUNT(CASE WHEN status = 'approved' AND resolved_at >= ? THEN 1 END) AS approved_30d,
-      COUNT(CASE WHEN status = 'dismissed' AND resolved_at >= ? THEN 1 END) AS dismissed_30d
-    FROM suggestions
+      COUNT(CASE WHEN status = 'active' THEN 1 END) AS pending,
+      COUNT(CASE WHEN status = 'archived' AND updated_at >= ? THEN 1 END) AS dismissed_30d,
+      COUNT(CASE WHEN validation_count > 0 AND updated_at >= ? THEN 1 END) AS approved_30d
+    FROM insights
   `).get(days30Ago, days30Ago);
 
   const dismissedCats = {};
   db.prepare(`
-    SELECT category, COUNT(*) AS c FROM suggestions
-    WHERE status = 'dismissed' AND resolved_at >= ? AND category IS NOT NULL
+    SELECT category, COUNT(*) AS c FROM insights
+    WHERE status = 'archived' AND updated_at >= ? AND category IS NOT NULL
     GROUP BY category ORDER BY c DESC
   `).all(days30Ago).forEach(r => { dismissedCats[r.category] = r.c; });
 
-  const totalFeedback = (prevSuggestions.approved_30d || 0) + (prevSuggestions.dismissed_30d || 0);
+  const prevSuggestions = prevInsights;
+  const totalFeedback = (prevInsights.approved_30d || 0) + (prevInsights.dismissed_30d || 0);
   const approvalRate = totalFeedback > 0
-    ? Math.round((prevSuggestions.approved_30d / totalFeedback) * 100) : null;
+    ? Math.round((prevInsights.approved_30d / totalFeedback) * 100) : null;
 
   return {
     generated_at: now.toISOString(),

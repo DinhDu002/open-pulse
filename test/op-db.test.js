@@ -32,9 +32,10 @@ describe('op-db', () => {
     assert.ok(tables.includes('sessions'));
     assert.ok(tables.includes('collector_errors'));
     assert.ok(tables.includes('cl_projects'));
-    assert.ok(tables.includes('cl_instincts'));
-    assert.ok(tables.includes('suggestions'));
     assert.ok(tables.includes('scan_results'));
+    // Dropped tables should not exist
+    assert.ok(!tables.includes('cl_instincts'));
+    assert.ok(!tables.includes('suggestions'));
   });
 
   it('creates prompts table', () => {
@@ -90,28 +91,6 @@ describe('op-db', () => {
     const sess = db.prepare('SELECT * FROM sessions WHERE session_id = ?').get('test-sess-2');
     assert.equal(sess.total_tool_calls, 10);
     assert.equal(sess.total_cost_usd, 0.15);
-  });
-
-  it('insertSuggestion + querySuggestions', () => {
-    mod.insertSuggestion(db, {
-      id: 'sugg-1',
-      created_at: '2026-04-06T10:00:00Z',
-      type: 'skill',
-      confidence: 0.8,
-      description: 'Auto-format after edit',
-      evidence: JSON.stringify(['session:abc']),
-      status: 'pending',
-    });
-    const rows = mod.querySuggestions(db, 'pending');
-    assert.ok(rows.some(r => r.id === 'sugg-1'));
-  });
-
-  it('updateSuggestionStatus', () => {
-    mod.updateSuggestionStatus(db, 'sugg-1', 'approved', 'user');
-    const row = db.prepare('SELECT * FROM suggestions WHERE id = ?').get('sugg-1');
-    assert.equal(row.status, 'approved');
-    assert.ok(row.resolved_at);
-    assert.equal(row.resolved_by, 'user');
   });
 
   it('insertScanResult', () => {
@@ -383,31 +362,13 @@ describe('op-db', () => {
     const P2 = 'del-proj-2';
 
     before(() => {
-      // Seed two projects with instincts, suggestions, kb_notes, vault_hashes
+      // Seed two projects with kb_notes and vault_hashes
       for (const pid of [P1, P2]) {
         mod.upsertClProject(db, {
           project_id: pid, name: pid, directory: '/tmp/' + pid,
           first_seen_at: '2026-01-01T00:00:00Z',
           last_seen_at: '2026-01-01T00:00:00Z',
           session_count: 0,
-        });
-        mod.upsertInstinct(db, {
-          instinct_id: pid + '-inst-1', project_id: pid,
-          category: 'test', pattern: 'p', confidence: 0.5,
-          seen_count: 1, first_seen: '2026-01-01T00:00:00Z',
-          last_seen: '2026-01-01T00:00:00Z', instinct: 'body',
-        });
-        mod.upsertInstinct(db, {
-          instinct_id: pid + '-inst-2', project_id: pid,
-          category: 'test', pattern: 'q', confidence: 0.7,
-          seen_count: 1, first_seen: '2026-01-01T00:00:00Z',
-          last_seen: '2026-01-01T00:00:00Z', instinct: 'body2',
-        });
-        mod.insertSuggestion(db, {
-          id: pid + '-sugg-1', created_at: '2026-01-01T00:00:00Z',
-          type: 'adoption', confidence: 0.6,
-          description: 'test suggestion', evidence: 'ev',
-          status: 'pending',
         });
         mod.insertKbNote(db, {
           id: pid + '-note-1', project_id: pid, slug: 'note-1',
@@ -429,10 +390,6 @@ describe('op-db', () => {
       const proj = db.prepare('SELECT * FROM cl_projects WHERE project_id = ?').get(P1);
       assert.equal(proj, undefined);
 
-      // Instincts gone
-      const instincts = db.prepare('SELECT * FROM cl_instincts WHERE project_id = ?').all(P1);
-      assert.equal(instincts.length, 0);
-
       // kb_notes gone
       const notes = db.prepare('SELECT * FROM kb_notes WHERE project_id = ?').all(P1);
       assert.equal(notes.length, 0);
@@ -452,9 +409,6 @@ describe('op-db', () => {
       const proj = db.prepare('SELECT * FROM cl_projects WHERE project_id = ?').get(P2);
       assert.ok(proj);
       assert.equal(proj.name, P2);
-
-      const instincts = db.prepare('SELECT * FROM cl_instincts WHERE project_id = ?').all(P2);
-      assert.equal(instincts.length, 2);
 
       const notes = db.prepare('SELECT * FROM kb_notes WHERE project_id = ?').all(P2);
       assert.equal(notes.length, 1);

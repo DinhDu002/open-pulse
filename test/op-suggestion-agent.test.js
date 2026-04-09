@@ -449,18 +449,11 @@ Those are my recommendations.`;
       assert.ok(sig.avg_followup_calls > 0, 'should have followup calls');
     });
 
-    it('exportAnalysisData returns quality_instincts', () => {
-      const now = new Date().toISOString();
-      db.prepare(`
-        INSERT INTO cl_instincts (instinct_id, project_id, category, pattern, confidence, first_seen, last_seen, instinct)
-        VALUES ('quality-flaky-skill-correction', NULL, 'component-quality', 'flaky-skill correction density', 0.65, ?, ?, 'High correction density')
-      `).run(now, now);
-
+    it('exportAnalysisData returns quality_instincts as empty array (cl_instincts dropped)', () => {
       const data = exportAnalysisData(db);
       assert.ok(Array.isArray(data.quality_instincts), 'should have quality_instincts');
-      const qi = data.quality_instincts.find(i => i.instinct_id === 'quality-flaky-skill-correction');
-      assert.ok(qi, 'should include the component-quality instinct');
-      assert.equal(qi.confidence, 0.65);
+      // cl_instincts table has been dropped; quality_instincts is always []
+      assert.equal(data.quality_instincts.length, 0);
     });
 
     it('exportAnalysisData attaches file_content for high-error components', () => {
@@ -498,18 +491,9 @@ Those are my recommendations.`;
       assert.equal(count, 0);
     });
 
-    it('returns 0 even when instincts exist with NULL instinct_vi', async () => {
-      const now = new Date().toISOString();
-      db.prepare(`
-        INSERT INTO cl_instincts (instinct_id, project_id, category, pattern, confidence, first_seen, last_seen, instinct, instinct_vi)
-        VALUES ('deferred-vi-test', NULL, 'code-style', 'test pattern', 0.7, ?, ?, '## Action\nDo something useful', NULL)
-      `).run(now, now);
-
+    it('returns 0 (cl_instincts dropped, translation deferred)', async () => {
       const count = await translateMissingInstincts(db);
       assert.equal(count, 0);
-
-      // Clean up
-      db.prepare("DELETE FROM cl_instincts WHERE instinct_id = 'deferred-vi-test'").run();
     });
   });
 

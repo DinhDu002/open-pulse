@@ -84,33 +84,6 @@ CREATE TABLE IF NOT EXISTS cl_projects (
   session_count   INTEGER DEFAULT 0
 );
 
-CREATE TABLE IF NOT EXISTS cl_instincts (
-  id            INTEGER PRIMARY KEY AUTOINCREMENT,
-  instinct_id   TEXT,
-  project_id    TEXT,
-  category      TEXT,
-  pattern       TEXT,
-  confidence    REAL    DEFAULT 0,
-  seen_count    INTEGER DEFAULT 1,
-  first_seen    TEXT,
-  last_seen     TEXT,
-  instinct      TEXT
-);
-
-CREATE INDEX IF NOT EXISTS idx_instincts_project ON cl_instincts (project_id);
-
-CREATE TABLE IF NOT EXISTS suggestions (
-  id            TEXT    PRIMARY KEY,
-  created_at    TEXT    NOT NULL,
-  type          TEXT    NOT NULL,
-  confidence    REAL    DEFAULT 0,
-  description   TEXT,
-  evidence      TEXT,
-  status        TEXT    NOT NULL DEFAULT 'pending',
-  resolved_at   TEXT,
-  resolved_by   TEXT
-);
-
 CREATE TABLE IF NOT EXISTS scan_results (
   id               INTEGER PRIMARY KEY AUTOINCREMENT,
   scanned_at       TEXT    NOT NULL,
@@ -225,15 +198,14 @@ function createDb(dbPath) {
   db.pragma('journal_mode = WAL');
   db.pragma('busy_timeout = 3000');
   db.exec(SCHEMA);
+  // Drop legacy tables no longer used
+  db.exec('DROP TABLE IF EXISTS cl_instincts');
+  db.exec('DROP TABLE IF EXISTS suggestions');
   // Migrate existing databases: add columns that may not exist yet
   const migrations = [
     'ALTER TABLE events ADD COLUMN tool_input TEXT',
     'ALTER TABLE events ADD COLUMN tool_response TEXT',
     'ALTER TABLE events ADD COLUMN seq_num INTEGER',
-    'ALTER TABLE suggestions ADD COLUMN category TEXT',
-    'ALTER TABLE suggestions ADD COLUMN action_data TEXT',
-    'ALTER TABLE suggestions ADD COLUMN description_vi TEXT',
-    'ALTER TABLE suggestions ADD COLUMN action_summary TEXT',
     'ALTER TABLE sessions ADD COLUMN rules_loaded TEXT',
   ];
   for (const sql of migrations) {
@@ -246,26 +218,8 @@ function createDb(dbPath) {
     db.exec('ALTER TABLE events ADD COLUMN prompt_id INTEGER REFERENCES prompts(id)');
     db.exec('CREATE INDEX IF NOT EXISTS idx_events_prompt ON events(prompt_id)');
   }
-  // Drop legacy cl_observations table (no longer used)
+  // Drop legacy tables (no longer used)
   db.exec('DROP TABLE IF EXISTS cl_observations');
-  // Migrate: add instinct_id to cl_instincts for dedup
-  const hasInstinctIdCol = db.prepare(
-    "SELECT COUNT(*) AS cnt FROM pragma_table_info('cl_instincts') WHERE name = 'instinct_id'"
-  ).get();
-  if (hasInstinctIdCol.cnt === 0) {
-    db.exec('ALTER TABLE cl_instincts ADD COLUMN instinct_id TEXT');
-    db.exec('DELETE FROM cl_instincts');  // stale duplicates; repopulated by syncAll on startup
-  }
-  // Always ensure unique index exists (fresh DBs have column from SCHEMA, migrated DBs from ALTER)
-  db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_instincts_dedup ON cl_instincts(project_id, instinct_id)');
-
-  // Migrate: add instinct_vi column for cached Vietnamese translation
-  const hasInstinctVi = db.prepare(
-    "SELECT COUNT(*) AS cnt FROM pragma_table_info('cl_instincts') WHERE name = 'instinct_vi'"
-  ).get();
-  if (hasInstinctVi.cnt === 0) {
-    db.exec('ALTER TABLE cl_instincts ADD COLUMN instinct_vi TEXT');
-  }
 
   // Migrate: dedup cl_projects by directory, add unique index
   const dupes = db.prepare(`
@@ -284,12 +238,10 @@ function createDb(dbPath) {
     const keepId = keeper.project_id;
     const removeIds = pids.filter(p => p !== keepId);
     for (const oldId of removeIds) {
-      db.prepare('UPDATE cl_instincts SET project_id = ? WHERE project_id = ?').run(keepId, oldId);
       db.prepare('DELETE FROM cl_projects WHERE project_id = ?').run(oldId);
     }
   }
   db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_projects_directory ON cl_projects(directory) WHERE directory IS NOT NULL');
-  db.exec('CREATE INDEX IF NOT EXISTS idx_suggestions_category ON suggestions(category)');
 
   // Migrate: remove hook/rule components and hook-specific columns
   db.exec("DELETE FROM components WHERE type IN ('hook', 'rule')");
@@ -309,14 +261,6 @@ function createDb(dbPath) {
     db.exec('ALTER TABLE scan_results DROP COLUMN total_rules');
   }
 
-  // Migrate: drop instinct_id from suggestions (dead column — suggestion agent never populated it)
-  const hasSuggInstinctId = db.prepare(
-    "SELECT COUNT(*) AS cnt FROM pragma_table_info('suggestions') WHERE name = 'instinct_id'"
-  ).get();
-  if (hasSuggInstinctId.cnt > 0) {
-    db.exec('ALTER TABLE suggestions DROP COLUMN instinct_id');
-  }
-
   return db;
 }
 
@@ -326,8 +270,6 @@ function createDb(dbPath) {
 
 const events = require('./db/events');
 const sessions = require('./db/sessions');
-const instincts = require('./db/instincts');
-const suggestions = require('./db/suggestions');
 const knowledge = require('./db/knowledge');
 const components = require('./db/components');
 const insights = require('./db/insights');
@@ -337,8 +279,6 @@ module.exports = {
   createDb,
   ...events,
   ...sessions,
-  ...instincts,
-  ...suggestions,
   ...knowledge,
   ...components,
   ...insights,

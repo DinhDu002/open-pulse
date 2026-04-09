@@ -102,12 +102,6 @@ describe('op-server', () => {
     assert.ok(Array.isArray(JSON.parse(res.body)));
   });
 
-  it('GET /api/suggestions returns array', async () => {
-    const res = await app.inject({ method: 'GET', url: '/api/suggestions' });
-    assert.equal(res.statusCode, 200);
-    assert.ok(Array.isArray(JSON.parse(res.body)));
-  });
-
   it('GET /api/scanner/latest returns null or object', async () => {
     const res = await app.inject({ method: 'GET', url: '/api/scanner/latest' });
     assert.equal(res.statusCode, 200);
@@ -130,38 +124,6 @@ describe('op-server', () => {
     const res = await app.inject({ method: 'GET', url: '/api/rankings/skills' });
     assert.equal(res.statusCode, 200);
     assert.ok(Array.isArray(JSON.parse(res.body)));
-  });
-
-  it('PUT /api/suggestions/:id/approve sets status', async () => {
-    const dbMod = require('../src/op-db');
-    const db = dbMod.createDb(process.env.OPEN_PULSE_DB);
-    dbMod.insertSuggestion(db, {
-      id: 'sugg-approve-1', created_at: '2026-04-06T10:00:00Z',
-      type: 'skill', confidence: 0.6, description: 'test suggestion',
-      evidence: '[]', status: 'pending',
-    });
-    db.close();
-
-    const res = await app.inject({ method: 'PUT', url: '/api/suggestions/sugg-approve-1/approve' });
-    assert.equal(res.statusCode, 200);
-    const body = JSON.parse(res.body);
-    assert.equal(body.status, 'approved');
-  });
-
-  it('PUT /api/suggestions/:id/dismiss sets status', async () => {
-    const dbMod = require('../src/op-db');
-    const db = dbMod.createDb(process.env.OPEN_PULSE_DB);
-    dbMod.insertSuggestion(db, {
-      id: 'sugg-dismiss-1', created_at: '2026-04-06T10:00:00Z',
-      type: 'agent', confidence: 0.7, description: 'test suggestion',
-      evidence: '[]', status: 'pending',
-    });
-    db.close();
-
-    const res = await app.inject({ method: 'PUT', url: '/api/suggestions/sugg-dismiss-1/dismiss' });
-    assert.equal(res.statusCode, 200);
-    const body = JSON.parse(res.body);
-    assert.equal(body.status, 'dismissed');
   });
 
   it('GET /api/inventory/agents includes agent_class', async () => {
@@ -514,7 +476,7 @@ describe('op-server', () => {
     it('deletes a project and returns success', async () => {
       // Seed project via internal DB
       const dbPath = process.env.OPEN_PULSE_DB;
-      const { createDb, upsertClProject, upsertInstinct, insertSuggestion, insertKbNote, upsertKgVaultHash } = require('../src/op-db');
+      const { createDb, upsertClProject, insertKbNote, upsertKgVaultHash } = require('../src/op-db');
       const db = createDb(dbPath);
       const pid = 'test-del-proj';
 
@@ -522,18 +484,6 @@ describe('op-server', () => {
         project_id: pid, name: 'deleteme', directory: '/tmp/deleteme',
         first_seen_at: '2026-01-01T00:00:00Z',
         last_seen_at: '2026-01-01T00:00:00Z', session_count: 0,
-      });
-      upsertInstinct(db, {
-        instinct_id: 'del-inst-1', project_id: pid,
-        category: 'test', pattern: 'p', confidence: 0.5,
-        seen_count: 1, first_seen: '2026-01-01T00:00:00Z',
-        last_seen: '2026-01-01T00:00:00Z', instinct: 'body',
-      });
-      insertSuggestion(db, {
-        id: 'del-sugg-1', created_at: '2026-01-01T00:00:00Z',
-        type: 'adoption', confidence: 0.6,
-        description: 'test', evidence: 'ev',
-        status: 'pending',
       });
       insertKbNote(db, {
         id: 'del-note-1', project_id: pid, slug: 'note-del',
@@ -708,21 +658,6 @@ describe('op-server', () => {
       assert.ok(Array.isArray(body.rows));
     });
 
-    it('GET /api/instincts returns paginated result', async () => {
-      const res = await app.inject({ method: 'GET', url: '/api/instincts' });
-      assert.equal(res.statusCode, 200);
-      const body = JSON.parse(res.payload);
-      assert.ok('items' in body);
-      assert.ok('total' in body);
-    });
-
-    it('GET /api/suggestions returns array', async () => {
-      const res = await app.inject({ method: 'GET', url: '/api/suggestions' });
-      assert.equal(res.statusCode, 200);
-      const body = JSON.parse(res.payload);
-      assert.ok(Array.isArray(body));
-    });
-
     it('GET /api/errors returns array', async () => {
       const res = await app.inject({ method: 'GET', url: '/api/errors' });
       assert.equal(res.statusCode, 200);
@@ -770,11 +705,6 @@ describe('op-server', () => {
       assert.ok(res.statusCode === 200 || res.statusCode === 404);
     });
 
-    it('GET /api/instincts/99999 returns 404', async () => {
-      const res = await app.inject({ method: 'GET', url: '/api/instincts/99999' });
-      assert.equal(res.statusCode, 404);
-    });
-
     it('GET /api/knowledge/discover without params returns 400', async () => {
       const res = await app.inject({ method: 'GET', url: '/api/knowledge/discover' });
       assert.equal(res.statusCode, 400);
@@ -783,21 +713,21 @@ describe('op-server', () => {
 
   describe('pagination clamping', () => {
     it('clamps negative page to 1', async () => {
-      const res = await app.inject({ method: 'GET', url: '/api/instincts?page=-5&per_page=10' });
+      const res = await app.inject({ method: 'GET', url: '/api/insights?page=-5&per_page=10' });
       assert.equal(res.statusCode, 200);
       const body = JSON.parse(res.payload);
       assert.equal(body.page, 1);
     });
 
     it('clamps per_page to max 50', async () => {
-      const res = await app.inject({ method: 'GET', url: '/api/instincts?page=1&per_page=999' });
+      const res = await app.inject({ method: 'GET', url: '/api/insights?page=1&per_page=999' });
       assert.equal(res.statusCode, 200);
       const body = JSON.parse(res.payload);
       assert.equal(body.per_page, 50);
     });
 
     it('uses default per_page when not provided', async () => {
-      const res = await app.inject({ method: 'GET', url: '/api/instincts' });
+      const res = await app.inject({ method: 'GET', url: '/api/insights' });
       assert.equal(res.statusCode, 200);
       const body = JSON.parse(res.payload);
       assert.ok(body.per_page > 0);

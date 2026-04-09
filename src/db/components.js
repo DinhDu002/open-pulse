@@ -16,14 +16,12 @@ function logError(db, err) {
 // ---------------------------------------------------------------------------
 
 function upsertClProject(db, proj) {
-  // If directory already exists under a different project_id, migrate instincts and remove old row
+  // If directory already exists under a different project_id, remove old row
   if (proj.directory) {
     const old = db.prepare(
       'SELECT project_id FROM cl_projects WHERE directory = ? AND project_id != ?'
     ).get(proj.directory, proj.project_id);
     if (old) {
-      db.prepare('UPDATE cl_instincts SET project_id = ? WHERE project_id = ?')
-        .run(proj.project_id, old.project_id);
       db.prepare('DELETE FROM cl_projects WHERE project_id = ?').run(old.project_id);
     }
   }
@@ -82,17 +80,14 @@ function upsertComponent(db, comp) {
   db.prepare(`
     INSERT INTO components
       (type, name, source, plugin, project, file_path, description, agent_class,
-       hook_event, hook_matcher, hook_command, first_seen_at, last_seen_at)
+       first_seen_at, last_seen_at)
     VALUES
       (@type, @name, @source, @plugin, @project, @file_path, @description, @agent_class,
-       @hook_event, @hook_matcher, @hook_command, @first_seen_at, @last_seen_at)
+       @first_seen_at, @last_seen_at)
     ON CONFLICT(type, name, source, COALESCE(plugin, ''), COALESCE(project, '')) DO UPDATE SET
       file_path    = excluded.file_path,
       description  = excluded.description,
       agent_class  = excluded.agent_class,
-      hook_event   = excluded.hook_event,
-      hook_matcher = excluded.hook_matcher,
-      hook_command = excluded.hook_command,
       last_seen_at = excluded.last_seen_at
   `).run(comp);
 }
@@ -116,10 +111,10 @@ function getAllComponents(db) {
 function insertScanResult(db, scan) {
   db.prepare(`
     INSERT INTO scan_results
-      (scanned_at, report, total_skills, total_agents, total_hooks, total_rules,
+      (scanned_at, report, total_skills, total_agents,
        issues_critical, issues_high, issues_medium, issues_low)
     VALUES
-      (@scanned_at, @report, @total_skills, @total_agents, @total_hooks, @total_rules,
+      (@scanned_at, @report, @total_skills, @total_agents,
        @issues_critical, @issues_high, @issues_medium, @issues_low)
   `).run(scan);
 }
@@ -139,61 +134,16 @@ function getScanHistory(db, limit) {
 function getProjectSummary(db, projectId) {
   const project = db.prepare('SELECT * FROM cl_projects WHERE project_id = ?').get(projectId);
   if (!project) return null;
-
-  const instinct_count = db.prepare(
-    'SELECT COUNT(*) AS cnt FROM cl_instincts WHERE project_id = ?'
-  ).get(projectId).cnt;
-
-  const suggRows = db.prepare(`
-    SELECT
-      SUM(CASE WHEN status = 'pending'   THEN 1 ELSE 0 END) AS pending,
-      SUM(CASE WHEN status = 'approved'  THEN 1 ELSE 0 END) AS approved,
-      SUM(CASE WHEN status = 'dismissed' THEN 1 ELSE 0 END) AS dismissed
-    FROM suggestions s
-    JOIN cl_instincts i ON s.instinct_id = i.instinct_id
-    WHERE i.project_id = ?
-  `).get(projectId);
-
-  const suggestion_counts = {
-    pending: suggRows.pending || 0,
-    approved: suggRows.approved || 0,
-    dismissed: suggRows.dismissed || 0,
-  };
-
-  return { ...project, instinct_count, suggestion_counts };
+  return { ...project, instinct_count: 0 };
 }
 
 function getProjectTimeline(db, projectId, weeks) {
-  const w = weeks || 8;
-  return db.prepare(`
-    SELECT
-      strftime('%Y-W%W', last_seen) AS week,
-      COUNT(*) AS instinct_count,
-      AVG(confidence) AS avg_confidence
-    FROM cl_instincts
-    WHERE project_id = ?
-      AND last_seen >= datetime('now', '-' || ? || ' * 7 days')
-    GROUP BY week
-    ORDER BY week ASC
-  `).all(projectId, w);
+  // cl_instincts has been dropped; return empty timeline
+  return [];
 }
 
 function deleteProject(db, projectId) {
   const tx = db.transaction(() => {
-    // Collect instinct_ids for suggestion cleanup
-    const instinctIds = db.prepare(
-      'SELECT instinct_id FROM cl_instincts WHERE project_id = ?'
-    ).all(projectId).map(r => r.instinct_id).filter(Boolean);
-
-    // Delete suggestions linked to project instincts
-    if (instinctIds.length > 0) {
-      const del = db.prepare('DELETE FROM suggestions WHERE instinct_id = ?');
-      for (const iid of instinctIds) del.run(iid);
-    }
-
-    // Delete instincts
-    db.prepare('DELETE FROM cl_instincts WHERE project_id = ?').run(projectId);
-
     // Delete kb_notes
     db.prepare('DELETE FROM kb_notes WHERE project_id = ?').run(projectId);
 
@@ -213,41 +163,13 @@ function deleteProject(db, projectId) {
 // ---------------------------------------------------------------------------
 
 function queryLearningActivity(db, days) {
-  const d = days || 30;
-  return db.prepare(`
-    SELECT date(last_seen) AS date, COUNT(*) AS count
-    FROM cl_instincts
-    WHERE last_seen >= datetime('now', '-' || ? || ' days')
-    GROUP BY date(last_seen)
-    ORDER BY date ASC
-  `).all(d);
+  // cl_instincts has been dropped; return empty activity
+  return [];
 }
 
 function queryLearningRecent(db, limit) {
-  const l = limit || 20;
-  return db.prepare(`
-    SELECT * FROM (
-      SELECT
-        'instinct'  AS kind,
-        id,
-        last_seen   AS timestamp,
-        pattern     AS title,
-        confidence,
-        category
-      FROM cl_instincts
-      UNION ALL
-      SELECT
-        'suggestion' AS kind,
-        id,
-        created_at   AS timestamp,
-        description  AS title,
-        confidence,
-        type         AS category
-      FROM suggestions
-    ) combined
-    ORDER BY timestamp DESC
-    LIMIT ?
-  `).all(l);
+  // cl_instincts and suggestions have been dropped; return empty list
+  return [];
 }
 
 module.exports = {

@@ -94,29 +94,8 @@ function extractNodes(db, opts = {}) {
   }
 
   // ------------------------------------------------------------------
-  // 3. Instinct nodes (confidence >= threshold)
+  // 3. Instinct nodes — cl_instincts dropped; skip
   // ------------------------------------------------------------------
-  const instinctRows = db.prepare(`
-    SELECT instinct_id, project_id, category, pattern, confidence, seen_count, last_seen
-    FROM cl_instincts
-    WHERE confidence >= ?
-      AND instinct_id IS NOT NULL
-  `).all(confidenceThreshold);
-
-  for (const row of instinctRows) {
-    nodes.push({
-      id: `instinct:${row.instinct_id}`,
-      type: 'instinct',
-      name: row.pattern || row.instinct_id,
-      properties: {
-        project_id: row.project_id,
-        category: row.category,
-        confidence: row.confidence,
-        seen_count: row.seen_count,
-        last_seen: row.last_seen,
-      },
-    });
-  }
 
   // ------------------------------------------------------------------
   // 4. Session nodes (last N days)
@@ -259,41 +238,8 @@ function extractEdges(db, opts = {}) {
   }
 
   // ------------------------------------------------------------------
-  // 3. Learned_from edges: instinct → project
+  // 3. Learned_from edges — cl_instincts dropped; skip
   // ------------------------------------------------------------------
-  const instinctRows = db.prepare(`
-    SELECT instinct_id, project_id, confidence
-    FROM cl_instincts
-    WHERE instinct_id IS NOT NULL
-      AND project_id IS NOT NULL
-  `).all();
-
-  for (const row of instinctRows) {
-    edges.push({
-      source_id: `instinct:${row.instinct_id}`,
-      target_id: `project:${row.project_id}`,
-      relationship: 'learned_from',
-      weight: row.confidence || 1.0,
-    });
-  }
-
-  // ------------------------------------------------------------------
-  // 4. Has_suggestion edges: instinct → suggestion
-  // ------------------------------------------------------------------
-  const suggRows = db.prepare(`
-    SELECT id, instinct_id, confidence
-    FROM suggestions
-    WHERE instinct_id IS NOT NULL
-  `).all();
-
-  for (const row of suggRows) {
-    edges.push({
-      source_id: `instinct:${row.instinct_id}`,
-      target_id: `suggestion:${row.id}`,
-      relationship: 'has_suggestion',
-      weight: row.confidence || 1.0,
-    });
-  }
 
   return edges;
 }

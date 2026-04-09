@@ -33,8 +33,7 @@ describe('op-knowledge-graph', () => {
     dbMod.upsertSession(db, { session_id: 's1', started_at: '2026-04-08T10:00:00Z', ended_at: '2026-04-08T10:30:00Z', working_directory: '/proj/a', model: 'opus', total_tool_calls: 3, total_skill_invokes: 0, total_agent_spawns: 1, total_input_tokens: 1000, total_output_tokens: 500, total_cost_usd: 0.10 });
     dbMod.upsertSession(db, { session_id: 's2', started_at: '2026-04-08T11:00:00Z', ended_at: '2026-04-08T11:15:00Z', working_directory: '/proj/a', model: 'sonnet', total_tool_calls: 2, total_skill_invokes: 0, total_agent_spawns: 0, total_input_tokens: 500, total_output_tokens: 200, total_cost_usd: 0.03 });
 
-    // Seed instinct + project
-    dbMod.upsertInstinct(db, { instinct_id: 'test-instinct-1', project_id: 'proj-a', category: 'workflow', pattern: 'prefer Read over cat', confidence: 0.85, seen_count: 5, first_seen: '2026-04-01T00:00:00Z', last_seen: '2026-04-08T00:00:00Z', instinct: 'Use Read tool instead of Bash cat' });
+    // Seed project
     dbMod.upsertClProject(db, { project_id: 'proj-a', name: 'Project A', directory: '/proj/a', first_seen_at: '2026-04-01T00:00:00Z', last_seen_at: '2026-04-08T00:00:00Z', session_count: 2 });
   });
 
@@ -43,7 +42,7 @@ describe('op-knowledge-graph', () => {
     fs.rmSync(TEST_DIR, { recursive: true, force: true });
   });
 
-  it('extractNodes returns tool, component, instinct, session, project nodes', () => {
+  it('extractNodes returns tool, component, session, project nodes', () => {
     const nodes = kg.extractNodes(db, { confidenceThreshold: 0.5, sessionDays: 30 });
 
     // Verify all expected types are present
@@ -65,10 +64,8 @@ describe('op-knowledge-graph', () => {
     const compNames = byType.component.map(n => n.name);
     assert.ok(compNames.includes('code-reviewer'), 'code-reviewer should be a component node');
 
-    // instinct nodes
-    assert.ok(byType.instinct, 'should have instinct nodes');
-    const instNode = byType.instinct.find(n => n.id === 'instinct:test-instinct-1');
-    assert.ok(instNode, 'instinct node with correct ID should exist');
+    // instinct nodes — cl_instincts is dropped, so no instinct nodes expected
+    assert.ok(!byType.instinct || byType.instinct.length === 0, 'should have no instinct nodes');
 
     // session nodes
     assert.ok(byType.session, 'should have session nodes');
@@ -113,17 +110,10 @@ describe('op-knowledge-graph', () => {
     assert.ok(readGrepCoOccur, 'Read and Grep should co-occur in s2');
   });
 
-  it('extractEdges returns learned_from edges for instincts', () => {
+  it('extractEdges returns no learned_from edges (cl_instincts dropped)', () => {
     const edges = kg.extractEdges(db, { minTriggerCount: 1, sessionDays: 30 });
-
     const learnedFromEdges = edges.filter(e => e.relationship === 'learned_from');
-    assert.ok(learnedFromEdges.length > 0, 'should have learned_from edges');
-
-    const instToProj = learnedFromEdges.find(
-      e => e.source_id === 'instinct:test-instinct-1' && e.target_id === 'project:proj-a'
-    );
-    assert.ok(instToProj, 'instinct → project learned_from edge should exist');
-    assert.ok(instToProj.weight > 0, 'learned_from edge should have positive weight');
+    assert.equal(learnedFromEdges.length, 0, 'should have no learned_from edges');
   });
 
   it('syncGraph populates kg_nodes and kg_edges, and sets sync state', () => {
@@ -152,7 +142,8 @@ describe('op-knowledge-graph', () => {
     const readNode = dbMod.getKgNode(db, 'tool:Read');
     assert.ok(readNode, 'tool:Read node should be in kg_nodes');
 
+    // Verify no instinct nodes (cl_instincts dropped)
     const instinctNode = dbMod.getKgNode(db, 'instinct:test-instinct-1');
-    assert.ok(instinctNode, 'instinct node should be in kg_nodes');
+    assert.ok(instinctNode == null, 'instinct node should not be in kg_nodes');
   });
 });
