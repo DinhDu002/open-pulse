@@ -8,7 +8,7 @@ const REPO_DIR = process.env.OPEN_PULSE_DIR || path.join(__dirname, '..');
 
 const {
   upsertClProject,
-  upsertInstinct,
+  upsertInsight,
   deleteProject,
   upsertComponent,
   deleteComponentsNotSeenSince,
@@ -19,8 +19,6 @@ const {
   parseFrontmatter,
   getKnownSkills,
   getKnownAgents,
-  getKnownRules,
-  getKnownHooks,
   getPluginComponents,
   getProjectAgents,
   readItemMetaFromFile,
@@ -73,16 +71,15 @@ function syncInstinctsToDb(db) {
           const body = bodyMatch ? bodyMatch[1].trim() : content;
           const now = new Date().toISOString();
 
-          upsertInstinct(db, {
-            instinct_id: meta.id || file.replace(/\.(md|yaml)$/, ''),
-            project_id: meta.project_id || (scope === 'global' ? '' : projectId),
-            category: meta.domain || meta.category || 'unknown',
-            pattern: meta.trigger || file.replace(/\.(md|yaml)$/, ''),
-            confidence: parseFloat(meta.confidence) || 0.5,
-            seen_count: 1,
-            first_seen: now,
-            last_seen: now,
-            instinct: body,
+          upsertInsight(db, {
+            id: meta.id || file.replace(/\.(md|yaml)$/, ''),
+            source: 'observer',
+            category: meta.domain || meta.category || 'general',
+            target_type: null,
+            title: meta.trigger || meta.id || file.replace(/\.(md|yaml)$/, ''),
+            description: body,
+            confidence: parseFloat(meta.confidence) || 0.3,
+            project_id: meta.project_id || (scope === 'global' ? null : projectId) || null,
           });
         } catch { /* skip unreadable */ }
       }
@@ -144,7 +141,6 @@ function syncComponentsWithDb(db) {
     diskItems.push({
       type: 'skill', name, source: 'global', plugin: null, project: null,
       file_path: filePath, description: meta.description, agent_class: null,
-      hook_event: null, hook_matcher: null, hook_command: null,
     });
   }
 
@@ -155,29 +151,6 @@ function syncComponentsWithDb(db) {
     diskItems.push({
       type: 'agent', name, source: 'global', plugin: null, project: null,
       file_path: filePath, description: meta.description, agent_class: 'configured',
-      hook_event: null, hook_matcher: null, hook_command: null,
-    });
-  }
-
-  // Global rules
-  for (const name of getKnownRules()) {
-    const filePath = path.join(CLAUDE_DIR, 'rules', name + '.md');
-    const meta = readItemMetaFromFile(filePath);
-    diskItems.push({
-      type: 'rule', name, source: 'global', plugin: null, project: null,
-      file_path: filePath, description: meta.description, agent_class: null,
-      hook_event: null, hook_matcher: null, hook_command: null,
-    });
-  }
-
-  // Hooks (global + project)
-  for (const hook of getKnownHooks()) {
-    const isProject = hook.project && hook.project !== 'global';
-    diskItems.push({
-      type: 'hook', name: hook.name, source: isProject ? 'project' : 'global',
-      plugin: null, project: hook.project || null,
-      file_path: null, description: null, agent_class: null,
-      hook_event: hook.event, hook_matcher: hook.matcher, hook_command: hook.command,
     });
   }
 
@@ -188,7 +161,6 @@ function syncComponentsWithDb(db) {
       type: 'skill', name: pItem.qualifiedName, source: 'plugin',
       plugin: pItem.plugin, project: pItem.projects.join(', '),
       file_path: pItem.filePath, description: meta.description, agent_class: null,
-      hook_event: null, hook_matcher: null, hook_command: null,
     });
   }
   for (const pItem of getPluginComponents('agents')) {
@@ -197,7 +169,6 @@ function syncComponentsWithDb(db) {
       type: 'agent', name: pItem.qualifiedName, source: 'plugin',
       plugin: pItem.plugin, project: pItem.projects.join(', '),
       file_path: pItem.filePath, description: meta.description, agent_class: 'configured',
-      hook_event: null, hook_matcher: null, hook_command: null,
     });
   }
 
@@ -208,7 +179,6 @@ function syncComponentsWithDb(db) {
       type: 'agent', name: projAgent.name, source: 'project',
       plugin: null, project: projAgent.project,
       file_path: projAgent.filePath, description: meta.description, agent_class: 'configured',
-      hook_event: null, hook_matcher: null, hook_command: null,
     });
   }
 
@@ -238,8 +208,6 @@ function syncComponentsWithDb(db) {
 function runScan(db) {
   const skills = getKnownSkills();
   const agents = getKnownAgents();
-  const hooks = getKnownHooks();
-  const rules = getKnownRules();
 
   const usedSkills = new Set(
     db.prepare("SELECT DISTINCT name FROM events WHERE event_type = 'skill_invoke'").all().map(r => r.name)
@@ -266,8 +234,6 @@ function runScan(db) {
     scanned_at: new Date().toISOString(),
     total_skills: skills.length,
     total_agents: agents.length,
-    total_hooks: hooks.length,
-    total_rules: rules.length,
     unused_skills: unusedSkills,
     unused_agents: unusedAgents,
     issues,
@@ -283,8 +249,6 @@ function runScan(db) {
     report: JSON.stringify(report),
     total_skills: report.total_skills,
     total_agents: report.total_agents,
-    total_hooks: report.total_hooks,
-    total_rules: report.total_rules,
     issues_critical: issuesBySeverity.critical,
     issues_high: issuesBySeverity.high,
     issues_medium: issuesBySeverity.medium,
