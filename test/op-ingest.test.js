@@ -25,7 +25,7 @@ describe('op-ingest', () => {
   });
 
   beforeEach(() => {
-    for (const f of ['events.jsonl', 'suggestions.jsonl']) {
+    for (const f of ['events.jsonl', 'insights.jsonl']) {
       const p = path.join(TEST_DIR, 'data', f);
       for (const suffix of ['', '.processing', '.retries', '.failed']) {
         const fp = p + suffix;
@@ -51,18 +51,18 @@ describe('op-ingest', () => {
     assert.equal(rows.length, 1);
   });
 
-  it('ingestFile processes suggestions.jsonl into DB', () => {
-    const filePath = path.join(TEST_DIR, 'data', 'suggestions.jsonl');
-    const suggestion = {
-      id: 'sugg-ingest-1', created_at: '2026-04-06T10:00:00Z',
-      type: 'skill', confidence: 0.8, description: 'test suggestion',
-      evidence: '["session:abc"]', status: 'pending',
+  it('ingestFile processes insights.jsonl into DB', () => {
+    const filePath = path.join(TEST_DIR, 'data', 'insights.jsonl');
+    const insight = {
+      id: 'insight-ingest-1', source: 'daily_analysis', category: 'optimization',
+      title: 'Optimize query', description: 'Database query can be optimized', confidence: 0.7,
     };
-    fs.writeFileSync(filePath, JSON.stringify(suggestion) + '\n');
-    const result = ingest.ingestFile(db, filePath, 'suggestions');
+    fs.writeFileSync(filePath, JSON.stringify(insight) + '\n');
+    const result = ingest.ingestFile(db, filePath, 'insights');
     assert.equal(result.processed, 1);
-    const rows = db.prepare('SELECT * FROM suggestions').all();
-    assert.ok(rows.some(r => r.id === 'sugg-ingest-1'));
+    const rows = db.prepare('SELECT * FROM insights WHERE id = ?').all('insight-ingest-1');
+    assert.equal(rows.length, 1);
+    assert.equal(rows[0].source, 'daily_analysis');
   });
 
   it('ingestFile skips empty/missing file', () => {
@@ -89,29 +89,27 @@ describe('op-ingest', () => {
     assert.equal(row.seq_num, 5);
   });
 
-  it('ingestFile upsert does not overwrite resolved suggestion status', () => {
-    // Insert and approve a suggestion
-    const filePath = path.join(TEST_DIR, 'data', 'suggestions.jsonl');
-    const suggestion = {
-      id: 'sugg-upsert-1', created_at: '2026-04-06T10:00:00Z',
-      type: 'agent', confidence: 0.6, description: 'original',
-      evidence: '["instinct:x"]', instinct_id: 'x', status: 'pending',
+  it('ingestFile upsert increments observation_count on re-ingest of same insight ID', () => {
+    const filePath = path.join(TEST_DIR, 'data', 'insights.jsonl');
+    const insight = {
+      id: 'insight-upsert-1', source: 'daily_analysis', category: 'optimization',
+      title: 'Optimize query', description: 'original description', confidence: 0.6,
     };
-    fs.writeFileSync(filePath, JSON.stringify(suggestion) + '\n');
-    ingest.ingestFile(db, filePath, 'suggestions');
+    fs.writeFileSync(filePath, JSON.stringify(insight) + '\n');
+    ingest.ingestFile(db, filePath, 'insights');
 
-    // Manually approve it
-    db.prepare("UPDATE suggestions SET status = 'approved' WHERE id = 'sugg-upsert-1'").run();
+    const before = db.prepare('SELECT * FROM insights WHERE id = ?').get('insight-upsert-1');
+    assert.equal(before.observation_count, 1);
 
-    // Re-ingest same suggestion ID with status=pending (as analyzer would)
-    const updated = { ...suggestion, confidence: 0.8, description: 'updated', status: 'pending' };
+    // Re-ingest same insight ID with updated fields
+    const updated = { ...insight, confidence: 0.8, description: 'updated description' };
     fs.writeFileSync(filePath, JSON.stringify(updated) + '\n');
-    ingest.ingestFile(db, filePath, 'suggestions');
+    ingest.ingestFile(db, filePath, 'insights');
 
-    const row = db.prepare('SELECT * FROM suggestions WHERE id = ?').get('sugg-upsert-1');
-    assert.equal(row.status, 'approved', 'status should remain approved');
+    const row = db.prepare('SELECT * FROM insights WHERE id = ?').get('insight-upsert-1');
+    assert.equal(row.observation_count, 2, 'observation_count should increment on upsert');
     assert.equal(row.confidence, 0.8, 'confidence should be updated');
-    assert.equal(row.description, 'updated', 'description should be updated');
+    assert.equal(row.description, 'updated description', 'description should be updated');
   });
 
   it('ingestFile handles malformed lines', () => {
