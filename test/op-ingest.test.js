@@ -70,7 +70,7 @@ describe('op-ingest', () => {
     const filePath = path.join(TEST_DIR, 'data', 'suggestions.jsonl');
     const suggestion = {
       id: 'sugg-ingest-1', created_at: '2026-04-06T10:00:00Z',
-      type: 'hook', confidence: 0.8, description: 'test suggestion',
+      type: 'skill', confidence: 0.8, description: 'test suggestion',
       evidence: '["session:abc"]', status: 'pending',
     };
     fs.writeFileSync(filePath, JSON.stringify(suggestion) + '\n');
@@ -121,26 +121,12 @@ describe('op-ingest', () => {
     assert.equal(row.seq_num, 5);
   });
 
-  it('ingestFile stores instinct_id from suggestions', () => {
-    const filePath = path.join(TEST_DIR, 'data', 'suggestions.jsonl');
-    const suggestion = {
-      id: 'sugg-instinct-1', created_at: '2026-04-06T10:00:00Z',
-      type: 'hook', confidence: 0.8, description: 'test with instinct_id',
-      evidence: '["instinct:my-pattern"]', instinct_id: 'my-pattern', status: 'pending',
-    };
-    fs.writeFileSync(filePath, JSON.stringify(suggestion) + '\n');
-    const result = ingest.ingestFile(db, filePath, 'suggestions');
-    assert.equal(result.processed, 1);
-    const row = db.prepare('SELECT * FROM suggestions WHERE id = ?').get('sugg-instinct-1');
-    assert.equal(row.instinct_id, 'my-pattern');
-  });
-
   it('ingestFile upsert does not overwrite resolved suggestion status', () => {
     // Insert and approve a suggestion
     const filePath = path.join(TEST_DIR, 'data', 'suggestions.jsonl');
     const suggestion = {
       id: 'sugg-upsert-1', created_at: '2026-04-06T10:00:00Z',
-      type: 'rule', confidence: 0.6, description: 'original',
+      type: 'agent', confidence: 0.6, description: 'original',
       evidence: '["instinct:x"]', instinct_id: 'x', status: 'pending',
     };
     fs.writeFileSync(filePath, JSON.stringify(suggestion) + '\n');
@@ -249,6 +235,85 @@ describe('op-ingest', () => {
       "SELECT * FROM prompts WHERE session_id = 'sess-ingest-null'"
     ).all();
     assert.equal(prompts.length, 0);
+  });
+
+  it('ingestFile skips prompt linking for session_end with user_prompt', () => {
+    db.prepare(
+      "INSERT OR IGNORE INTO sessions (session_id, started_at) VALUES ('sess-end-prompt', '2026-04-08T12:00:00Z')"
+    ).run();
+
+    const filePath = path.join(TEST_DIR, 'data', 'events.jsonl');
+    const events = [
+      {
+        timestamp: '2026-04-08T12:00:01Z',
+        session_id: 'sess-end-prompt',
+        event_type: 'tool_call',
+        name: 'Read',
+        user_prompt: 'fix the bug',
+        seq_num: 1,
+      },
+      {
+        timestamp: '2026-04-08T12:00:10Z',
+        session_id: 'sess-end-prompt',
+        event_type: 'session_end',
+        name: 'session_end',
+        user_prompt: 'fix the bug',
+        seq_num: 2,
+      },
+    ];
+    fs.writeFileSync(filePath, events.map(e => JSON.stringify(e)).join('\n') + '\n');
+    ingest.ingestFile(db, filePath, 'events');
+
+    const prompts = db.prepare(
+      "SELECT * FROM prompts WHERE session_id = 'sess-end-prompt'"
+    ).all();
+    assert.equal(prompts.length, 1, 'session_end should not create a separate prompt');
+    assert.equal(prompts[0].event_count, 1, 'only the tool_call event counts');
+
+    const evts = db.prepare(
+      "SELECT event_type, prompt_id FROM events WHERE session_id = 'sess-end-prompt' ORDER BY seq_num"
+    ).all();
+    assert.ok(evts[0].prompt_id !== null, 'tool_call should have prompt_id');
+    assert.equal(evts[1].prompt_id, null, 'session_end should have prompt_id = NULL');
+  });
+
+  it('ingestFile creates session from session_end event in events.jsonl', () => {
+    const filePath = path.join(TEST_DIR, 'data', 'events.jsonl');
+    const events = [
+      {
+        timestamp: '2026-04-09T10:00:01Z',
+        session_id: 'sess-from-event',
+        event_type: 'tool_call',
+        name: 'Read',
+        working_directory: '/projects/app',
+        model: 'opus',
+        seq_num: 1712000000001,
+      },
+      {
+        timestamp: '2026-04-09T10:00:05Z',
+        session_id: 'sess-from-event',
+        event_type: 'session_end',
+        name: null,
+        input_tokens: 8000,
+        output_tokens: 4000,
+        estimated_cost_usd: 0.25,
+        working_directory: '/projects/app',
+        model: 'opus',
+        seq_num: 1712000000005,
+      },
+    ];
+    fs.writeFileSync(filePath, events.map(e => JSON.stringify(e)).join('\n') + '\n');
+    const result = ingest.ingestFile(db, filePath, 'events');
+    assert.equal(result.processed, 2);
+
+    const session = db.prepare('SELECT * FROM sessions WHERE session_id = ?').get('sess-from-event');
+    assert.ok(session, 'session should be created from session_end event');
+    assert.equal(session.working_directory, '/projects/app');
+    assert.equal(session.model, 'opus');
+    assert.equal(session.total_input_tokens, 8000);
+    assert.equal(session.total_output_tokens, 4000);
+    assert.equal(session.total_cost_usd, 0.25);
+    assert.equal(session.ended_at, '2026-04-09T10:00:05Z');
   });
 
   // -------------------------------------------------------------------------

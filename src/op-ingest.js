@@ -3,7 +3,7 @@
 const fs = require('fs');
 const path = require('path');
 const {
-  insertEventBatch, upsertSessionBatch, insertSuggestionBatch,
+  insertEventBatch, upsertSessionBatch, updateSessionEnd, insertSuggestionBatch,
   insertPrompt, getLatestPromptForSession, updatePromptStats,
 } = require('./op-db');
 
@@ -55,7 +55,6 @@ function normaliseSuggestion(raw) {
     evidence:     typeof raw.evidence === 'string'
                     ? raw.evidence
                     : JSON.stringify(raw.evidence ?? null),
-    instinct_id:  raw.instinct_id  ?? null,
     status:       raw.status       ?? 'pending',
     category:     raw.category     ?? null,
     action_data:  typeof raw.action_data === 'string'
@@ -137,7 +136,7 @@ function writeRetryCount(retriesPath, count) {
 function linkEventsToPrompts(db, events) {
   const sessionExists = db.prepare('SELECT 1 FROM sessions WHERE session_id = ?');
   for (const evt of events) {
-    if (!evt.user_prompt || !evt.session_id) {
+    if (!evt.user_prompt || !evt.session_id || evt.event_type === 'session_end') {
       evt.prompt_id = null;
       continue;
     }
@@ -184,6 +183,40 @@ function processContent(db, processingPath, type) {
   if (rows.length > 0) {
     if (type === 'events') {
       const events = rows.map(normaliseEvent);
+
+      // Upsert sessions from events (so prompt linking can find them)
+      const sessionMap = new Map();
+      for (const evt of events) {
+        if (!evt.session_id) continue;
+        if (!sessionMap.has(evt.session_id)) {
+          sessionMap.set(evt.session_id, {
+            session_id: evt.session_id,
+            started_at: evt.timestamp,
+            working_directory: evt.working_directory,
+            model: evt.model,
+          });
+        }
+      }
+      if (sessionMap.size > 0) {
+        upsertSessionBatch(db, [...sessionMap.values()]);
+      }
+
+      // Update session end fields from session_end events
+      for (const evt of events) {
+        if (evt.event_type === 'session_end' && evt.session_id) {
+          updateSessionEnd(db, {
+            session_id: evt.session_id,
+            ended_at: evt.timestamp,
+            total_tool_calls: 0,
+            total_skill_invokes: 0,
+            total_agent_spawns: 0,
+            total_input_tokens: evt.input_tokens || 0,
+            total_output_tokens: evt.output_tokens || 0,
+            total_cost_usd: evt.estimated_cost_usd || 0,
+          });
+        }
+      }
+
       linkEventsToPrompts(db, events);
       insertEventBatch(db, events);
       updatePromptStatsAfterInsert(db, events);
