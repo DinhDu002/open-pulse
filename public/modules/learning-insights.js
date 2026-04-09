@@ -1,7 +1,7 @@
 // Learning — Insights sub-module (unified: instincts + suggestions)
 // NOTE: innerHTML usage below is safe — all dynamic values pass through escHtml()
 // which escapes &, <, >, and " to prevent XSS. No raw user input is ever inserted.
-import { get, put, del } from './api.js';
+import { get, post, put, del } from './api.js';
 import { fmtDate, confColor, escHtml, confidenceBarHtml } from './utils.js';
 
 // ── Badge helpers ─────────────────────────────────────────────────────────────
@@ -523,8 +523,118 @@ function renderDetailContent(el, insight) {
         actionCard.appendChild(stepsList);
       }
 
+      if (actionData.what_changes && actionData.what_changes.length) {
+        var changesLabel = document.createElement('div');
+        changesLabel.style.cssText = 'font-size:12px;font-weight:600;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:8px;margin-top:12px;';
+        changesLabel.textContent = 'What Changes';
+        actionCard.appendChild(changesLabel);
+
+        var changesList = document.createElement('ul');
+        changesList.style.cssText = 'padding-left:20px;font-size:13px;color:var(--text);line-height:1.6;';
+        actionData.what_changes.forEach(function(change) {
+          var li = document.createElement('li');
+          li.style.marginBottom = '4px';
+          li.textContent = change;
+          changesList.appendChild(li);
+        });
+        actionCard.appendChild(changesList);
+      }
+
       el.appendChild(actionCard);
     }
+  }
+
+  // ── Execute / Copy / Generate Prompt / Revert buttons ───────────────────────
+
+  var execRow = document.createElement('div');
+  execRow.className = 'action-row';
+  execRow.style.cssText = 'margin-top:1rem;display:flex;gap:0.5rem;flex-wrap:wrap';
+
+  // Copy Prompt button
+  var copyPromptBtn = document.createElement('button');
+  copyPromptBtn.className = 'btn btn-secondary';
+  copyPromptBtn.textContent = 'Copy Prompt';
+  copyPromptBtn.addEventListener('click', function() {
+    var ad = insight.action_data;
+    if (typeof ad === 'string') { try { ad = JSON.parse(ad); } catch(e) { ad = null; } }
+    var prompt = (ad && ad.claude_prompt) || insight.description || '';
+    navigator.clipboard.writeText(prompt).then(function() {
+      copyPromptBtn.textContent = 'Copied!';
+      setTimeout(function() { copyPromptBtn.textContent = 'Copy Prompt'; }, 2000);
+    }).catch(function() {});
+  });
+  execRow.appendChild(copyPromptBtn);
+
+  // Auto Execute button
+  var execBtn = document.createElement('button');
+  execBtn.className = 'btn btn-primary';
+  execBtn.textContent = 'Auto Execute';
+  execBtn.addEventListener('click', function() {
+    execBtn.disabled = true;
+    execBtn.textContent = 'Executing\u2026';
+    post('/insights/' + encodeURIComponent(insight.id) + '/execute')
+      .then(function(result) {
+        execBtn.textContent = 'Done!';
+        var resultPre = document.createElement('pre');
+        resultPre.style.cssText = 'margin-top:0.5rem;padding:0.75rem;background:#1a1a2e;border-radius:6px;overflow-x:auto;max-height:300px;font-size:0.85rem;color:var(--text)';
+        resultPre.textContent = result.output || 'No output';
+        execRow.parentElement.appendChild(resultPre);
+      })
+      .catch(function(err) {
+        execBtn.disabled = false;
+        execBtn.textContent = 'Failed: ' + err.message;
+      });
+  });
+  execRow.appendChild(execBtn);
+
+  // Generate Prompt button (only when no action_data.claude_prompt)
+  var ad = insight.action_data;
+  if (typeof ad === 'string') { try { ad = JSON.parse(ad); } catch(e) { ad = null; } }
+  if (!ad || !ad.claude_prompt) {
+    var genBtn = document.createElement('button');
+    genBtn.className = 'btn btn-secondary';
+    genBtn.textContent = 'Generate Prompt';
+    genBtn.addEventListener('click', function() {
+      genBtn.disabled = true;
+      genBtn.textContent = 'Generating\u2026';
+      post('/insights/' + encodeURIComponent(insight.id) + '/generate-prompt')
+        .then(function() { renderDetail(el, insight.id); })
+        .catch(function(err) {
+          genBtn.disabled = false;
+          genBtn.textContent = 'Failed: ' + err.message;
+        });
+    });
+    execRow.appendChild(genBtn);
+  }
+
+  // Revert button (only when status === 'promoted')
+  if (insight.status === 'promoted') {
+    var revertBtn = document.createElement('button');
+    revertBtn.className = 'btn btn-danger';
+    revertBtn.textContent = 'Revert';
+    revertBtn.addEventListener('click', function() {
+      if (!confirm('Revert this promotion? The generated component file will be deleted.')) return;
+      put('/insights/' + encodeURIComponent(insight.id) + '/revert')
+        .then(function() { renderDetail(el, insight.id); })
+        .catch(function(err) { alert('Revert failed: ' + err.message); });
+    });
+    execRow.appendChild(revertBtn);
+  }
+
+  el.appendChild(execRow);
+
+  // Promoted info block (when status === 'promoted')
+  if (insight.status === 'promoted' && insight.promoted_to) {
+    var promotedInfo = document.createElement('div');
+    promotedInfo.style.cssText = 'margin-top:0.75rem;font-size:12px;color:var(--text-muted)';
+    var promotedLabel = document.createElement('span');
+    promotedLabel.textContent = 'Promoted to: ';
+    var promotedPath = document.createElement('span');
+    promotedPath.style.cssText = 'font-family:monospace';
+    promotedPath.textContent = insight.promoted_to;
+    promotedInfo.appendChild(promotedLabel);
+    promotedInfo.appendChild(promotedPath);
+    el.appendChild(promotedInfo);
   }
 }
 
