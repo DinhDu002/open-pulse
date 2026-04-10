@@ -6,7 +6,10 @@ const crypto = require('crypto');
 const { execFileSync } = require('child_process');
 
 const { collectWorkHistory, scanAllComponents, loadBestPractices, buildPrompt } = require('./context');
-const { queryDailyReviews, getDailyReview, updateDailyReviewStatus, getDailyReviewStats } = require('./queries');
+const {
+  queryDailyReviews, getDailyReview, updateDailyReviewStatus, getDailyReviewStats,
+  queryInsights, getInsight, updateInsightStatus, getInsightStats,
+} = require('./queries');
 
 const REPO_DIR = process.env.OPEN_PULSE_DIR || path.resolve(__dirname, '..', '..');
 
@@ -69,6 +72,48 @@ function saveSuggestions(db, suggestions, reviewDate) {
     }
   });
   tx(suggestions);
+}
+
+function makeInsightId(title, date) {
+  const hash = crypto
+    .createHash('sha256')
+    .update(`insight::${title}::${date}`)
+    .digest('hex')
+    .substring(0, 16);
+  return `dri-${hash}`;
+}
+
+function saveInsights(db, insights, reviewDate) {
+  const stmt = db.prepare(`
+    INSERT INTO daily_review_insights
+      (id, review_date, insight_type, title, description, projects, target_type, severity, reasoning, summary_vi, status, created_at)
+    VALUES
+      (@id, @review_date, @insight_type, @title, @description, @projects, @target_type, @severity, @reasoning, @summary_vi, 'pending', @created_at)
+    ON CONFLICT(id) DO UPDATE SET
+      description = excluded.description,
+      severity = excluded.severity,
+      reasoning = excluded.reasoning,
+      summary_vi = excluded.summary_vi
+  `);
+
+  const tx = db.transaction((rows) => {
+    for (const ins of rows) {
+      stmt.run({
+        id: makeInsightId(ins.title, reviewDate),
+        review_date: reviewDate,
+        insight_type: ins.insight_type || 'gap',
+        title: ins.title,
+        description: ins.description || '',
+        projects: JSON.stringify(ins.projects || []),
+        target_type: ins.target_type || null,
+        severity: ins.severity || 'info',
+        reasoning: ins.reasoning || '',
+        summary_vi: ins.summary_vi || '',
+        created_at: new Date().toISOString(),
+      });
+    }
+  });
+  tx(insights);
 }
 
 // ---------------------------------------------------------------------------
@@ -156,7 +201,7 @@ async function runDailyReview(db, opts = {}) {
 // ---------------------------------------------------------------------------
 
 if (require.main === module) {
-  const { createDb } = require('../op-db');
+  const { createDb } = require('../db/schema');
   const DB_PATH = process.env.OPEN_PULSE_DB || path.join(REPO_DIR, 'open-pulse.db');
 
   let config = {};
@@ -200,4 +245,10 @@ module.exports = {
   updateDailyReviewStatus,
   getDailyReviewStats,
   runDailyReview,
+  saveInsights,
+  makeInsightId,
+  queryInsights,
+  getInsight,
+  updateInsightStatus,
+  getInsightStats,
 };

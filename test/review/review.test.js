@@ -25,7 +25,7 @@ describe('op-daily-review', () => {
     fs.writeFileSync(path.join(TEST_CLAUDE_DIR, 'agents', 'test-agent.md'), '---\nname: test\n---\nTest agent.');
     fs.writeFileSync(path.join(TEST_CLAUDE_DIR, 'skills', 'test-skill', 'SKILL.md'), '---\nname: test\n---\nTest skill.');
 
-    db = require('../../src/op-db').createDb(TEST_DB);
+    db = require('../../src/db/schema').createDb(TEST_DB);
     review = require('../../src/review/pipeline');
 
     // Seed some events for today
@@ -171,5 +171,59 @@ describe('op-daily-review', () => {
     for (const col of expected) {
       assert.ok(cols.includes(col), `Missing column: ${col}`);
     }
+  });
+
+  // -- insight query helpers --
+
+  it('saveInsights inserts into daily_review_insights', () => {
+    const insights = [{
+      insight_type: 'duplicate',
+      title: 'Duplicate TDD rule',
+      description: 'Same rule in 2 projects',
+      projects: ['open-pulse', 'carthings'],
+      target_type: 'rule',
+      severity: 'warning',
+      reasoning: 'Identical content',
+      summary_vi: 'Quy tắc TDD trùng lặp',
+    }];
+    review.saveInsights(db, insights, '2026-04-10');
+    const rows = db.prepare('SELECT * FROM daily_review_insights WHERE review_date = ?').all('2026-04-10');
+    assert.ok(rows.length >= 1);
+    assert.equal(rows[0].title, 'Duplicate TDD rule');
+    assert.equal(rows[0].severity, 'warning');
+    assert.equal(rows[0].status, 'pending');
+    const projects = JSON.parse(rows[0].projects);
+    assert.deepEqual(projects, ['open-pulse', 'carthings']);
+  });
+
+  it('queryInsights filters by insight_type', () => {
+    const result = review.queryInsights(db, { insight_type: 'duplicate' });
+    assert.ok(result.rows.length >= 1);
+    assert.ok(result.total >= 1);
+  });
+
+  it('queryInsights returns empty for non-matching filter', () => {
+    const result = review.queryInsights(db, { insight_type: 'conflict' });
+    assert.equal(result.rows.length, 0);
+  });
+
+  it('getInsight returns single row', () => {
+    const all = db.prepare('SELECT id FROM daily_review_insights LIMIT 1').get();
+    const row = review.getInsight(db, all.id);
+    assert.ok(row);
+    assert.equal(row.title, 'Duplicate TDD rule');
+  });
+
+  it('updateInsightStatus changes status', () => {
+    const all = db.prepare('SELECT id FROM daily_review_insights LIMIT 1').get();
+    review.updateInsightStatus(db, all.id, 'resolved');
+    const row = review.getInsight(db, all.id);
+    assert.equal(row.status, 'resolved');
+  });
+
+  it('getInsightStats returns counts by type and severity', () => {
+    const stats = review.getInsightStats(db);
+    assert.ok(Array.isArray(stats.byType));
+    assert.ok(Array.isArray(stats.bySeverity));
   });
 });
