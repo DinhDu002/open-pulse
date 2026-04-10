@@ -2,7 +2,7 @@
 
 const fs = require('fs');
 const path = require('path');
-const https = require('https');
+const { spawn } = require('child_process');
 const crypto = require('crypto');
 
 const {
@@ -114,7 +114,7 @@ function buildExtractPrompt(projectName, events, existingTitles = []) {
   }).join('\n');
 
   const existingBlock = existingTitles.length
-    ? `\nExisting knowledge titles (avoid duplicating these):\n${existingTitles.map(t => `- ${t}`).join('\n')}\n`
+    ? `\nExisting knowledge titles (avoid duplicating these — compare case-insensitively):\n${existingTitles.map(t => `- ${t}`).join('\n')}\n`
     : '';
 
   return [
@@ -134,10 +134,16 @@ function buildExtractPrompt(projectName, events, existingTitles = []) {
     '                  decision, footgun, contract, error_pattern',
     '',
     'Rules:',
-    '- Only extract knowledge that is reusable across sessions (not just what happened)',
-    '- Skip trivial actions (reading a README, listing files)',
-    '- Skip anything already in the existing titles list',
-    '- Return [] if nothing reusable is found',
+    '- Only extract knowledge that CANNOT be derived by reading the source code directly',
+    '- Focus on: WHY decisions were made, gotchas/footguns encountered, non-obvious conventions,',
+    '  edge cases discovered during development, integration quirks',
+    '- Do NOT extract: file/module descriptions, API endpoint lists, tech stack enumerations,',
+    '  database schema descriptions, configuration key listings, generic programming best practices',
+    '- Skip anything already in the existing titles list (compare case-insensitively)',
+    '- Each entry must be ACTIONABLE — it should change how a developer approaches the code,',
+    '  not just describe what exists',
+    '- Prefer updating an existing entry over creating a near-duplicate',
+    '- Return [] if nothing genuinely new and reusable is found (this is the expected common case)',
     '',
     'Respond with a JSON array only. No explanation.',
   ].join('\n');
@@ -150,14 +156,31 @@ function buildExtractPrompt(projectName, events, existingTitles = []) {
 /**
  * Builds LLM prompt for cold-start scan.
  *
- * @param {string} projectName
- * @param {Object} files — {filename: content}
+ * @param {string}   projectName
+ * @param {Object}   files           — {filename: content}
+ * @param {string[]} [existingTitles]
+ * @param {string}   [claudeMdContent]
  * @returns {string}
  */
-function buildScanPrompt(projectName, files) {
+function buildScanPrompt(projectName, files, existingTitles = [], claudeMdContent = '') {
   const fileBlocks = Object.entries(files).map(([name, content]) => {
     return `### ${name}\n\`\`\`\n${content}\n\`\`\``;
   }).join('\n\n');
+
+  const claudeBlock = claudeMdContent
+    ? [
+        '',
+        '### Already documented in CLAUDE.md (DO NOT extract knowledge that overlaps with this):',
+        '```',
+        claudeMdContent.slice(0, 3000),
+        '```',
+        '',
+      ].join('\n')
+    : '';
+
+  const existingBlock = existingTitles.length
+    ? `\nExisting knowledge titles (avoid duplicating these — compare case-insensitively):\n${existingTitles.map(t => `- ${t}`).join('\n')}\n`
+    : '';
 
   return [
     `Project: ${projectName}`,
@@ -165,7 +188,8 @@ function buildScanPrompt(projectName, files) {
     'Perform a comprehensive knowledge extraction from the following project files.',
     'Extract everything that helps understand the project: domain, stack, schema,',
     'API contracts, architectural decisions, conventions, footguns, and error patterns.',
-    '',
+    claudeBlock,
+    existingBlock,
     fileBlocks,
     '',
     'Extract knowledge entries as a JSON array. Each entry:',
@@ -175,60 +199,61 @@ function buildScanPrompt(projectName, files) {
     'Valid categories: domain, stack, schema, api, feature, architecture, convention,',
     '                  decision, footgun, contract, error_pattern',
     '',
-    'Be thorough. Return [] only if no useful knowledge can be extracted.',
+    'Rules:',
+    '- Only extract knowledge that CANNOT be derived by reading the source code directly',
+    '- Focus on: WHY decisions were made, gotchas/footguns encountered, non-obvious conventions,',
+    '  edge cases discovered during development, integration quirks',
+    '- Do NOT extract: file/module descriptions, API endpoint lists, tech stack enumerations,',
+    '  database schema descriptions, configuration key listings, generic programming best practices',
+    '- Skip anything already in the existing titles list (compare case-insensitively)',
+    '- Each entry must be ACTIONABLE — it should change how a developer approaches the code,',
+    '  not just describe what exists',
+    '- Prefer updating an existing entry over creating a near-duplicate',
+    '- Return [] if nothing genuinely new and reusable is found',
     '',
     'Respond with a JSON array only. No explanation.',
   ].join('\n');
 }
 
 // ---------------------------------------------------------------------------
-// callHaiku
+// callClaude
 // ---------------------------------------------------------------------------
 
 /**
- * Calls Claude Haiku API.
+ * Calls Claude via CLI (`claude -p`). Uses the user's Max subscription.
+ * Sets OPEN_PULSE_INTERNAL=1 to prevent collector hooks from firing.
  *
- * @param {string} apiKey
  * @param {string} prompt
- * @param {number} [maxTokens=1024]
  * @returns {Promise<string>} response text
  */
-function callHaiku(apiKey, prompt, maxTokens = 1024) {
+function callClaude(prompt, model = 'sonnet') {
   return new Promise((resolve, reject) => {
-    const body = JSON.stringify({
-      model: 'claude-haiku-4-5-20251001',
-      max_tokens: maxTokens,
-      messages: [{ role: 'user', content: prompt }],
+    const args = ['-p', '--model', model, '--no-session-persistence'];
+    const proc = spawn('claude', args, {
+      env: { ...process.env, OPEN_PULSE_INTERNAL: '1' },
+      stdio: ['pipe', 'pipe', 'pipe'],
     });
 
-    const options = {
-      hostname: 'api.anthropic.com',
-      path: '/v1/messages',
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-api-key': apiKey,
-        'anthropic-version': '2023-06-01',
-        'Content-Length': Buffer.byteLength(body),
-      },
-    };
+    let stdout = '';
+    let stderr = '';
 
-    const req = https.request(options, (res) => {
-      let raw = '';
-      res.on('data', chunk => { raw += chunk; });
-      res.on('end', () => {
-        try {
-          const data = JSON.parse(raw);
-          resolve(data.content?.[0]?.text || '');
-        } catch {
-          reject(new Error(`Failed to parse Haiku response: ${raw}`));
-        }
-      });
+    proc.stdout.on('data', chunk => { stdout += chunk; });
+    proc.stderr.on('data', chunk => { stderr += chunk; });
+
+    proc.on('close', code => {
+      if (code === 0) {
+        resolve(stdout);
+      } else {
+        reject(new Error(`claude CLI exited with code ${code}: ${stderr.slice(0, 500)}`));
+      }
     });
 
-    req.on('error', reject);
-    req.write(body);
-    req.end();
+    proc.on('error', err => {
+      reject(new Error(`Failed to spawn claude CLI: ${err.message}`));
+    });
+
+    proc.stdin.write(prompt);
+    proc.stdin.end();
   });
 }
 
@@ -463,7 +488,39 @@ function renderKnowledgeVault(db, projectId) {
     filesWritten++;
   }
 
+  // Ensure CLAUDE.md references the knowledge index
+  ensureClaudeMdInclude(project.directory);
+
   return { filesWritten, filesSkipped };
+}
+
+// ---------------------------------------------------------------------------
+// ensureClaudeMdInclude
+// ---------------------------------------------------------------------------
+
+const KNOWLEDGE_INCLUDE = '@.claude/knowledge/index.md';
+
+/**
+ * If the project has a CLAUDE.md, ensure it includes @.claude/knowledge/index.md.
+ * Inserts after the first heading line. Does nothing if CLAUDE.md doesn't exist
+ * or the include is already present.
+ */
+function ensureClaudeMdInclude(projectDir) {
+  const claudeMdPath = path.join(projectDir, 'CLAUDE.md');
+  let content;
+  try { content = fs.readFileSync(claudeMdPath, 'utf8'); } catch { return; }
+
+  if (content.includes(KNOWLEDGE_INCLUDE)) return;
+
+  // Insert after the first line (heading)
+  const firstNewline = content.indexOf('\n');
+  if (firstNewline === -1) {
+    content += '\n\n' + KNOWLEDGE_INCLUDE + '\n';
+  } else {
+    content = content.slice(0, firstNewline + 1) + '\n' + KNOWLEDGE_INCLUDE + '\n' + content.slice(firstNewline + 1);
+  }
+
+  fs.writeFileSync(claudeMdPath, content, 'utf8');
 }
 
 // ---------------------------------------------------------------------------
@@ -480,12 +537,8 @@ function renderKnowledgeVault(db, projectId) {
  * @returns {Promise<{extracted:number, inserted:number, updated:number}|{message:string}>}
  */
 async function extractKnowledgeFromPrompt(db, promptId, opts = {}) {
-  const apiKey = process.env.ANTHROPIC_API_KEY;
-  if (!apiKey) {
-    return { message: 'ANTHROPIC_API_KEY not set' };
-  }
-
   const maxEvents = opts.maxEvents ?? 50;
+  const model = opts.model || 'sonnet';
 
   // Get prompt
   const prompt = db.prepare('SELECT * FROM prompts WHERE id = ?').get(promptId);
@@ -511,9 +564,9 @@ async function extractKnowledgeFromPrompt(db, promptId, opts = {}) {
   // Get existing titles for dedup
   const existingTitles = getExistingTitles(db, project.project_id);
 
-  // Build prompt and call Haiku
+  // Build prompt and call Claude CLI
   const llmPrompt = buildExtractPrompt(project.name || project.project_id, events, existingTitles);
-  const rawResponse = await callHaiku(apiKey, llmPrompt);
+  const rawResponse = await callClaude(llmPrompt, model);
   const entries = parseJsonResponse(rawResponse);
 
   if (entries.length === 0) return { extracted: 0, inserted: 0, updated: 0 };
@@ -542,11 +595,7 @@ async function extractKnowledgeFromPrompt(db, promptId, opts = {}) {
  * @returns {Promise<{extracted:number, inserted:number, updated:number}|{message:string}>}
  */
 async function scanProject(db, projectId, opts = {}) {
-  const apiKey = process.env.ANTHROPIC_API_KEY;
-  if (!apiKey) {
-    return { message: 'ANTHROPIC_API_KEY not set' };
-  }
-
+  const model = opts.model || 'sonnet';
   const project = db.prepare('SELECT * FROM cl_projects WHERE project_id = ?').get(projectId);
   if (!project || !project.directory) {
     return { message: `Project ${projectId} not found or has no directory` };
@@ -596,8 +645,14 @@ async function scanProject(db, projectId, opts = {}) {
   }
 
   const projectName = project.name || projectId;
-  const llmPrompt = buildScanPrompt(projectName, files);
-  const rawResponse = await callHaiku(apiKey, llmPrompt, 2048);
+  const existingTitles = getExistingTitles(db, projectId);
+
+  let claudeMdContent = '';
+  const claudeMdPath = path.join(projectDir, 'CLAUDE.md');
+  try { claudeMdContent = fs.readFileSync(claudeMdPath, 'utf8').slice(0, 3000); } catch { /* skip */ }
+
+  const llmPrompt = buildScanPrompt(projectName, files, existingTitles, claudeMdContent);
+  const rawResponse = await callClaude(llmPrompt, model);
   const entries = parseJsonResponse(rawResponse);
 
   if (entries.length === 0) return { extracted: 0, inserted: 0, updated: 0 };
@@ -618,7 +673,7 @@ module.exports = {
   CATEGORY_TITLES,
   buildExtractPrompt,
   buildScanPrompt,
-  callHaiku,
+  callClaude,
   parseJsonResponse,
   mergeOrUpdate,
   extractKnowledgeFromPrompt,

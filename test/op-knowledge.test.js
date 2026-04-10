@@ -498,6 +498,18 @@ describe('op-knowledge', () => {
       const prompt = buildExtractPrompt('Proj', events, []);
       assert.ok(prompt.includes('npm test'), 'should include command from tool_input');
     });
+
+    it('includes quality rules that reject generic and descriptive entries', () => {
+      const prompt = buildExtractPrompt('Proj', [], []);
+      assert.ok(prompt.includes('CANNOT be derived by reading the source code'), 'should require non-obvious knowledge');
+      assert.ok(prompt.includes('Do NOT extract'), 'should have exclusion rules');
+      assert.ok(prompt.includes('ACTIONABLE'), 'should require actionable entries');
+    });
+
+    it('instructs case-insensitive dedup in rules', () => {
+      const prompt = buildExtractPrompt('Proj', [], ['Existing Title']);
+      assert.ok(prompt.includes('case-insensitive'), 'should mention case-insensitive comparison');
+    });
   });
 
   // ---------------------------------------------------------------------------
