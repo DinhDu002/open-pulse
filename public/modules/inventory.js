@@ -108,20 +108,24 @@ function pluginBadge(item) {
   return badge;
 }
 
-function projectBadge(item) {
-  const projects = Array.isArray(item.projects) ? item.projects : [item.project || 'global'];
-  const isGlobalOnly = projects.length === 1 && projects[0] === 'global';
-  const badge = document.createElement('span');
-  badge.className = isGlobalOnly ? 'badge badge-project-global' : 'badge badge-project';
-  badge.textContent = projects.join(', ');
-  return badge;
+function projectBadges(item) {
+  const container = document.createElement('span');
+  const projects = item.projects || [item.project || 'global'];
+  for (const proj of projects) {
+    const badge = document.createElement('span');
+    badge.className = proj === 'global' ? 'badge badge-project-global' : 'badge badge-project';
+    badge.textContent = proj;
+    badge.style.marginRight = '4px';
+    container.appendChild(badge);
+  }
+  return container;
 }
 
 function renderSkillsTab(el, items, onSelect) {
   const cols = [
     { label: 'Name', render: i => i.name || i.skill || '—' },
     { label: 'Plugin', render: pluginBadge, center: true },
-    { label: 'Project', render: projectBadge, center: true },
+    { label: 'Project', render: projectBadges, center: true },
     { label: 'Usage', key: 'count', center: true },
     { label: 'Last Used', render: i => fmtTime(i.last_used) },
     { label: 'Status', render: statusBadge },
@@ -142,7 +146,7 @@ function renderAgentsTab(el, items, onSelect) {
     { label: 'Name', render: i => i.name || i.agent || '—' },
     { label: 'Type', render: agentClassBadge, center: true },
     { label: 'Plugin', render: pluginBadge, center: true },
-    { label: 'Project', render: projectBadge, center: true },
+    { label: 'Project', render: projectBadges, center: true },
     { label: 'Usage', key: 'count', center: true },
     { label: 'Last Used', render: i => fmtTime(i.last_used) },
     { label: 'Status', render: statusBadge },
@@ -285,6 +289,48 @@ function renderItemDetail(el, item, type, onBack, { onPageChange } = {}) {
     el.appendChild(trigCard);
   }
 
+  // Usage by Project breakdown
+  const byProject = item.by_project || [];
+  if (byProject.length > 0) {
+    const bpCard = document.createElement('div');
+    bpCard.className = 'card';
+    const bpTitle = document.createElement('div');
+    bpTitle.className = 'card-title';
+    bpTitle.textContent = 'Usage by Project';
+    bpCard.appendChild(bpTitle);
+
+    const totalCount = byProject.reduce((s, p) => s + p.count, 0);
+
+    byProject.forEach(p => {
+      const row = document.createElement('div');
+      row.style.cssText = 'padding:6px 0; display:flex; align-items:center; gap:8px; border-bottom:1px solid var(--border);';
+
+      const nameEl = document.createElement('span');
+      nameEl.style.cssText = 'min-width:160px;';
+      nameEl.textContent = p.project || 'unknown';
+
+      const countEl = document.createElement('span');
+      countEl.style.cssText = 'min-width:40px; text-align:right;';
+      countEl.textContent = p.count;
+
+      const pct = totalCount > 0 ? Math.round((p.count / totalCount) * 100) : 0;
+      const barWrap = document.createElement('div');
+      barWrap.style.cssText = 'flex:1; height:8px; background:var(--border); border-radius:4px; overflow:hidden;';
+      const bar = document.createElement('div');
+      bar.style.cssText = 'height:100%; background:var(--accent); border-radius:4px; width:' + pct + '%;';
+      barWrap.appendChild(bar);
+
+      const pctEl = document.createElement('span');
+      pctEl.className = 'text-muted';
+      pctEl.style.cssText = 'min-width:40px; text-align:right;';
+      pctEl.textContent = pct + '%';
+
+      row.append(nameEl, countEl, barWrap, pctEl);
+      bpCard.appendChild(row);
+    });
+    el.appendChild(bpCard);
+  }
+
   // Invocation history
   const history = item.invocations || [];
   const total = item.total || history.length;
@@ -339,7 +385,35 @@ export function mount(el, { period } = {}) {
     tabsEl.appendChild(btn);
   });
 
-  el.appendChild(tabsEl);
+  let currentProject = '';
+
+  const filterWrap = document.createElement('div');
+  filterWrap.style.cssText = 'display:flex; align-items:center; gap:8px; justify-content:space-between;';
+
+  const projectSelect = document.createElement('select');
+  projectSelect.className = 'project-filter';
+  const defaultOpt = document.createElement('option');
+  defaultOpt.value = '';
+  defaultOpt.textContent = 'All Projects';
+  projectSelect.appendChild(defaultOpt);
+
+  get('/projects').then(projects => {
+    for (const proj of projects) {
+      const opt = document.createElement('option');
+      opt.value = proj.name;
+      opt.textContent = proj.name;
+      projectSelect.appendChild(opt);
+    }
+  });
+
+  projectSelect.addEventListener('change', () => {
+    currentProject = projectSelect.value;
+    loadTab(activeTab);
+  });
+
+  filterWrap.appendChild(tabsEl);
+  filterWrap.appendChild(projectSelect);
+  el.appendChild(filterWrap);
   el.appendChild(content);
 
   function loadTab(tab, isRefresh = false) {
@@ -353,9 +427,10 @@ export function mount(el, { period } = {}) {
       content.appendChild(sp);
     }
 
+    const projectParam = currentProject ? '&project=' + encodeURIComponent(currentProject) : '';
     let apiPath;
-    if (tab === 'skills') apiPath = '/inventory/skills?period=' + p;
-    else if (tab === 'agents') apiPath = '/inventory/agents?period=' + p;
+    if (tab === 'skills') apiPath = '/inventory/skills?period=' + p + projectParam;
+    else if (tab === 'agents') apiPath = '/inventory/agents?period=' + p + projectParam;
     const fetchFn = isRefresh
       ? () => getWithETag(apiPath, currentETag)
       : () => get(apiPath).then(data => ({ data, etag: null, notModified: false }));
@@ -373,7 +448,7 @@ export function mount(el, { period } = {}) {
         renderSkillsTab(content, items, item => {
           inDetailView = true;
           function loadDetail(pg) {
-            const url = '/inventory/skills/' + encodeURIComponent(item.name) + '?period=' + p + '&page=' + pg;
+            const url = '/inventory/skills/' + encodeURIComponent(item.name) + '?period=' + p + '&page=' + pg + projectParam;
             get(url).then(detail => {
               renderItemDetail(content, detail, 'skill', () => { inDetailView = false; loadTab('skills'); }, {
                 onPageChange: loadDetail,
@@ -386,7 +461,7 @@ export function mount(el, { period } = {}) {
         renderAgentsTab(content, items, item => {
           inDetailView = true;
           function loadDetail(pg) {
-            const url = '/inventory/agents/' + encodeURIComponent(item.name) + '?period=' + p + '&page=' + pg;
+            const url = '/inventory/agents/' + encodeURIComponent(item.name) + '?period=' + p + '&page=' + pg + projectParam;
             get(url).then(detail => {
               renderItemDetail(content, detail, 'agent', () => { inDetailView = false; loadTab('agents'); }, {
                 onPageChange: loadDetail,
