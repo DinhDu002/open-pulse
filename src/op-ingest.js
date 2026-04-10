@@ -8,6 +8,18 @@ const {
 } = require('./op-db');
 
 // ---------------------------------------------------------------------------
+// Project name resolution
+// ---------------------------------------------------------------------------
+
+function resolveProjectName(db, workDir) {
+  if (!workDir) return null;
+  const row = db.prepare(
+    'SELECT name FROM cl_projects WHERE directory = ?'
+  ).get(workDir);
+  return row ? row.name : path.basename(workDir);
+}
+
+// ---------------------------------------------------------------------------
 // Field normalisation helpers
 // ---------------------------------------------------------------------------
 
@@ -29,6 +41,7 @@ function normaliseEvent(raw) {
     tool_input:         raw.tool_input         ?? null,
     tool_response:      raw.tool_response      ?? null,
     seq_num:            raw.seq_num            ?? null,
+    project_name:       raw.project_name       ?? null,
   };
 }
 
@@ -123,6 +136,13 @@ function processContent(db, processingPath, type) {
   if (rows.length > 0) {
     if (type === 'events') {
       const events = rows.map(normaliseEvent);
+
+      // Derive project_name from working_directory
+      for (const evt of events) {
+        if (!evt.project_name && evt.working_directory) {
+          evt.project_name = resolveProjectName(db, evt.working_directory);
+        }
+      }
 
       // Upsert sessions from events (so prompt linking can find them)
       const sessionMap = new Map();

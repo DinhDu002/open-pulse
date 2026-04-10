@@ -245,6 +245,42 @@ describe('op-ingest', () => {
     assert.equal(session.ended_at, '2026-04-09T10:00:05Z');
   });
 
+  it('ingestFile populates project_name from cl_projects', () => {
+    // Seed a cl_project
+    db.prepare(`
+      INSERT OR IGNORE INTO cl_projects (project_id, name, directory, first_seen_at, last_seen_at, session_count)
+      VALUES ('ing-proj', 'test-project', '/tmp/test-project', '2026-01-01', '2026-01-01', 1)
+    `).run();
+
+    const filePath = path.join(TEST_DIR, 'data', 'events.jsonl');
+    const event = {
+      timestamp: '2026-04-10T10:00:00Z', session_id: 'proj-test-1',
+      event_type: 'skill_invoke', name: 'brainstorming', detail: null,
+      duration_ms: 50, success: 1,
+      working_directory: '/tmp/test-project', model: 'opus',
+    };
+    fs.writeFileSync(filePath, JSON.stringify(event) + '\n');
+    ingest.ingestFile(db, filePath, 'events');
+
+    const row = db.prepare("SELECT project_name FROM events WHERE session_id = 'proj-test-1'").get();
+    assert.equal(row.project_name, 'test-project');
+  });
+
+  it('ingestFile uses basename fallback when no cl_project match', () => {
+    const filePath = path.join(TEST_DIR, 'data', 'events.jsonl');
+    const event = {
+      timestamp: '2026-04-10T10:01:00Z', session_id: 'proj-test-2',
+      event_type: 'agent_spawn', name: 'Explore', detail: null,
+      duration_ms: 50, success: 1,
+      working_directory: '/tmp/no-match-dir', model: 'opus',
+    };
+    fs.writeFileSync(filePath, JSON.stringify(event) + '\n');
+    ingest.ingestFile(db, filePath, 'events');
+
+    const row = db.prepare("SELECT project_name FROM events WHERE session_id = 'proj-test-2'").get();
+    assert.equal(row.project_name, 'no-match-dir');
+  });
+
   it('ingestAll does not process sessions.jsonl', () => {
     const sessPath = path.join(TEST_DIR, 'data', 'sessions.jsonl');
     fs.writeFileSync(sessPath, JSON.stringify({
