@@ -23,8 +23,6 @@ const {
   syncNoteToDisk,
   deleteNoteFromDisk,
   discoverRelevantContent,
-  syncNoteToGraph,
-  removeNoteFromGraph,
 } = require('../op-notes');
 const { generateAllVaults } = require('../op-vault-generator');
 
@@ -152,10 +150,9 @@ module.exports = async function knowledgeRoutes(app, opts) {
     const tagsJson = typeof tags === 'string' ? tags : JSON.stringify(tags || []);
     insertKbNote(db, { id, project_id, slug, title, body: body || '', tags: tagsJson });
     const note = getKbNote(db, id);
-    // Sync to disk + graph
+    // Sync to disk
     const project = db.prepare('SELECT directory FROM cl_projects WHERE project_id = ?').get(project_id);
     if (project?.directory) syncNoteToDisk(project.directory, note);
-    syncNoteToGraph(db, note);
     return note;
   });
 
@@ -192,7 +189,6 @@ module.exports = async function knowledgeRoutes(app, opts) {
     const updated = getKbNote(db, req.params.id);
     const project = db.prepare('SELECT directory FROM cl_projects WHERE project_id = ?').get(existing.project_id);
     if (project?.directory) syncNoteToDisk(project.directory, updated);
-    syncNoteToGraph(db, updated);
     return updated;
   });
 
@@ -202,7 +198,6 @@ module.exports = async function knowledgeRoutes(app, opts) {
     deleteKbNote(db, req.params.id);
     const project = db.prepare('SELECT directory FROM cl_projects WHERE project_id = ?').get(existing.project_id);
     if (project?.directory) deleteNoteFromDisk(project.directory, existing.slug);
-    removeNoteFromGraph(db, existing.slug);
     return { deleted: true };
   });
 };

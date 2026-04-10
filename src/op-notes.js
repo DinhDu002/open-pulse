@@ -147,62 +147,6 @@ function discoverRelevantContent(db, projectId, context) {
 }
 
 // ---------------------------------------------------------------------------
-// Knowledge Graph sync
-// ---------------------------------------------------------------------------
-
-function syncNoteToGraph(db, note) {
-  const dbMod = require('./op-db');
-  const nodeId = 'note:' + note.slug;
-  dbMod.upsertKgNode(db, {
-    id: nodeId,
-    type: 'note',
-    name: note.title,
-    properties: JSON.stringify({
-      slug: note.slug,
-      project_id: note.project_id,
-      tags: typeof note.tags === 'string' ? JSON.parse(note.tags) : note.tags,
-    }),
-  });
-
-  // Remove old edges from this note
-  db.prepare('DELETE FROM kg_edges WHERE source_id = ? AND relationship = ?').run(nodeId, 'references');
-
-  // Create edges for backlinks
-  const refs = extractBacklinks(note.body);
-  const edges = [];
-  for (const ref of refs) {
-    // Try to resolve ref to a kg_node id
-    let targetId = null;
-    if (ref.startsWith('notes/')) {
-      targetId = 'note:' + ref.slice(6);
-    } else if (ref.startsWith('tools/')) {
-      targetId = 'tool:' + ref.slice(6);
-    } else if (ref.startsWith('components/')) {
-      targetId = 'component:' + ref.slice(11);
-    } else if (ref.startsWith('instincts/')) {
-      targetId = 'instinct:' + ref.slice(10);
-    } else if (ref.startsWith('patterns/')) {
-      targetId = 'pattern:' + ref.slice(9);
-    }
-    if (targetId) {
-      const target = dbMod.getKgNode(db, targetId);
-      if (target) {
-        edges.push({ source_id: nodeId, target_id: targetId, relationship: 'references', weight: 1 });
-      }
-    }
-  }
-  if (edges.length > 0) {
-    dbMod.upsertKgEdgeBatch(db, edges);
-  }
-}
-
-function removeNoteFromGraph(db, slug) {
-  const nodeId = 'note:' + slug;
-  db.prepare('DELETE FROM kg_edges WHERE source_id = ? OR target_id = ?').run(nodeId, nodeId);
-  db.prepare('DELETE FROM kg_nodes WHERE id = ?').run(nodeId);
-}
-
-// ---------------------------------------------------------------------------
 // Exports
 // ---------------------------------------------------------------------------
 
@@ -213,6 +157,4 @@ module.exports = {
   syncNoteToDisk,
   deleteNoteFromDisk,
   discoverRelevantContent,
-  syncNoteToGraph,
-  removeNoteFromGraph,
 };

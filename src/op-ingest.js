@@ -4,8 +4,16 @@ const fs = require('fs');
 const path = require('path');
 const {
   insertEventBatch, upsertSessionBatch, updateSessionEnd,
-  insertPrompt, getLatestPromptForSession, updatePromptStats,
+  insertPrompt, getLatestPromptForSession, updatePromptStats, updatePromptTokens,
 } = require('./op-db');
+
+let _extractKnowledge = null;
+let _knowledgeConfig = null;
+
+function setKnowledgeHook(extractFn, config) {
+  _extractKnowledge = extractFn;
+  _knowledgeConfig = config;
+}
 
 // ---------------------------------------------------------------------------
 // Project name resolution
@@ -81,6 +89,31 @@ function readRetryCount(retriesPath) {
 
 function writeRetryCount(retriesPath, count) {
   fs.writeFileSync(retriesPath, JSON.stringify({ count }));
+}
+
+// ---------------------------------------------------------------------------
+// Token distribution
+// ---------------------------------------------------------------------------
+
+function distributeTokensToPrompts(db, sessionId, totalTokens) {
+  const prompts = db.prepare(
+    'SELECT id, event_count FROM prompts WHERE session_id = ?'
+  ).all(sessionId);
+  if (prompts.length === 0) return;
+
+  const totalEvents = prompts.reduce((s, p) => s + (p.event_count || 0), 0);
+  if (totalEvents === 0) {
+    // Equal split when no events yet
+    const perPrompt = Math.round(totalTokens / prompts.length);
+    for (const p of prompts) {
+      updatePromptTokens(db, p.id, perPrompt);
+    }
+  } else {
+    for (const p of prompts) {
+      const tokens = Math.round(totalTokens * (p.event_count / totalEvents));
+      updatePromptTokens(db, p.id, tokens);
+    }
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -174,12 +207,33 @@ function processContent(db, processingPath, type) {
             total_output_tokens: evt.output_tokens || 0,
             total_cost_usd: evt.estimated_cost_usd || 0,
           });
+
         }
       }
 
       linkEventsToPrompts(db, events);
       insertEventBatch(db, events);
       updatePromptStatsAfterInsert(db, events);
+
+      // Trigger knowledge extraction for new prompts (non-blocking)
+      if (_extractKnowledge) {
+        const promptIds = new Set(events.map(e => e.prompt_id).filter(Boolean));
+        for (const pid of promptIds) {
+          setImmediate(() => {
+            _extractKnowledge(db, pid, _knowledgeConfig || {}).catch(() => {});
+          });
+        }
+      }
+
+      // Distribute tokens proportionally across session prompts (after prompts exist)
+      for (const evt of events) {
+        if (evt.event_type === 'session_end' && evt.session_id) {
+          const sessionTokens = (evt.input_tokens || 0) + (evt.output_tokens || 0);
+          if (sessionTokens > 0) {
+            distributeTokensToPrompts(db, evt.session_id, sessionTokens);
+          }
+        }
+      }
     }
   }
 
@@ -271,4 +325,4 @@ function ingestAll(db, dataDir) {
 // Exports
 // ---------------------------------------------------------------------------
 
-module.exports = { ingestFile, ingestAll, MAX_RETRIES };
+module.exports = { ingestFile, ingestAll, MAX_RETRIES, setKnowledgeHook };

@@ -6,9 +6,8 @@ const Fastify = require('fastify');
 const fastifyStatic = require('@fastify/static');
 
 const { createDb } = require('./op-db');
-const { syncGraph } = require('./op-knowledge-graph');
-const { generateAllVaults } = require('./op-vault-generator');
-const { ingestAll } = require('./op-ingest');
+const { extractKnowledgeFromPrompt } = require('./op-knowledge');
+const { ingestAll, setKnowledgeHook } = require('./op-ingest');
 const { runRetention } = require('./op-retention');
 const { parseQualifiedName } = require('./op-helpers');
 const { syncInstincts, runAutoEvolve } = require('./op-auto-evolve');
@@ -60,6 +59,13 @@ function buildApp(opts = {}) {
 
   const db = createDb(DB_PATH);
   const config = loadConfig();
+
+  if (config.knowledge_enabled !== false) {
+    setKnowledgeHook(extractKnowledgeFromPrompt, {
+      maxTokens: config.knowledge_max_tokens ?? 1000,
+      maxEvents: config.knowledge_max_events_per_prompt ?? 50,
+    });
+  }
 
   // Initial sync
   syncAll(db);
@@ -121,26 +127,6 @@ function buildApp(opts = {}) {
 
     // Daily review: handled by external script (launchd 3 AM daily)
     // Manual trigger available via POST /api/daily-reviews/run
-
-    // Knowledge graph sync timer (skip if no new events)
-    let _lastKgEventCount = 0;
-    timers.push(setInterval(() => {
-      try {
-        const currentCount = db.prepare('SELECT COUNT(*) as c FROM events').get().c;
-        if (currentCount === _lastKgEventCount) return;
-        syncGraph(db, {
-          sessionLookbackDays: config.knowledge_session_lookback_days ?? 30,
-          instinctMinConfidence: config.knowledge_instinct_min_confidence ?? 0.3,
-          minTriggerCount: config.knowledge_pattern_min_occurrences ?? 5,
-        });
-        _lastKgEventCount = currentCount;
-      } catch { /* non-critical */ }
-    }, config.knowledge_graph_interval_ms || 300000));
-
-    // Vault generation timer
-    timers.push(setInterval(() => {
-      try { generateAllVaults(db); } catch { /* non-critical */ }
-    }, config.knowledge_vault_interval_ms || 900000));
   }
 
   // Create opts object to pass to all route plugins
