@@ -3,7 +3,7 @@
 const { getComponentsByType } = require('../op-db');
 const { parseQualifiedName } = require('../op-helpers');
 
-const VALID_TYPES = new Set(['skills', 'agents', 'hooks', 'rules']);
+const VALID_TYPES = new Set(['skills', 'agents']);
 
 module.exports = async function inventoryRoutes(app, opts) {
   const { db, helpers, componentETagFn } = opts;
@@ -11,41 +11,35 @@ module.exports = async function inventoryRoutes(app, opts) {
 
   app.get('/api/inventory/:type', async (request, reply) => {
     const { type } = request.params;
-    const { period } = request.query;
+    const { period, project } = request.query;
     const since = periodToDate(period);
 
-    // ETag check (includes period so different periods don't share cache)
-    const requestETag = `${componentETagFn()}:${period || 'all'}`;
+    // ETag check (includes period and project so different filters don't share cache)
+    const requestETag = `${componentETagFn()}:${period || 'all'}:${project || ''}`;
     if (request.headers['if-none-match'] === `"${requestETag}"`) {
       reply.code(304);
       return;
     }
 
     if (!VALID_TYPES.has(type)) {
-      return errorReply(reply, 400, 'Invalid type. Must be: skills, agents, hooks, rules');
+      return errorReply(reply, 400, 'Invalid type. Must be: skills, agents');
     }
     const singularType = type.replace(/s$/, '');
 
     const components = getComponentsByType(db, singularType);
 
-    if (singularType === 'hook') {
-      reply.header('etag', `"${requestETag}"`);
-      return components.map(c => ({
-        name: c.name,
-        event: c.hook_event,
-        matcher: c.hook_matcher,
-        command: c.hook_command,
-        project: c.project || 'global',
-      }));
-    }
-
-    if (singularType === 'rule') {
-      reply.header('etag', `"${requestETag}"`);
-      return components.map(c => ({
-        name: c.name,
-        type: 'rule',
-        project: c.project || 'global',
-      }));
+    // Deduplicate components by name — merge entries with same name, collect projects into array
+    const byName = new Map();
+    for (const c of components) {
+      const proj = c.project || 'global';
+      if (!byName.has(c.name)) {
+        byName.set(c.name, { ...c, projects: [proj] });
+      } else {
+        const existing = byName.get(c.name);
+        if (!existing.projects.includes(proj)) existing.projects.push(proj);
+        if (!existing.plugin && c.plugin) existing.plugin = c.plugin;
+        if (c.agent_class === 'configured') existing.agent_class = 'configured';
+      }
     }
 
     // Skills and agents: join with events for usage counts
@@ -54,35 +48,33 @@ module.exports = async function inventoryRoutes(app, opts) {
 
     const conditions = ['event_type = @eventType'];
     if (since) conditions.push('timestamp >= @since');
+    if (project) conditions.push('project_name = @project');
     const where = 'WHERE ' + conditions.join(' AND ');
 
     const usageRows = db.prepare(
       `SELECT name, COUNT(*) as count, MAX(timestamp) as last_used
        FROM events ${where} GROUP BY name`
-    ).all({ eventType, since: since || undefined });
+    ).all({ eventType, since: since || undefined, project: project || undefined });
 
     const usageMap = new Map(usageRows.map(r => [r.name, r]));
 
-    const items = components.map(c => {
+    const items = [...byName.values()].map(c => {
       const usage = usageMap.get(c.name) || { count: 0, last_used: null };
-      const item = {
+      return {
         name: c.name,
         count: usage.count,
         last_used: usage.last_used,
         status: usage.count > 0 ? 'active' : 'unused',
         origin: 'custom',
+        projects: c.projects,
         plugin: c.plugin || null,
-        project: c.project || 'global',
+        ...(singularType === 'agent' ? { agent_class: c.agent_class || 'built-in' } : {}),
       };
-      if (singularType === 'agent') {
-        item.agent_class = c.agent_class || 'built-in';
-      }
-      return item;
     });
 
     // Also include "built-in" agents from events that aren't on disk
     if (singularType === 'agent') {
-      const knownNames = new Set(components.map(c => c.name));
+      const knownNames = new Set(byName.keys());
       for (const [name, usage] of usageMap) {
         if (!knownNames.has(name)) {
           items.push({
@@ -92,7 +84,7 @@ module.exports = async function inventoryRoutes(app, opts) {
             status: 'active',
             origin: 'custom',
             plugin: parseQualifiedName(name).plugin,
-            project: 'global',
+            projects: ['global'],
             agent_class: 'built-in',
           });
         }

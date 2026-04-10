@@ -711,4 +711,74 @@ describe('op-server', () => {
     });
   });
 
+  describe('inventory deduplication and project filter', () => {
+    it('GET /api/inventory/agents deduplicates same-name components', async () => {
+      const dbMod = require('../src/op-db');
+      const testDb = require('better-sqlite3')(process.env.OPEN_PULSE_DB);
+
+      dbMod.upsertComponent(testDb, {
+        type: 'agent', name: 'shared-agent', source: 'project', plugin: null,
+        project: 'proj1', file_path: '/tmp/proj1/shared-agent.md',
+        description: 'test', agent_class: 'configured',
+        first_seen_at: '2026-04-10', last_seen_at: '2026-04-10',
+      });
+      dbMod.upsertComponent(testDb, {
+        type: 'agent', name: 'shared-agent', source: 'project', plugin: null,
+        project: 'proj2', file_path: '/tmp/proj2/shared-agent.md',
+        description: 'test', agent_class: 'configured',
+        first_seen_at: '2026-04-10', last_seen_at: '2026-04-10',
+      });
+
+      dbMod.insertEvent(testDb, {
+        timestamp: '2026-04-10T03:00:00Z', session_id: 'dedup-test',
+        event_type: 'agent_spawn', name: 'shared-agent',
+        working_directory: '/tmp/proj1', project_name: 'proj1',
+      });
+      testDb.close();
+
+      // Do not call syncComponents() — it deletes manually-seeded rows via deleteComponentsNotSeenSince
+      const res = await app.inject({ method: 'GET', url: '/api/inventory/agents?period=all' });
+      const items = JSON.parse(res.body);
+      const matches = items.filter(i => i.name === 'shared-agent');
+
+      assert.equal(matches.length, 1, 'should have exactly one entry for shared-agent');
+      assert.ok(Array.isArray(matches[0].projects), 'should have projects array');
+      assert.ok(matches[0].projects.includes('proj1'));
+      assert.ok(matches[0].projects.includes('proj2'));
+      assert.equal(matches[0].count, 1);
+    });
+
+    it('GET /api/inventory/skills?project= filters by project_name', async () => {
+      const dbMod = require('../src/op-db');
+      const testDb = require('better-sqlite3')(process.env.OPEN_PULSE_DB);
+
+      dbMod.upsertComponent(testDb, {
+        type: 'skill', name: 'test-skill-pf', source: 'global', plugin: null,
+        project: null, file_path: '/tmp/test', description: 'test', agent_class: null,
+        first_seen_at: '2026-04-10', last_seen_at: '2026-04-10',
+      });
+      dbMod.insertEvent(testDb, {
+        timestamp: '2026-04-10T04:00:00Z', session_id: 'pf-test-1',
+        event_type: 'skill_invoke', name: 'test-skill-pf',
+        working_directory: '/tmp/alpha', project_name: 'alpha',
+      });
+      dbMod.insertEvent(testDb, {
+        timestamp: '2026-04-10T04:01:00Z', session_id: 'pf-test-2',
+        event_type: 'skill_invoke', name: 'test-skill-pf',
+        working_directory: '/tmp/beta', project_name: 'beta',
+      });
+      testDb.close();
+
+      const all = await app.inject({ method: 'GET', url: '/api/inventory/skills?period=all' });
+      const allItems = JSON.parse(all.body);
+      const allMatch = allItems.find(i => i.name === 'test-skill-pf');
+      assert.ok(allMatch.count >= 2, 'unfiltered should count all');
+
+      const filtered = await app.inject({ method: 'GET', url: '/api/inventory/skills?period=all&project=alpha' });
+      const filteredItems = JSON.parse(filtered.body);
+      const filteredMatch = filteredItems.find(i => i.name === 'test-skill-pf');
+      assert.equal(filteredMatch.count, 1, 'filtered should count only alpha');
+    });
+  });
+
 });

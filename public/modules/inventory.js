@@ -9,7 +9,7 @@ function fmtTime(ts) {
 
 // ── Tab state ─────────────────────────────────────────────────────────────────
 
-const TABS = ['skills', 'agents', 'hooks', 'rules'];
+const TABS = ['skills', 'agents'];
 
 let pollInterval = null;
 let currentETag = null;
@@ -109,10 +109,11 @@ function pluginBadge(item) {
 }
 
 function projectBadge(item) {
-  const proj = item.project || 'global';
+  const projects = Array.isArray(item.projects) ? item.projects : [item.project || 'global'];
+  const isGlobalOnly = projects.length === 1 && projects[0] === 'global';
   const badge = document.createElement('span');
-  badge.className = proj === 'global' ? 'badge badge-project-global' : 'badge badge-project';
-  badge.textContent = proj;
+  badge.className = isGlobalOnly ? 'badge badge-project-global' : 'badge badge-project';
+  badge.textContent = projects.join(', ');
   return badge;
 }
 
@@ -122,7 +123,7 @@ function renderSkillsTab(el, items, onSelect) {
     { label: 'Plugin', render: pluginBadge, center: true },
     { label: 'Project', render: projectBadge, center: true },
     { label: 'Usage', key: 'count', center: true },
-    { label: 'Last Used', render: i => fmtTime(i.lastUsed) },
+    { label: 'Last Used', render: i => fmtTime(i.last_used) },
     { label: 'Status', render: statusBadge },
   ];
   el.appendChild(makeItemTable(items, cols, onSelect));
@@ -143,68 +144,10 @@ function renderAgentsTab(el, items, onSelect) {
     { label: 'Plugin', render: pluginBadge, center: true },
     { label: 'Project', render: projectBadge, center: true },
     { label: 'Usage', key: 'count', center: true },
-    { label: 'Last Used', render: i => fmtTime(i.lastUsed) },
+    { label: 'Last Used', render: i => fmtTime(i.last_used) },
     { label: 'Status', render: statusBadge },
   ];
   el.appendChild(makeItemTable(items, cols, onSelect));
-}
-
-// ── Tab: Hooks ────────────────────────────────────────────────────────────────
-
-function renderHooksTab(el, items) {
-  const cols = [
-    { label: 'Name', render: i => i.name || '—' },
-    { label: 'Event', render: i => i.event || '—' },
-    { label: 'Matcher', render: i => {
-      const code = document.createElement('code');
-      code.style.fontSize = '11px';
-      code.style.color = 'var(--accent)';
-      code.textContent = i.matcher || i.match || '—';
-      return code;
-    }},
-    { label: 'Project', render: projectBadge, center: true },
-  ];
-  el.appendChild(makeItemTable(items, cols, null));
-}
-
-// ── Tab: Rules ────────────────────────────────────────────────────────────────
-
-function renderRulesTab(el, items) {
-  const card = document.createElement('div');
-  card.className = 'card';
-
-  if (!items || items.length === 0) {
-    const empty = document.createElement('div');
-    empty.className = 'empty-state';
-    empty.textContent = 'No rules found';
-    card.appendChild(empty);
-  } else {
-    const ul = document.createElement('ul');
-    ul.style.listStyle = 'none';
-    ul.style.padding = '0';
-
-    items.forEach(rule => {
-      const li = document.createElement('li');
-      li.style.cssText = 'padding:10px 0; border-bottom:1px solid var(--border); font-size:13px; display:flex; align-items:center; gap:8px;';
-
-      const badge = document.createElement('span');
-      badge.className = 'badge badge-rule';
-      badge.textContent = 'rule';
-
-      const name = document.createElement('span');
-      name.textContent = rule.name || rule;
-
-      li.appendChild(badge);
-      li.appendChild(name);
-      if (rule.project) {
-        li.appendChild(projectBadge(rule));
-      }
-      ul.appendChild(li);
-    });
-    card.appendChild(ul);
-  }
-
-  el.appendChild(card);
 }
 
 // ── Detail overlay ────────────────────────────────────────────────────────────
@@ -413,9 +356,6 @@ export function mount(el, { period } = {}) {
     let apiPath;
     if (tab === 'skills') apiPath = '/inventory/skills?period=' + p;
     else if (tab === 'agents') apiPath = '/inventory/agents?period=' + p;
-    else if (tab === 'hooks') apiPath = '/inventory/hooks';
-    else if (tab === 'rules') apiPath = '/inventory/rules';
-
     const fetchFn = isRefresh
       ? () => getWithETag(apiPath, currentETag)
       : () => get(apiPath).then(data => ({ data, etag: null, notModified: false }));
@@ -455,10 +395,6 @@ export function mount(el, { period } = {}) {
           }
           loadDetail(1);
         });
-      } else if (tab === 'hooks') {
-        renderHooksTab(content, items);
-      } else if (tab === 'rules') {
-        renderRulesTab(content, items);
       }
     }).catch(err => {
       content.textContent = '';
