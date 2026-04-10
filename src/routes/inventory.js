@@ -98,7 +98,7 @@ module.exports = async function inventoryRoutes(app, opts) {
 
   app.get('/api/inventory/:type/:name', async (request, reply) => {
     const { type, name } = request.params;
-    const { period } = request.query;
+    const { period, project } = request.query;
     const since = periodToDate(period);
     const { page, perPage } = parsePagination(request.query, { perPage: 10 });
 
@@ -114,17 +114,28 @@ module.exports = async function inventoryRoutes(app, opts) {
       ? { description: comp.description || '', origin: 'custom' }
       : readItemMeta(type, name);
 
+    // by_project breakdown — always unfiltered by project (shows full picture)
+    const bpConditions = ['event_type = @eventType', 'name = @name'];
+    if (since) bpConditions.push('timestamp >= @since');
+    const bpWhere = 'WHERE ' + bpConditions.join(' AND ');
+    const byProject = db.prepare(
+      `SELECT project_name AS project, COUNT(*) AS count, MAX(timestamp) AS last_used
+       FROM events ${bpWhere} GROUP BY project_name ORDER BY count DESC`
+    ).all({ eventType, name, since: since || undefined });
+
     const conditions = ['event_type = @eventType', 'name = @name'];
     if (since) conditions.push('timestamp >= @since');
+    if (project) conditions.push('project_name = @project');
     const where = 'WHERE ' + conditions.join(' AND ');
 
     const allInvocations = db.prepare(
-      `SELECT timestamp, detail, session_id, duration_ms, user_prompt FROM events ${where} ORDER BY timestamp DESC`
-    ).all({ eventType, name, since: since || undefined });
+      `SELECT timestamp, detail, session_id, duration_ms, user_prompt, project_name FROM events ${where} ORDER BY timestamp DESC`
+    ).all({ eventType, name, since: since || undefined, project: project || undefined });
 
     // Batch query: find triggered_by for all invocations at once
     // (nearest preceding skill/agent in the same session, before each invocation)
     const triggeredBySinceFrag = since ? 'AND e1.timestamp >= @since' : '';
+    const triggeredByProjectFrag = project ? 'AND e1.project_name = @project' : '';
     const triggeredByRows = db.prepare(`
       SELECT e1.timestamp AS inv_ts, e2.name, e2.event_type
       FROM events e1
@@ -134,9 +145,10 @@ module.exports = async function inventoryRoutes(app, opts) {
         AND e2.name != @currentName
       WHERE e1.name = @currentName AND e1.event_type = @eventType
         ${triggeredBySinceFrag}
+        ${triggeredByProjectFrag}
       GROUP BY e1.session_id, e1.timestamp
       HAVING e2.timestamp = MAX(e2.timestamp)
-    `).all({ currentName: name, eventType, since: since || undefined });
+    `).all({ currentName: name, eventType, since: since || undefined, project: project || undefined });
 
     const triggeredByMap = new Map(
       triggeredByRows.map(r => [r.inv_ts, { name: r.name, type: r.event_type }])
@@ -145,6 +157,7 @@ module.exports = async function inventoryRoutes(app, opts) {
     // Batch query: find what each invocation subsequently triggers
     // (nearest following skill/agent in the same session, after each invocation)
     const triggersSinceFrag = since ? 'AND e1.timestamp >= @since' : '';
+    const triggersProjectFrag = project ? 'AND e1.project_name = @project' : '';
     const triggersRows = db.prepare(`
       SELECT e1.timestamp AS inv_ts, e2.name, e2.event_type
       FROM events e1
@@ -154,9 +167,10 @@ module.exports = async function inventoryRoutes(app, opts) {
         AND e2.name != @currentName
       WHERE e1.name = @currentName AND e1.event_type = @eventType
         ${triggersSinceFrag}
+        ${triggersProjectFrag}
       GROUP BY e1.session_id, e1.timestamp
       HAVING e2.timestamp = MIN(e2.timestamp)
-    `).all({ currentName: name, eventType, since: since || undefined });
+    `).all({ currentName: name, eventType, since: since || undefined, project: project || undefined });
 
     // Build trigger counts from batch results
     const triggerCounts = new Map();
@@ -183,6 +197,7 @@ module.exports = async function inventoryRoutes(app, opts) {
       keywords: extractKeywordsFromPrompts(allInvocations),
       invocations,
       triggers: [...triggerCounts.values()],
+      by_project: byProject,
       total,
       page,
       per_page: perPage,

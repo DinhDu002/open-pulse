@@ -423,6 +423,60 @@ describe('op-server', () => {
     assert.ok(exploreTrigger.count >= 1, 'Explore trigger count should be >= 1');
   });
 
+  it('GET /api/inventory/skills/:name includes by_project breakdown', async () => {
+    const dbMod = require('../src/op-db');
+    const testDb = require('better-sqlite3')(process.env.OPEN_PULSE_DB);
+
+    dbMod.upsertComponent(testDb, {
+      type: 'skill', name: 'bp-detail-skill', source: 'global', plugin: null,
+      project: null, file_path: '/tmp', description: '', agent_class: null,
+      first_seen_at: '2026-04-10', last_seen_at: '2026-04-10',
+    });
+    dbMod.insertEvent(testDb, {
+      timestamp: '2026-04-10T05:00:00Z', session_id: 'bp-d-1',
+      event_type: 'skill_invoke', name: 'bp-detail-skill',
+      working_directory: '/tmp/proj-a', project_name: 'proj-a',
+    });
+    dbMod.insertEvent(testDb, {
+      timestamp: '2026-04-10T05:01:00Z', session_id: 'bp-d-2',
+      event_type: 'skill_invoke', name: 'bp-detail-skill',
+      working_directory: '/tmp/proj-a', project_name: 'proj-a',
+    });
+    dbMod.insertEvent(testDb, {
+      timestamp: '2026-04-10T05:02:00Z', session_id: 'bp-d-3',
+      event_type: 'skill_invoke', name: 'bp-detail-skill',
+      working_directory: '/tmp/proj-b', project_name: 'proj-b',
+    });
+    testDb.close();
+
+    const res = await app.inject({ method: 'GET', url: '/api/inventory/skills/bp-detail-skill?period=all' });
+    assert.equal(res.statusCode, 200);
+    const body = JSON.parse(res.body);
+
+    assert.ok(Array.isArray(body.by_project), 'should have by_project array');
+    assert.equal(body.by_project.length, 2);
+
+    const projA = body.by_project.find(p => p.project === 'proj-a');
+    assert.equal(projA.count, 2);
+    const projB = body.by_project.find(p => p.project === 'proj-b');
+    assert.equal(projB.count, 1);
+  });
+
+  it('GET /api/inventory/skills/:name?project= filters invocations', async () => {
+    // Uses data seeded in previous test (bp-detail-skill)
+    const res = await app.inject({
+      method: 'GET',
+      url: '/api/inventory/skills/bp-detail-skill?period=all&project=proj-a',
+    });
+    const body = JSON.parse(res.body);
+
+    assert.equal(body.total, 2, 'filtered total should be 2');
+    assert.equal(body.by_project.length, 2, 'by_project always returns all');
+    for (const inv of body.invocations) {
+      assert.equal(inv.project_name, 'proj-a', 'all invocations should be from proj-a');
+    }
+  });
+
   describe('knowledge graph API', () => {
     it('GET /api/knowledge/status returns stats', async () => {
       const res = await app.inject({ method: 'GET', url: '/api/knowledge/status' });
