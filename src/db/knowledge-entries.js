@@ -59,7 +59,7 @@ function insertKnowledgeEntry(db, entry) {
 
 function upsertKnowledgeEntry(db, entry) {
   const existing = db.prepare(
-    'SELECT * FROM knowledge_entries WHERE project_id = @project_id AND title = @title'
+    'SELECT * FROM knowledge_entries WHERE project_id = @project_id AND title = @title COLLATE NOCASE'
   ).get({ project_id: entry.project_id, title: entry.title });
 
   if (existing) {

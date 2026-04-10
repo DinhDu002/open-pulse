@@ -122,6 +122,35 @@ describe('knowledge_entries', () => {
     assert.equal(fetched.body, 'Updated body with more detail.');
   });
 
+  it('upsertKnowledgeEntry matches existing entry case-insensitively', () => {
+    // Insert with Title Case
+    const first = dbMod.upsertKnowledgeEntry(db, {
+      project_id: 'proj-ke-test',
+      category: 'convention',
+      title: 'Case Insensitive Upsert Test',
+      body: 'Original body.',
+    });
+
+    // Wait 1ms to ensure updated_at differs
+    const start = Date.now();
+    while (Date.now() === start) { /* spin */ }
+
+    // Upsert with lowercase — should UPDATE, not INSERT
+    const second = dbMod.upsertKnowledgeEntry(db, {
+      project_id: 'proj-ke-test',
+      category: 'convention',
+      title: 'case insensitive upsert test',
+      body: 'Updated body via case-variant title.',
+    });
+
+    // Should reuse the same id
+    assert.equal(second.id, first.id, 'should match the same entry regardless of case');
+
+    // DB should reflect the update
+    const fetched = dbMod.getKnowledgeEntry(db, first.id);
+    assert.equal(fetched.body, 'Updated body via case-variant title.');
+  });
+
   // -------------------------------------------------------------------------
   // queryKnowledgeEntries
   // -------------------------------------------------------------------------
