@@ -23,7 +23,7 @@ describe('op-server', () => {
     fs.mkdirSync(path.join(TEST_DIR, '.claude', 'skills'), { recursive: true });
     fs.mkdirSync(path.join(TEST_DIR, '.claude', 'agents'), { recursive: true });
 
-    const { buildApp } = require('../src/op-server');
+    const { buildApp } = require('../src/server');
     app = buildApp({ disableTimers: true });
     await app.ready();
 
@@ -156,7 +156,7 @@ describe('op-server', () => {
     db.close();
 
     // Sync disk state into components table so new file is reflected
-    const { syncComponents } = require('../src/op-server');
+    const { syncComponents } = require('../src/server');
     syncComponents();
 
     const res = await app.inject({ method: 'GET', url: '/api/inventory/agents?period=all' });
@@ -213,7 +213,7 @@ describe('op-server', () => {
   });
 
   it('parseQualifiedName parses plugin prefix', () => {
-    const { parseQualifiedName } = require('../src/op-server');
+    const { parseQualifiedName } = require('../src/server');
     assert.deepEqual(parseQualifiedName('superpowers:code-reviewer'), { plugin: 'superpowers', shortName: 'code-reviewer' });
     assert.deepEqual(parseQualifiedName('code-reviewer'), { plugin: null, shortName: 'code-reviewer' });
     assert.deepEqual(parseQualifiedName('pr-review-toolkit:silent-failure-hunter'), { plugin: 'pr-review-toolkit', shortName: 'silent-failure-hunter' });
@@ -243,7 +243,7 @@ describe('op-server', () => {
     }));
 
     // Sync disk state into components table so plugin agent is reflected
-    const { syncComponents } = require('../src/op-server');
+    const { syncComponents } = require('../src/server');
     syncComponents();
 
     const res = await app.inject({ method: 'GET', url: '/api/inventory/agents?period=all' });
@@ -270,7 +270,7 @@ describe('op-server', () => {
       '---\ndescription: A synced agent\n---\nContent'
     );
 
-    const { syncComponents } = require('../src/op-server');
+    const { syncComponents } = require('../src/server');
     syncComponents();
 
     const skillRes = await app.inject({ method: 'GET', url: '/api/inventory/skills' });
@@ -285,7 +285,7 @@ describe('op-server', () => {
   it('syncComponents removes deleted components', async () => {
     fs.rmSync(path.join(TEST_DIR, '.claude', 'skills', 'my-sync-skill'), { recursive: true });
 
-    const { syncComponents } = require('../src/op-server');
+    const { syncComponents } = require('../src/server');
     syncComponents();
 
     const res = await app.inject({ method: 'GET', url: '/api/inventory/skills' });
@@ -319,7 +319,7 @@ describe('op-server', () => {
     fs.mkdirSync(newSkillDir, { recursive: true });
     fs.writeFileSync(path.join(newSkillDir, 'SKILL.md'), '---\ndescription: Another\n---\n');
 
-    const { syncComponents } = require('../src/op-server');
+    const { syncComponents } = require('../src/server');
     syncComponents();
 
     const res2 = await app.inject({

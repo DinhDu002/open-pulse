@@ -827,7 +827,7 @@ describe('knowledge entry API routes', () => {
     process.env.OPEN_PULSE_DIR        = API_TEST_DIR;
     process.env.OPEN_PULSE_CLAUDE_DIR = path.join(API_TEST_DIR, '.claude');
 
-    const { buildApp } = require('../src/op-server');
+    const { buildApp } = require('../src/server');
     app = buildApp({ disableTimers: true });
     await app.ready();
 

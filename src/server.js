@@ -8,7 +8,7 @@ const fastifyStatic = require('@fastify/static');
 const { createDb } = require('./op-db');
 const { extractKnowledgeFromPrompt } = require('./op-knowledge');
 const { ingestAll, setKnowledgeHook } = require('./op-ingest');
-const { runRetention } = require('./op-retention');
+const { runRetention } = require('./retention');
 const { parseQualifiedName } = require('./op-helpers');
 const { syncInstincts, runAutoEvolve } = require('./op-auto-evolve');
 const {
