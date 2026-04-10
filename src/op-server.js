@@ -64,6 +64,7 @@ function buildApp(opts = {}) {
     setKnowledgeHook(extractKnowledgeFromPrompt, {
       maxTokens: config.knowledge_max_tokens ?? 1000,
       maxEvents: config.knowledge_max_events_per_prompt ?? 50,
+      model: config.knowledge_model || 'sonnet',
     });
   }
 
@@ -75,8 +76,8 @@ function buildApp(opts = {}) {
   const app = Fastify({ logger: false });
 
   app.setErrorHandler((err, req, reply) => {
-    req.log.error(err);
-    reply.code(500).send({ error: 'Internal server error' });
+    console.error(`[${new Date().toISOString()}] ${req.method} ${req.url}:`, err.message);
+    reply.code(500).send({ error: err.message || 'Internal server error' });
   });
 
   // Static file serving
@@ -100,14 +101,13 @@ function buildApp(opts = {}) {
 
     // Auto-evolve timer: sync instincts + auto-promote
     if (config.auto_evolve_enabled !== false) {
-      const instinctDir = path.join(REPO_DIR, 'cl', 'instincts');
       const logDir = path.join(REPO_DIR, 'logs');
       timers.push(setInterval(() => {
         try {
-          syncInstincts(db, instinctDir, config.auto_evolve_blacklist || ['agent', 'hook']);
+          syncInstincts(db, REPO_DIR, config.auto_evolve_blacklist || ['hook']);
           runAutoEvolve(db, {
             min_confidence: config.auto_evolve_min_confidence || 0.85,
-            blacklist: config.auto_evolve_blacklist || ['agent', 'hook'],
+            blacklist: config.auto_evolve_blacklist || ['hook'],
             logDir,
           });
         } catch { /* non-critical */ }

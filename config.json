@@ -9,10 +9,17 @@
   "knowledge_enabled": true,
   "knowledge_max_events_per_prompt": 50,
   "knowledge_max_tokens": 1000,
-  "knowledge_scan_files": ["README.md", "package.json", "CLAUDE.md"],
+  "knowledge_model": "sonnet",
+  "knowledge_scan_files": [
+    "README.md",
+    "package.json",
+    "CLAUDE.md"
+  ],
   "knowledge_scan_patterns": [],
   "auto_evolve_enabled": true,
-  "auto_evolve_blacklist": ["rule", "hook"],
+  "auto_evolve_blacklist": [
+    "hook"
+  ],
   "auto_evolve_min_confidence": 0.85,
   "daily_review_enabled": true,
   "daily_review_model": "opus",

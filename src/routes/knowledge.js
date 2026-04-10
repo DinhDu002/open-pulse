@@ -12,7 +12,7 @@ const {
 const { scanProject } = require('../op-knowledge');
 
 module.exports = async function knowledgeRoutes(app, opts) {
-  const { db, helpers } = opts;
+  const { db, helpers, config } = opts;
   const { errorReply, parsePagination } = helpers;
 
   // ── Knowledge Entries ────────────────────────────────────────────────────
@@ -75,8 +75,9 @@ module.exports = async function knowledgeRoutes(app, opts) {
     const { project_id, scan_files, patterns } = req.body || {};
     if (!project_id) return errorReply(reply, 400, 'project_id required');
     const result = await scanProject(db, project_id, {
-      scanFiles: scan_files || [],
-      patterns:  patterns  || [],
+      scanFiles: scan_files || config.knowledge_scan_files || ['README.md', 'package.json', 'CLAUDE.md'],
+      patterns:  patterns  || config.knowledge_scan_patterns || [],
+      model: config.knowledge_model || 'sonnet',
     });
     return result;
   });
