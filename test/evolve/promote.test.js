@@ -16,8 +16,8 @@ describe('op-promote', () => {
   before(() => {
     process.env.OPEN_PULSE_CLAUDE_DIR = TEST_CLAUDE_DIR;
     fs.mkdirSync(TEST_CLAUDE_DIR, { recursive: true });
-    db = require('../src/op-db').createDb(TEST_DB);
-    promote = require('../src/op-promote');
+    db = require('../../src/op-db').createDb(TEST_DB);
+    promote = require('../../src/op-promote');
   });
 
   after(() => {

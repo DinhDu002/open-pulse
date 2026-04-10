@@ -23,12 +23,12 @@ describe('op-server', () => {
     fs.mkdirSync(path.join(TEST_DIR, '.claude', 'skills'), { recursive: true });
     fs.mkdirSync(path.join(TEST_DIR, '.claude', 'agents'), { recursive: true });
 
-    const { buildApp } = require('../src/server');
+    const { buildApp } = require('../../src/server');
     app = buildApp({ disableTimers: true });
     await app.ready();
 
     // Seed prompts test data
-    const dbMod = require('../src/op-db');
+    const dbMod = require('../../src/op-db');
     const testDb = require('better-sqlite3')(process.env.OPEN_PULSE_DB);
 
     dbMod.upsertSession(testDb, {
@@ -127,7 +127,7 @@ describe('op-server', () => {
   });
 
   it('GET /api/inventory/agents includes agent_class', async () => {
-    const dbMod = require('../src/op-db');
+    const dbMod = require('../../src/op-db');
     const db = dbMod.createDb(process.env.OPEN_PULSE_DB);
 
     // Create a configured agent file
@@ -156,7 +156,7 @@ describe('op-server', () => {
     db.close();
 
     // Sync disk state into components table so new file is reflected
-    const { syncComponents } = require('../src/server');
+    const { syncComponents } = require('../../src/server');
     syncComponents();
 
     const res = await app.inject({ method: 'GET', url: '/api/inventory/agents?period=all' });
@@ -173,7 +173,7 @@ describe('op-server', () => {
   });
 
   it('GET /api/sessions/:id includes agent_class on agent_spawn events', async () => {
-    const dbMod = require('../src/op-db');
+    const dbMod = require('../../src/op-db');
     const db = dbMod.createDb(process.env.OPEN_PULSE_DB);
 
     dbMod.upsertSession(db, {
@@ -213,7 +213,7 @@ describe('op-server', () => {
   });
 
   it('parseQualifiedName parses plugin prefix', () => {
-    const { parseQualifiedName } = require('../src/server');
+    const { parseQualifiedName } = require('../../src/server');
     assert.deepEqual(parseQualifiedName('superpowers:code-reviewer'), { plugin: 'superpowers', shortName: 'code-reviewer' });
     assert.deepEqual(parseQualifiedName('code-reviewer'), { plugin: null, shortName: 'code-reviewer' });
     assert.deepEqual(parseQualifiedName('pr-review-toolkit:silent-failure-hunter'), { plugin: 'pr-review-toolkit', shortName: 'silent-failure-hunter' });
@@ -243,7 +243,7 @@ describe('op-server', () => {
     }));
 
     // Sync disk state into components table so plugin agent is reflected
-    const { syncComponents } = require('../src/server');
+    const { syncComponents } = require('../../src/server');
     syncComponents();
 
     const res = await app.inject({ method: 'GET', url: '/api/inventory/agents?period=all' });
@@ -270,7 +270,7 @@ describe('op-server', () => {
       '---\ndescription: A synced agent\n---\nContent'
     );
 
-    const { syncComponents } = require('../src/server');
+    const { syncComponents } = require('../../src/server');
     syncComponents();
 
     const skillRes = await app.inject({ method: 'GET', url: '/api/inventory/skills' });
@@ -285,7 +285,7 @@ describe('op-server', () => {
   it('syncComponents removes deleted components', async () => {
     fs.rmSync(path.join(TEST_DIR, '.claude', 'skills', 'my-sync-skill'), { recursive: true });
 
-    const { syncComponents } = require('../src/server');
+    const { syncComponents } = require('../../src/server');
     syncComponents();
 
     const res = await app.inject({ method: 'GET', url: '/api/inventory/skills' });
@@ -319,7 +319,7 @@ describe('op-server', () => {
     fs.mkdirSync(newSkillDir, { recursive: true });
     fs.writeFileSync(path.join(newSkillDir, 'SKILL.md'), '---\ndescription: Another\n---\n');
 
-    const { syncComponents } = require('../src/server');
+    const { syncComponents } = require('../../src/server');
     syncComponents();
 
     const res2 = await app.inject({
@@ -332,7 +332,7 @@ describe('op-server', () => {
   });
 
   it('GET /api/inventory/agents/:name includes triggered_by and triggers', async () => {
-    const dbMod = require('../src/op-db');
+    const dbMod = require('../../src/op-db');
     const db = dbMod.createDb(process.env.OPEN_PULSE_DB);
 
     // Insert a skill_invoke followed by an agent_spawn in the same session
@@ -386,7 +386,7 @@ describe('op-server', () => {
   });
 
   it('GET /api/inventory/:type/:name returns trigger data from batch queries', async () => {
-    const dbMod = require('../src/op-db');
+    const dbMod = require('../../src/op-db');
     const testDb = require('better-sqlite3')(process.env.OPEN_PULSE_DB);
     const sess = 'sess-trigger-batch-' + Date.now();
     dbMod.upsertSession(testDb, { session_id: sess, started_at: '2026-04-08T12:00:00Z', model: 'sonnet', working_directory: '/tmp' });
@@ -424,7 +424,7 @@ describe('op-server', () => {
   });
 
   it('GET /api/inventory/skills/:name includes by_project breakdown', async () => {
-    const dbMod = require('../src/op-db');
+    const dbMod = require('../../src/op-db');
     const testDb = require('better-sqlite3')(process.env.OPEN_PULSE_DB);
 
     dbMod.upsertComponent(testDb, {
@@ -479,7 +479,7 @@ describe('op-server', () => {
 
   describe('GET /api/projects', () => {
     it('includes event-only projects', async () => {
-      const dbMod = require('../src/op-db');
+      const dbMod = require('../../src/op-db');
       const testDb = require('better-sqlite3')(process.env.OPEN_PULSE_DB);
 
       dbMod.insertEvent(testDb, {
@@ -507,7 +507,7 @@ describe('op-server', () => {
     it('deletes a project and returns success', async () => {
       // Seed project via internal DB
       const dbPath = process.env.OPEN_PULSE_DB;
-      const { createDb, upsertClProject, upsertKgVaultHash } = require('../src/op-db');
+      const { createDb, upsertClProject, upsertKgVaultHash } = require('../../src/op-db');
       const db = createDb(dbPath);
       const pid = 'test-del-proj';
 
@@ -735,7 +735,7 @@ describe('op-server', () => {
 
   describe('inventory deduplication and project filter', () => {
     it('GET /api/inventory/agents deduplicates same-name components', async () => {
-      const dbMod = require('../src/op-db');
+      const dbMod = require('../../src/op-db');
       const testDb = require('better-sqlite3')(process.env.OPEN_PULSE_DB);
 
       dbMod.upsertComponent(testDb, {
@@ -771,7 +771,7 @@ describe('op-server', () => {
     });
 
     it('GET /api/inventory/skills?project= filters by project_name', async () => {
-      const dbMod = require('../src/op-db');
+      const dbMod = require('../../src/op-db');
       const testDb = require('better-sqlite3')(process.env.OPEN_PULSE_DB);
 
       dbMod.upsertComponent(testDb, {

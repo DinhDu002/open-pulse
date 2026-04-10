@@ -14,8 +14,8 @@ describe('op-ingest', () => {
 
   before(() => {
     fs.mkdirSync(path.join(TEST_DIR, 'data'), { recursive: true });
-    dbMod = require('../src/op-db');
-    ingest = require('../src/op-ingest');
+    dbMod = require('../../src/op-db');
+    ingest = require('../../src/ingest/pipeline');
     db = dbMod.createDb(TEST_DB);
   });
 
@@ -243,6 +243,30 @@ describe('op-ingest', () => {
     assert.equal(session.total_output_tokens, 4000);
     assert.equal(session.total_cost_usd, 0.25);
     assert.equal(session.ended_at, '2026-04-09T10:00:05Z');
+  });
+
+  it('ingestFile distributes tokens to prompts after session_end', () => {
+    const sid = 'sess-token-dist';
+    const filePath = path.join(TEST_DIR, 'data', 'events.jsonl');
+
+    // Two prompts with different event counts
+    const events = [
+      { timestamp: '2026-04-09T11:00:00Z', session_id: sid, event_type: 'tool_call', name: 'Read', user_prompt: 'prompt A', working_directory: '/tmp', model: 'sonnet', seq_num: 1 },
+      { timestamp: '2026-04-09T11:00:01Z', session_id: sid, event_type: 'tool_call', name: 'Grep', user_prompt: 'prompt A', working_directory: '/tmp', model: 'sonnet', seq_num: 2 },
+      { timestamp: '2026-04-09T11:00:02Z', session_id: sid, event_type: 'tool_call', name: 'Edit', user_prompt: 'prompt A', working_directory: '/tmp', model: 'sonnet', seq_num: 3 },
+      { timestamp: '2026-04-09T11:00:03Z', session_id: sid, event_type: 'tool_call', name: 'Bash', user_prompt: 'prompt B', working_directory: '/tmp', model: 'sonnet', seq_num: 4 },
+      { timestamp: '2026-04-09T11:00:10Z', session_id: sid, event_type: 'session_end', input_tokens: 60000, output_tokens: 40000, estimated_cost_usd: 0.5, working_directory: '/tmp', model: 'sonnet', seq_num: 5 },
+    ];
+    fs.writeFileSync(filePath, events.map(e => JSON.stringify(e)).join('\n') + '\n');
+    ingest.ingestFile(db, filePath, 'events');
+
+    const prompts = db.prepare('SELECT * FROM prompts WHERE session_id = ? ORDER BY id').all(sid);
+    assert.equal(prompts.length, 2);
+
+    // Prompt A: 3 events out of 4 → 75% of 100K tokens = 75000
+    // Prompt B: 1 event  out of 4 → 25% of 100K tokens = 25000
+    assert.equal(prompts[0].total_tokens, 75000);
+    assert.equal(prompts[1].total_tokens, 25000);
   });
 
   it('ingestFile populates project_name from cl_projects', () => {

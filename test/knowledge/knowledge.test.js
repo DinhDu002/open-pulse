@@ -14,7 +14,7 @@ describe('knowledge_entries', () => {
 
   before(() => {
     fs.mkdirSync(TEST_DIR, { recursive: true });
-    dbMod = require('../src/op-db');
+    dbMod = require('../../src/op-db');
     db = dbMod.createDb(TEST_DB);
 
     // Seed a project so entries have a valid project_id
@@ -399,7 +399,7 @@ describe('op-knowledge', () => {
     parseJsonResponse,
     CATEGORY_FILES,
     CATEGORY_TITLES,
-  } = require('../src/op-knowledge');
+  } = require('../../src/op-knowledge');
 
   // ---------------------------------------------------------------------------
   // Shared test DB (separate from the knowledge_entries describe above)
@@ -409,7 +409,7 @@ describe('op-knowledge', () => {
   let TEST_REPO_DIR;
 
   before(() => {
-    dbMod2 = require('../src/op-db');
+    dbMod2 = require('../../src/op-db');
 
     // A second temp dir for this describe block's DB
     const dir2 = path.join(os.tmpdir(), `op-knowledge-mod-test-${Date.now()}`);
@@ -827,11 +827,11 @@ describe('knowledge entry API routes', () => {
     process.env.OPEN_PULSE_DIR        = API_TEST_DIR;
     process.env.OPEN_PULSE_CLAUDE_DIR = path.join(API_TEST_DIR, '.claude');
 
-    const { buildApp } = require('../src/server');
+    const { buildApp } = require('../../src/server');
     app = buildApp({ disableTimers: true });
     await app.ready();
 
-    const dbMod = require('../src/op-db');
+    const dbMod = require('../../src/op-db');
     db = require('better-sqlite3')(API_TEST_DB);
 
     // Seed project
@@ -916,7 +916,7 @@ describe('knowledge entry API routes', () => {
 
   it('PUT /api/knowledge/entries/:id updates fields', async () => {
     // Seed a fresh entry to update
-    const dbMod = require('../src/op-db');
+    const dbMod = require('../../src/op-db');
     const fresh = dbMod.insertKnowledgeEntry(db, {
       project_id: 'proj-api-test',
       category:   'stack',
@@ -937,7 +937,7 @@ describe('knowledge entry API routes', () => {
   });
 
   it('DELETE /api/knowledge/entries/:id removes entry', async () => {
-    const dbMod = require('../src/op-db');
+    const dbMod = require('../../src/op-db');
     const toDelete = dbMod.insertKnowledgeEntry(db, {
       project_id: 'proj-api-test',
       category:   'domain',

@@ -13,7 +13,7 @@ describe('op-collector', () => {
 
   before(() => {
     fs.mkdirSync(path.join(TEST_DIR, 'data'), { recursive: true });
-    mod = require('../collector/op-collector');
+    mod = require('../../src/ingest/collector');
   });
 
   after(() => {
@@ -180,5 +180,40 @@ describe('op-collector', () => {
     assert.ok(typeof n1 === 'number');
     assert.ok(n1 > 1700000000000, 'should be a ms timestamp');
     assert.ok(n2 >= n1, 'should be monotonically increasing');
+  });
+
+  it('readTranscriptUsage sums tokens from assistant turns', () => {
+    const transcriptPath = path.join(TEST_DIR, 'data', 'transcript.jsonl');
+    const lines = [
+      JSON.stringify({ type: 'user', message: { role: 'user', content: 'hi' } }),
+      JSON.stringify({ type: 'assistant', message: { role: 'assistant', usage: { input_tokens: 10, cache_creation_input_tokens: 100, cache_read_input_tokens: 500, output_tokens: 50 } } }),
+      JSON.stringify({ type: 'user', message: { role: 'user', content: 'more' } }),
+      JSON.stringify({ type: 'assistant', message: { role: 'assistant', usage: { input_tokens: 5, cache_creation_input_tokens: 0, cache_read_input_tokens: 600, output_tokens: 30 } } }),
+    ];
+    fs.writeFileSync(transcriptPath, lines.join('\n') + '\n');
+
+    const usage = mod.readTranscriptUsage(transcriptPath);
+    assert.equal(usage.input_tokens, 10 + 100 + 500 + 5 + 0 + 600);
+    assert.equal(usage.output_tokens, 50 + 30);
+  });
+
+  it('readTranscriptUsage returns zeros for missing file', () => {
+    const usage = mod.readTranscriptUsage('/nonexistent/path.jsonl');
+    assert.equal(usage.input_tokens, 0);
+    assert.equal(usage.output_tokens, 0);
+  });
+
+  it('readTranscriptUsage skips non-assistant lines', () => {
+    const transcriptPath = path.join(TEST_DIR, 'data', 'transcript2.jsonl');
+    const lines = [
+      JSON.stringify({ type: 'user', message: { role: 'user', content: 'hi' } }),
+      JSON.stringify({ type: 'attachment', attachment: {} }),
+      JSON.stringify({ type: 'last-prompt', lastPrompt: 'test' }),
+    ];
+    fs.writeFileSync(transcriptPath, lines.join('\n') + '\n');
+
+    const usage = mod.readTranscriptUsage(transcriptPath);
+    assert.equal(usage.input_tokens, 0);
+    assert.equal(usage.output_tokens, 0);
   });
 });

@@ -7,7 +7,7 @@ const fs = require('fs');
 const os = require('os');
 const Database = require('better-sqlite3');
 
-const { exportEvents, parseArgs } = require('../scripts/cl-export-events');
+const { exportEvents, parseArgs } = require('../../src/evolve/export-events');
 
 const TEST_DIR = path.join(os.tmpdir(), `cl-export-events-test-${Date.now()}`);
 let dbPath;
@@ -50,7 +50,7 @@ describe('cl-export-events', () => {
   before(() => {
     fs.mkdirSync(TEST_DIR, { recursive: true });
     dbPath = path.join(TEST_DIR, 'test.db');
-    const { createDb } = require('../src/op-db');
+    const { createDb } = require('../../src/op-db');
     const freshDb = createDb(dbPath);
     freshDb.close();
   });

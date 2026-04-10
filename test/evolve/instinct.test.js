@@ -12,7 +12,7 @@ describe('op-instinct-updater', () => {
   let mod;
 
   before(() => {
-    mod = require('../src/op-instinct-updater');
+    mod = require('../../src/evolve/instinct-updater');
   });
 
   after(() => {

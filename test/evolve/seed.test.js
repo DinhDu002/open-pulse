@@ -12,7 +12,7 @@ describe('cl-seed-instincts', () => {
   let mod;
 
   before(() => {
-    mod = require('../scripts/cl-seed-instincts');
+    mod = require('../../src/evolve/seed');
   });
 
   after(() => {
@@ -38,6 +38,8 @@ describe('cl-seed-instincts', () => {
     assert.ok(content.includes('id: grep-before-edit'));
     assert.ok(content.includes('confidence: 0.5'));
     assert.ok(content.includes('scope: global'));
+    assert.ok(content.includes('name: Grep Before Edit'));
+    assert.ok(content.includes('type: rule'));
   });
 
   it('seedStarter is idempotent', () => {

@@ -9,7 +9,7 @@ const os = require('os');
 const TEST_DIR = path.join(os.tmpdir(), `op-daily-review-test-${Date.now()}`);
 const TEST_DB = path.join(TEST_DIR, 'test.db');
 const TEST_CLAUDE_DIR = path.join(TEST_DIR, 'claude');
-const REPO_DIR = path.join(__dirname, '..');
+const REPO_DIR = path.join(__dirname, '../..');
 
 describe('op-daily-review', () => {
   let db, review;
@@ -25,8 +25,8 @@ describe('op-daily-review', () => {
     fs.writeFileSync(path.join(TEST_CLAUDE_DIR, 'agents', 'test-agent.md'), '---\nname: test\n---\nTest agent.');
     fs.writeFileSync(path.join(TEST_CLAUDE_DIR, 'skills', 'test-skill', 'SKILL.md'), '---\nname: test\n---\nTest skill.');
 
-    db = require('../src/op-db').createDb(TEST_DB);
-    review = require('../scripts/op-daily-review');
+    db = require('../../src/op-db').createDb(TEST_DB);
+    review = require('../../src/review/pipeline');
 
     // Seed some events for today
     const today = new Date().toISOString();

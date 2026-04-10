@@ -10,7 +10,8 @@ const TEST_DIR = path.join(os.tmpdir(), `op-auto-evolve-test-${Date.now()}`);
 const TEST_DB = path.join(TEST_DIR, 'test.db');
 const TEST_CLAUDE_DIR = path.join(TEST_DIR, 'claude');
 const TEST_LOG_DIR = path.join(TEST_DIR, 'logs');
-const TEST_CL_DIR = path.join(TEST_DIR, 'cl', 'instincts');
+const TEST_INHERITED_DIR = path.join(TEST_DIR, 'cl', 'instincts', 'inherited');
+const TEST_PERSONAL_DIR = path.join(TEST_DIR, 'cl', 'instincts', 'personal');
 
 describe('op-auto-evolve', () => {
   let db, autoEvolve;
@@ -19,15 +20,32 @@ describe('op-auto-evolve', () => {
     process.env.OPEN_PULSE_CLAUDE_DIR = TEST_CLAUDE_DIR;
     fs.mkdirSync(TEST_CLAUDE_DIR, { recursive: true });
     fs.mkdirSync(TEST_LOG_DIR, { recursive: true });
-    fs.mkdirSync(TEST_CL_DIR, { recursive: true });
-    db = require('../src/op-db').createDb(TEST_DB);
-    autoEvolve = require('../src/op-auto-evolve');
+    fs.mkdirSync(TEST_INHERITED_DIR, { recursive: true });
+    fs.mkdirSync(TEST_PERSONAL_DIR, { recursive: true });
+    db = require('../../src/op-db').createDb(TEST_DB);
+    autoEvolve = require('../../src/op-auto-evolve');
   });
 
   after(() => {
     if (db) db.close();
     delete process.env.OPEN_PULSE_CLAUDE_DIR;
     fs.rmSync(TEST_DIR, { recursive: true, force: true });
+  });
+
+  // -- extractBody --
+
+  it('extractBody returns text after frontmatter', () => {
+    const content = '---\nid: test\ntype: rule\n---\n\n# Title\n\nBody text here.\n';
+    assert.equal(autoEvolve.extractBody(content), '# Title\n\nBody text here.');
+  });
+
+  it('extractBody returns empty string when no frontmatter', () => {
+    assert.equal(autoEvolve.extractBody('Just plain text'), '');
+  });
+
+  it('extractBody trims whitespace', () => {
+    const content = '---\nid: x\n---\n\n\n  Some body  \n\n';
+    assert.equal(autoEvolve.extractBody(content), 'Some body');
   });
 
   // -- slugify --
@@ -81,7 +99,7 @@ describe('op-auto-evolve', () => {
 
   // -- syncInstincts --
 
-  it('syncInstincts upserts new instinct into auto_evolves', () => {
+  it('syncInstincts upserts new instinct from inherited subdir', () => {
     const yaml = [
       '---',
       'name: always-test',
@@ -93,15 +111,34 @@ describe('op-auto-evolve', () => {
       '',
       'Always run tests before committing changes.',
     ].join('\n');
-    fs.writeFileSync(path.join(TEST_CL_DIR, 'always-test.md'), yaml);
+    fs.writeFileSync(path.join(TEST_INHERITED_DIR, 'always-test.md'), yaml);
 
-    autoEvolve.syncInstincts(db, TEST_CL_DIR);
+    autoEvolve.syncInstincts(db, TEST_DIR);
 
     const rows = db.prepare('SELECT * FROM auto_evolves').all();
     assert.equal(rows.length, 1);
     assert.equal(rows[0].title, 'always-test');
     assert.equal(rows[0].target_type, 'rule');
     assert.equal(rows[0].observation_count, 3);
+    assert.equal(rows[0].description, 'Always run tests before committing changes.');
+  });
+
+  it('syncInstincts reads from personal subdir too', () => {
+    const yaml = [
+      '---',
+      'name: personal-pattern',
+      'description: A personal pattern',
+      'type: rule',
+      'confidence: 0.6',
+      '---',
+    ].join('\n');
+    fs.writeFileSync(path.join(TEST_PERSONAL_DIR, 'personal-pattern.md'), yaml);
+
+    autoEvolve.syncInstincts(db, TEST_DIR);
+
+    const row = db.prepare('SELECT * FROM auto_evolves WHERE title = ?').get('personal-pattern');
+    assert.ok(row, 'should find personal instinct in auto_evolves');
+    assert.equal(row.target_type, 'rule');
   });
 
   it('syncInstincts increments confidence when observation_count grows', () => {
@@ -116,9 +153,9 @@ describe('op-auto-evolve', () => {
       '',
       'Always run tests before committing changes.',
     ].join('\n');
-    fs.writeFileSync(path.join(TEST_CL_DIR, 'always-test.md'), yaml);
+    fs.writeFileSync(path.join(TEST_INHERITED_DIR, 'always-test.md'), yaml);
 
-    autoEvolve.syncInstincts(db, TEST_CL_DIR);
+    autoEvolve.syncInstincts(db, TEST_DIR);
 
     const row = db.prepare('SELECT * FROM auto_evolves WHERE title = ?').get('always-test');
     assert.equal(row.observation_count, 5);
@@ -135,13 +172,40 @@ describe('op-auto-evolve', () => {
       'seen_count: 10',
       '---',
     ].join('\n');
-    fs.writeFileSync(path.join(TEST_CL_DIR, 'auto-format-hook.md'), yaml);
+    fs.writeFileSync(path.join(TEST_PERSONAL_DIR, 'auto-format-hook.md'), yaml);
 
     const countBefore = db.prepare('SELECT COUNT(*) as c FROM auto_evolves').get().c;
-    autoEvolve.syncInstincts(db, TEST_CL_DIR, ['agent', 'hook']);
+    autoEvolve.syncInstincts(db, TEST_DIR, ['hook']);
     const countAfter = db.prepare('SELECT COUNT(*) as c FROM auto_evolves').get().c;
 
     assert.equal(countAfter, countBefore);
+  });
+
+  it('syncInstincts works with real seeder output (e2e)', () => {
+    const seeder = require('../../src/evolve/seed');
+    const e2eDir = path.join(TEST_DIR, 'e2e');
+    fs.mkdirSync(path.join(e2eDir, 'cl', 'instincts', 'inherited'), { recursive: true });
+    seeder.seedStarter(e2eDir);
+
+    const synced = autoEvolve.syncInstincts(db, e2eDir);
+    assert.equal(synced, seeder.STARTER_INSTINCTS.length);
+
+    // Verify synced rows have descriptions populated from markdown body
+    const titles = seeder.STARTER_INSTINCTS.map(i =>
+      i.id.replace(/-/g, ' ').replace(/\b\w/g, c => c.toUpperCase())
+    );
+    const rows = db.prepare(
+      `SELECT * FROM auto_evolves WHERE title IN (${titles.map(() => '?').join(',')})`
+    ).all(...titles);
+    assert.equal(rows.length, seeder.STARTER_INSTINCTS.length);
+    for (const row of rows) {
+      assert.ok(row.description.length > 0, `${row.title} should have description`);
+    }
+
+    const blacklisted = db.prepare(
+      "SELECT * FROM auto_evolves WHERE target_type IN ('agent', 'hook')"
+    ).all();
+    assert.equal(blacklisted.length, 0);
   });
 
   // -- runAutoEvolve --
@@ -156,7 +220,7 @@ describe('op-auto-evolve', () => {
 
     const result = autoEvolve.runAutoEvolve(db, {
       min_confidence: 0.85,
-      blacklist: ['agent', 'hook'],
+      blacklist: ['hook'],
       logDir: TEST_LOG_DIR,
     });
 
@@ -178,7 +242,7 @@ describe('op-auto-evolve', () => {
 
     autoEvolve.runAutoEvolve(db, {
       min_confidence: 0.85,
-      blacklist: ['agent', 'hook'],
+      blacklist: ['hook'],
       logDir: TEST_LOG_DIR,
     });
 
@@ -199,16 +263,16 @@ describe('op-auto-evolve', () => {
       INSERT OR REPLACE INTO auto_evolves
         (id, title, description, target_type, confidence, observation_count, rejection_count, status, created_at)
       VALUES
-        ('test-agent-1', 'Code reviewer agent', 'Reviews code', 'agent', 0.95, 30, 0, 'active', datetime('now'))
+        ('test-hook-1', 'Auto format hook', 'Format on save', 'hook', 0.95, 30, 0, 'active', datetime('now'))
     `).run();
 
     autoEvolve.runAutoEvolve(db, {
       min_confidence: 0.85,
-      blacklist: ['agent', 'hook'],
+      blacklist: ['hook'],
       logDir: TEST_LOG_DIR,
     });
 
-    const row = db.prepare('SELECT * FROM auto_evolves WHERE id = ?').get('test-agent-1');
+    const row = db.prepare('SELECT * FROM auto_evolves WHERE id = ?').get('test-hook-1');
     assert.equal(row.status, 'active');
   });
 
