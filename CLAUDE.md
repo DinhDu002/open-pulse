@@ -14,13 +14,13 @@ Hooks (Claude Code)          Server (Fastify)              Frontend (SPA)
                               │  (timer 10s) │──→ open-pulse.db (SQLite)
                               │              │
                               │              │
-                              │              │    Suggestion agent (Opus 4.6):
+                              │              │    Daily review agent (Opus 4.6):
                               │              │    launchd daily 3 AM + manual
-                              │              │    → 8-category AI analysis
+                              │              │    → suggestions + report .md
                               │  CL sync     │──→ cl/ (instincts, projects)
                               │  (timer 60s) │       ↑
-                              │  Retention   │  Feedback loop (instinct UI):
-                              │  (daily)     │  validate/reject → confidence
+                              │  Retention   │  Auto-evolve: confidence >= 0.85
+                              │  (daily)     │  → auto-promote to component
                               └──────────────┘
 ```
 
@@ -29,16 +29,17 @@ Hooks (Claude Code)          Server (Fastify)              Frontend (SPA)
 1. **Collection**: Claude Code hooks write JSONL to `data/` directory
    - `op-collector.js` handles: PostToolUse, UserPromptSubmit, Stop
    - Captures full `tool_input` and `tool_response` (5KB, secrets scrubbed) for CL analysis
-   - AI suggestion agent (`scripts/op-suggestion-agent.js`) runs daily at 3 AM via launchd — exports usage data, invokes Opus 4.6 for analysis across 8 categories
+   - Daily review agent (`scripts/op-daily-review.js`) runs daily at 3 AM via launchd — reads all component files + work history, invokes Opus 4.6 for analysis
 2. **Ingestion**: Server timer (10s) atomically processes JSONL → SQLite
    - Pattern: rename `.jsonl` → `.jsonl.processing` → read → insert → delete
    - On failure: rename back to `.jsonl` for retry
 3. **CL Analysis**: Observer agent reads events from SQLite via `cl-export-events.js`, runs Haiku to detect patterns + reflect on existing instincts (decay, contradictions, merge duplicates)
 4. **CL Sync**: Server timer (60s) syncs `projects.json`, instinct files, and components (skills/agents) into DB
-5. **Feedback Loop**: Validate instinct → +0.15 confidence. Reject → -0.2 confidence. 3 rejections → instinct archived. Managed in instinct detail/list UI.
-6. **Retention**: Daily timer compacts tool data after 7 days (NULL tool_input/response), deletes events after 90 days. Configurable via `retention_warm_days` / `retention_cold_days`.
-7. **API**: Fastify serves REST endpoints on `127.0.0.1:3827`
-8. **Frontend**: Vanilla JS SPA with hash-based routing, Chart.js for visualization
+5. **Auto-Evolve**: Observer patterns → instinct files → `auto_evolves` table → auto-promote when confidence >= 0.85 (no rejections, blacklists agent/hook) → component files written to disk.
+6. **Daily Review**: 3 AM daily → `op-daily-review.js` reads all component files + work history + best practices → Opus analysis → `daily_reviews` table + report `.md` in `reports/`. Triggerable via API.
+7. **Retention**: Daily timer compacts tool data after 7 days (NULL tool_input/response), deletes events after 90 days. Configurable via `retention_warm_days` / `retention_cold_days`.
+8. **API**: Fastify serves REST endpoints on `127.0.0.1:3827`
+9. **Frontend**: Vanilla JS SPA with hash-based routing, Chart.js for visualization
 
 ## Directory Structure
 
@@ -47,6 +48,7 @@ open-pulse/
 ├── src/                    # Backend (Node.js, CommonJS)
 │   ├── op-db.js            # SQLite schema (9 tables) + query functions
 │   ├── op-ingest.js        # Atomic JSONL → DB pipeline
+│   ├── op-auto-evolve.js   # Auto-evolve engine (sync + promote + revert)
 │   ├── op-instinct-updater.js  # YAML frontmatter parse/update for instinct feedback loop
 │   ├── op-retention.js     # 3-tier storage retention (hot/warm/cold)
 │   └── op-server.js        # Fastify server, all routes, CL sync, component sync, scanner, retention
@@ -60,7 +62,8 @@ open-pulse/
 │       ├── dashboard.js    # Overview: cards, cost chart, model mix, rankings
 │       ├── sessions.js     # Session list + detail timeline
 │       ├── inventory.js    # 2-tab view (skills/agents) with pagination
-│       ├── expert.js       # 3-tab: suggestions, scanner, actions
+│       ├── auto-evolves.js # Auto-evolve patterns list + promote/revert UI
+│       ├── daily-reviews.js # Daily review suggestions list + accept/dismiss UI
 │       └── settings.js     # Config editor, health, manual triggers
 ├── scripts/                # Installation & management
 │   ├── op-install.sh       # 8-step installer (npm, dirs, DB, seed, symlinks, hooks, launchd)
@@ -68,8 +71,8 @@ open-pulse/
 │   ├── register-hooks.js   # Merge hooks into ~/.claude/settings.json
 │   ├── cl-export-events.js # Export project events from SQLite for CL observer
 │   ├── cl-seed-instincts.js # Cold start: 10 starter instincts + CLAUDE.md rule parser
-│   ├── op-suggestion-agent.js # AI suggestion agent (export → Opus 4.6 → parse → DB)
-│   └── op-suggestion-prompt.md # Prompt template for suggestion agent
+│   ├── op-daily-review.js  # Daily review pipeline (export + scan + prompt + report)
+│   └── op-daily-review-prompt.md # Prompt template for daily review
 ├── claude/                 # Expert system (symlinked to ~/.claude/ on install)
 │   ├── skills/             # 7 skills
 │   │   ├── op-continuous-learning/  # Instinct-based learning system (CL v2.1)
@@ -79,18 +82,22 @@ open-pulse/
 │   │   └── agent-creator/           # Agent scaffolding
 │   └── agents/
 │       └── claude-code-expert.md    # Orchestrator agent using all skills
-├── test/                   # Tests (node:test, 147 total)
-│   ├── op-db.test.js       # 12 tests
-│   ├── op-ingest.test.js   # 9 tests
+├── test/                   # Tests (node:test, 230 total)
+│   ├── op-db.test.js       # 27 tests
+│   ├── op-ingest.test.js   # 15 tests
 │   ├── op-collector.test.js # 13 tests
-│   ├── op-server.test.js   # 21 tests
+│   ├── op-server.test.js   # 47 tests
 │   ├── op-instinct-updater.test.js # 13 tests
 │   ├── op-retention.test.js # 4 tests
-│   ├── op-suggestion-agent.test.js # 19 tests
-│   └── cl-seed-instincts.test.js # 9 tests
+│   ├── op-auto-evolve.test.js # 14 tests
+│   ├── op-daily-review.test.js # 10 tests
+│   ├── op-promote.test.js  # 8 tests
+│   ├── cl-seed-instincts.test.js # 9 tests
+│   └── cl-export-events.test.js # 5 tests
 ├── data/                   # Runtime: JSONL files (gitignored)
 ├── cl/                     # Runtime: Continuous Learning data (gitignored)
 ├── logs/                   # Runtime: stdout/stderr logs (gitignored)
+├── reports/                # Daily review reports (gitignored)
 ├── config.json             # Server config (port, intervals, thresholds)
 ├── open-pulse.db           # SQLite database (gitignored)
 └── projects.json           # CL project registry (gitignored)
@@ -106,7 +113,8 @@ open-pulse/
 | `collector_errors` | Hook errors | occurred_at, hook_type, error_message, raw_input |
 | `components` | Inventory component registry | type, name, source, plugin, project, file_path, first_seen_at |
 | `cl_projects` | CL project registry | project_id, name, directory, session_count |
-| `insights` | Unified learned patterns + suggestions | id, source, category, target_type, confidence, status, action_data |
+| `auto_evolves` | Auto-promoted patterns | id, title, target_type, confidence, observation_count, status, promoted_to |
+| `daily_reviews` | Daily analysis suggestions | id, review_date, category, title, target_type, action, confidence, status |
 | `scan_results` | Setup scanner reports | scanned_at, report (JSON), issue counts by severity |
 
 ## API Endpoints
@@ -124,15 +132,16 @@ open-pulse/
 | GET | `/api/inventory/:type/:name?period=&page=&per_page=` | Component detail + paginated invocations + trigger analysis |
 | GET | `/api/unused` | Unused skills, agents |
 | GET | `/api/errors?limit=` | Collector errors |
-| GET | `/api/insights?source=&status=&target_type=&search=` | Unified insights (observer + daily analysis) |
-| GET | `/api/insights/stats` | Insight counts by source, status, target_type |
-| GET | `/api/insights/:id` | Single insight detail |
-| PUT | `/api/insights/:id/validate` | Validate insight (+0.15 confidence) |
-| PUT | `/api/insights/:id/reject` | Reject insight (-0.2, auto-archive at 3) |
-| PUT | `/api/insights/:id/revert` | Revert promoted insight (deletes component file) |
-| POST | `/api/insights/:id/execute` | Auto-execute insight (spawns Claude session) |
-| POST | `/api/insights/:id/generate-prompt` | Generate action prompt via Haiku |
-| DELETE | `/api/insights/:id` | Delete insight |
+| GET | `/api/auto-evolves` | List auto-evolves (filter: status, target_type) |
+| GET | `/api/auto-evolves/stats` | Counts by status, target_type |
+| GET | `/api/auto-evolves/:id` | Single auto-evolve detail |
+| PUT | `/api/auto-evolves/:id/revert` | Revert promoted component |
+| GET | `/api/daily-reviews` | List daily reviews (filter: date, status, category) |
+| GET | `/api/daily-reviews/stats` | Counts by status, category, date |
+| GET | `/api/daily-reviews/:id` | Single daily review detail |
+| PUT | `/api/daily-reviews/:id/accept` | Accept suggestion |
+| PUT | `/api/daily-reviews/:id/dismiss` | Dismiss suggestion |
+| POST | `/api/daily-reviews/run` | Manual trigger daily review |
 | POST | `/api/scanner/run` | Run setup scan |
 | GET | `/api/scanner/latest` | Latest scan result |
 | GET | `/api/scanner/history?limit=` | Scan history |
@@ -150,8 +159,8 @@ open-pulse/
 - **Symlinks for Claude integration**: `claude/skills/*` → `~/.claude/skills/*` so the repo stays self-contained.
 - **Environment variables for testing**: `OPEN_PULSE_DB`, `OPEN_PULSE_DIR`, `OPEN_PULSE_CLAUDE_DIR` allow tests to use temp directories.
 - **`op-` prefix**: all main files use `op-` prefix to avoid naming conflicts.
-- **Unified insights**: instincts (from CL observer) and suggestions (from daily AI analysis) merged into single `insights` entity. Validate (+0.15) / reject (-0.2) confidence. 3 rejections auto-archives. Auto-classifies `target_type` (rule/hook/skill/agent/knowledge) via keyword matching.
-- **AI suggestion agent**: `scripts/op-suggestion-agent.js` exports usage data from SQLite, invokes Opus 4.6 (`claude --model opus --max-turns 1 --print`) for analysis across 8 categories (adoption, cleanup, agent_creation, update, optimization, integration, cost, security). Deterministic SHA-256 IDs for upsert-safe deduplication. Auto-resolves stale suggestions. Runs daily at 3 AM via launchd (`com.open-pulse.suggestion-agent`), also triggerable via API or CLI. Cost: ~$0.30/run.
+- **Split feedback loops**: Two independent flows replace the unified insights system. Flow 1 (auto-evolve): Observer-detected patterns auto-promote to rule/knowledge/skill when confidence >= 0.85 (blacklists agent/hook). Flow 2 (daily review): Comprehensive 3AM analysis reads all component files + work history, invokes Opus for suggestions stored in DB + markdown reports. Each flow has its own table, routes, and UI — zero shared code.
+- **Daily review agent**: `scripts/op-daily-review.js` reads full content of all component files (rules, skills, agents, hooks, memory, plugins) + best practices from `claude-code-knowledge` + day's work history. Invokes Opus for comprehensive analysis. Outputs: suggestions in `daily_reviews` table + markdown report in `reports/`. Runs daily at 3 AM via launchd, also triggerable via API. Replaces the old suggestion agent.
 - **3-tier retention**: hot (0-7d full data), warm (7-90d NULLs tool_input/response), cold (90d+ deleted). Configurable, runs daily.
 - **Cold start seeding**: 10 universal starter instincts + CLAUDE.md rule parser. Idempotent — skips existing files on reinstall.
 
@@ -208,4 +217,4 @@ Token rates per million tokens (in `op-collector.js`):
 - **Database**: better-sqlite3 (WAL mode, 3s busy timeout)
 - **Frontend**: Vanilla JS ES modules, Chart.js 4 (CDN)
 - **Tests**: Node.js built-in test runner (`node --test`)
-- **Service**: macOS launchd (com.open-pulse server + com.open-pulse.suggestion-agent daily 3 AM)
+- **Service**: macOS launchd (com.open-pulse server + com.open-pulse.daily-review daily 3 AM)
