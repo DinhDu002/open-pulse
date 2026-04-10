@@ -6,6 +6,7 @@ const {
   getKnowledgeStats,
   markKnowledgeEntryOutdated,
   deleteKnowledgeEntry,
+  purgeKnowledgeEntries,
   updateKnowledgeEntry,
 } = require('../db/knowledge-entries');
 
@@ -60,6 +61,19 @@ module.exports = async function knowledgeRoutes(app, opts) {
     if (!existing) return errorReply(reply, 404, 'Entry not found');
     markKnowledgeEntryOutdated(db, req.params.id);
     return getKnowledgeEntry(db, req.params.id);
+  });
+
+  // IMPORTANT: register /purge before /:id to avoid "purge" being captured as :id
+  app.delete('/api/knowledge/entries/purge', async (req, reply) => {
+    const { project } = req.query;
+    if (!project) return errorReply(reply, 400, 'project query parameter required');
+
+    const purged = purgeKnowledgeEntries(db, project);
+
+    // Also clear vault hashes so files get regenerated on next scan
+    db.prepare('DELETE FROM kg_vault_hashes WHERE project_id = ?').run(project);
+
+    return { purged };
   });
 
   app.delete('/api/knowledge/entries/:id', async (req, reply) => {

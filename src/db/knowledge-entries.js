@@ -176,6 +176,11 @@ function deleteKnowledgeEntry(db, id) {
   db.prepare('DELETE FROM knowledge_entries WHERE id = ?').run(id);
 }
 
+function purgeKnowledgeEntries(db, projectId) {
+  const result = db.prepare('DELETE FROM knowledge_entries WHERE project_id = ?').run(projectId);
+  return result.changes;
+}
+
 // ---------------------------------------------------------------------------
 // Helpers for dedup
 // ---------------------------------------------------------------------------
@@ -219,6 +224,7 @@ module.exports = {
   getKnowledgeStats,
   markKnowledgeEntryOutdated,
   deleteKnowledgeEntry,
+  purgeKnowledgeEntries,
   getExistingTitles,
   updateKnowledgeEntry,
 };

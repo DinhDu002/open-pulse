@@ -977,4 +977,28 @@ describe('knowledge entry API routes', () => {
     assert.ok(typeof proj.vault_file_count === 'number', 'should have vault_file_count');
     assert.ok(proj.entry_count >= 1, `entry_count should be >= 1, got ${proj.entry_count}`);
   });
+
+  it('DELETE /api/knowledge/entries/purge removes all entries for project', async () => {
+    // First verify entries exist
+    const before = await app.inject({ method: 'GET', url: '/api/knowledge/entries?project=proj-api-test' });
+    const beforeBody = JSON.parse(before.body);
+    assert.ok(beforeBody.total >= 1, 'should have entries before purge');
+
+    // Purge
+    const res = await app.inject({ method: 'DELETE', url: '/api/knowledge/entries/purge?project=proj-api-test' });
+    assert.equal(res.statusCode, 200);
+    const body = JSON.parse(res.body);
+    assert.ok(typeof body.purged === 'number');
+    assert.ok(body.purged >= 1, 'should purge at least 1 entry');
+
+    // Verify entries are gone
+    const after = await app.inject({ method: 'GET', url: '/api/knowledge/entries?project=proj-api-test' });
+    const afterBody = JSON.parse(after.body);
+    assert.equal(afterBody.total, 0, 'should have 0 entries after purge');
+  });
+
+  it('DELETE /api/knowledge/entries/purge returns 400 without project param', async () => {
+    const res = await app.inject({ method: 'DELETE', url: '/api/knowledge/entries/purge' });
+    assert.equal(res.statusCode, 400);
+  });
 });
