@@ -61,6 +61,7 @@ CREATE TABLE IF NOT EXISTS prompts (
   timestamp       TEXT    NOT NULL,
   event_count     INTEGER DEFAULT 0,
   total_cost_usd  REAL    DEFAULT 0,
+  total_tokens    INTEGER DEFAULT 0,
   duration_ms     INTEGER DEFAULT 0,
   FOREIGN KEY (session_id) REFERENCES sessions(session_id)
 );
@@ -165,6 +166,24 @@ CREATE TABLE IF NOT EXISTS kb_notes (
 );
 CREATE UNIQUE INDEX IF NOT EXISTS idx_kb_notes_project_slug ON kb_notes(project_id, slug);
 CREATE INDEX IF NOT EXISTS idx_kb_notes_project ON kb_notes(project_id);
+
+CREATE TABLE IF NOT EXISTS knowledge_entries (
+  id               TEXT PRIMARY KEY,
+  project_id       TEXT NOT NULL,
+  category         TEXT NOT NULL,
+  title            TEXT NOT NULL,
+  body             TEXT NOT NULL DEFAULT '',
+  source_file      TEXT,
+  source_prompt_id TEXT,
+  tags             TEXT DEFAULT '[]',
+  status           TEXT DEFAULT 'active',
+  created_at       TEXT NOT NULL,
+  updated_at       TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_ke_project  ON knowledge_entries(project_id);
+CREATE INDEX IF NOT EXISTS idx_ke_category ON knowledge_entries(category);
+CREATE INDEX IF NOT EXISTS idx_ke_status   ON knowledge_entries(status);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_ke_project_title ON knowledge_entries(project_id, title);
 
 CREATE TABLE IF NOT EXISTS auto_evolves (
   id                TEXT PRIMARY KEY,
@@ -301,6 +320,14 @@ function createDb(dbPath) {
   }
   // Ensure index exists regardless of whether column was just added or already present
   db.exec('CREATE INDEX IF NOT EXISTS idx_events_project ON events(project_name)');
+
+  // Migrate: add total_tokens column to prompts
+  const hasTokens = db.prepare(
+    "SELECT COUNT(*) AS cnt FROM pragma_table_info('prompts') WHERE name = 'total_tokens'"
+  ).get();
+  if (hasTokens.cnt === 0) {
+    db.exec('ALTER TABLE prompts ADD COLUMN total_tokens INTEGER DEFAULT 0');
+  }
 
   return db;
 }

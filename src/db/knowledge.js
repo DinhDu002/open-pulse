@@ -231,6 +231,8 @@ function getAllKbNoteSlugs(db, projectId) {
   ).all(projectId).map(r => r.slug);
 }
 
+const keModule = require('./knowledge-entries');
+
 module.exports = {
   upsertKgNode,
   upsertKgNodeBatch,
@@ -254,4 +256,5 @@ module.exports = {
   queryKbNotes,
   getKbNoteBacklinks,
   getAllKbNoteSlugs,
+  ...keModule,
 };
