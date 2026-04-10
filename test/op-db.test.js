@@ -446,6 +446,14 @@ describe('op-db', () => {
     }, /UNIQUE constraint/);
   });
 
+  it('idx_ke_project_title index uses COLLATE NOCASE', () => {
+    const idx = db.prepare(
+      "SELECT sql FROM sqlite_master WHERE type='index' AND name='idx_ke_project_title'"
+    ).get();
+    assert.ok(idx, 'index should exist');
+    assert.ok(idx.sql.includes('COLLATE NOCASE'), 'index should use COLLATE NOCASE');
+  });
+
   it('migration backfills project_name with basename fallback', () => {
     const Database = require('better-sqlite3');
     const tmpPath = path.join(os.tmpdir(), `op-db-backfill-basename-${Date.now()}.db`);
