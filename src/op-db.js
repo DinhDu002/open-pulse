@@ -117,30 +117,6 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_components_dedup
 CREATE INDEX IF NOT EXISTS idx_components_type   ON components (type);
 CREATE INDEX IF NOT EXISTS idx_components_source ON components (source);
 
-CREATE TABLE IF NOT EXISTS kg_nodes (
-  id          TEXT PRIMARY KEY,
-  type        TEXT NOT NULL,
-  name        TEXT NOT NULL,
-  properties  TEXT DEFAULT '{}',
-  created_at  TEXT NOT NULL,
-  updated_at  TEXT NOT NULL
-);
-CREATE INDEX IF NOT EXISTS idx_kg_nodes_type ON kg_nodes(type);
-
-CREATE TABLE IF NOT EXISTS kg_edges (
-  source_id     TEXT NOT NULL REFERENCES kg_nodes(id),
-  target_id     TEXT NOT NULL REFERENCES kg_nodes(id),
-  relationship  TEXT NOT NULL,
-  weight        REAL DEFAULT 1.0,
-  properties    TEXT DEFAULT '{}',
-  valid_from    TEXT,
-  valid_to      TEXT,
-  PRIMARY KEY (source_id, target_id, relationship)
-);
-CREATE INDEX IF NOT EXISTS idx_kg_edges_source ON kg_edges(source_id);
-CREATE INDEX IF NOT EXISTS idx_kg_edges_target ON kg_edges(target_id);
-CREATE INDEX IF NOT EXISTS idx_kg_edges_rel    ON kg_edges(relationship);
-
 CREATE TABLE IF NOT EXISTS kg_vault_hashes (
   project_id    TEXT NOT NULL,
   file_path     TEXT NOT NULL,
@@ -327,6 +303,17 @@ function createDb(dbPath) {
   ).get();
   if (hasTokens.cnt === 0) {
     db.exec('ALTER TABLE prompts ADD COLUMN total_tokens INTEGER DEFAULT 0');
+  }
+
+  // Migrate: drop kg_nodes and kg_edges (replaced by knowledge_entries)
+  const hasKgNodes = db.prepare(
+    "SELECT COUNT(*) AS cnt FROM sqlite_master WHERE type='table' AND name='kg_nodes'"
+  ).get();
+  if (hasKgNodes.cnt > 0) {
+    db.exec('DELETE FROM kg_edges');
+    db.exec('DELETE FROM kg_nodes');
+    db.exec('DROP TABLE IF EXISTS kg_edges');
+    db.exec('DROP TABLE IF EXISTS kg_nodes');
   }
 
   return db;

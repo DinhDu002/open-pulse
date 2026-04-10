@@ -186,59 +186,14 @@ describe('op-db', () => {
     assert.ok(all.length >= 2); // test-skill + test-agent
   });
 
-  it('creates knowledge graph tables', () => {
+  it('creates knowledge helper tables', () => {
     const tables = db.prepare(
       "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name"
     ).all().map(r => r.name);
-    assert.ok(tables.includes('kg_nodes'), 'kg_nodes table missing');
-    assert.ok(tables.includes('kg_edges'), 'kg_edges table missing');
+    assert.ok(!tables.includes('kg_nodes'), 'kg_nodes should be dropped');
+    assert.ok(!tables.includes('kg_edges'), 'kg_edges should be dropped');
     assert.ok(tables.includes('kg_vault_hashes'), 'kg_vault_hashes table missing');
     assert.ok(tables.includes('kg_sync_state'), 'kg_sync_state table missing');
-  });
-
-  it('upsertKgNode inserts and updates', () => {
-    mod.upsertKgNode(db, {
-      id: 'tool:Read', type: 'tool', name: 'Read',
-      properties: '{"invocations":10}',
-    });
-    const row = mod.getKgNode(db, 'tool:Read');
-    assert.equal(row.name, 'Read');
-    assert.equal(row.type, 'tool');
-    assert.equal(JSON.parse(row.properties).invocations, 10);
-
-    mod.upsertKgNode(db, {
-      id: 'tool:Read', type: 'tool', name: 'Read',
-      properties: '{"invocations":20}',
-    });
-    const updated = mod.getKgNode(db, 'tool:Read');
-    assert.equal(JSON.parse(updated.properties).invocations, 20);
-  });
-
-  it('upsertKgEdge inserts and accumulates weight', () => {
-    mod.upsertKgNode(db, { id: 'tool:Edit', type: 'tool', name: 'Edit', properties: '{}' });
-    mod.upsertKgEdge(db, {
-      source_id: 'tool:Read', target_id: 'tool:Edit',
-      relationship: 'triggers', weight: 5,
-    });
-    let edge = mod.getKgEdges(db, 'tool:Read');
-    assert.equal(edge.length, 1);
-    assert.equal(edge[0].weight, 5);
-
-    mod.upsertKgEdge(db, {
-      source_id: 'tool:Read', target_id: 'tool:Edit',
-      relationship: 'triggers', weight: 3,
-    });
-    edge = mod.getKgEdges(db, 'tool:Read');
-    assert.equal(edge[0].weight, 8);
-  });
-
-  it('getKgGraph returns filtered nodes and edges', () => {
-    const graph = mod.getKgGraph(db, {});
-    assert.ok(graph.nodes.length >= 2);
-    assert.ok(graph.edges.length >= 1);
-
-    const toolsOnly = mod.getKgGraph(db, { type: 'tool' });
-    assert.ok(toolsOnly.nodes.every(n => n.type === 'tool'));
   });
 
   it('upsertKgVaultHash and getKgVaultHash', () => {

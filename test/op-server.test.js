@@ -477,50 +477,6 @@ describe('op-server', () => {
     }
   });
 
-  describe('knowledge graph API', () => {
-    it('GET /api/knowledge/status returns stats', async () => {
-      const res = await app.inject({ method: 'GET', url: '/api/knowledge/status' });
-      assert.equal(res.statusCode, 200);
-      const body = JSON.parse(res.payload);
-      assert.ok('nodeCount' in body);
-      assert.ok('edgeCount' in body);
-    });
-
-    it('GET /api/knowledge/projects returns project list', async () => {
-      const res = await app.inject({ method: 'GET', url: '/api/knowledge/projects' });
-      assert.equal(res.statusCode, 200);
-      const body = JSON.parse(res.payload);
-      assert.ok(Array.isArray(body));
-    });
-
-    it('GET /api/knowledge/graph returns nodes and edges', async () => {
-      const res = await app.inject({ method: 'GET', url: '/api/knowledge/graph' });
-      assert.equal(res.statusCode, 200);
-      const body = JSON.parse(res.payload);
-      assert.ok('nodes' in body);
-      assert.ok('edges' in body);
-    });
-
-    it('POST /api/knowledge/sync triggers graph sync', async () => {
-      const res = await app.inject({ method: 'POST', url: '/api/knowledge/sync' });
-      assert.equal(res.statusCode, 200);
-      const body = JSON.parse(res.payload);
-      assert.ok('nodes' in body);
-    });
-
-    it('POST /api/knowledge/generate triggers vault generation', async () => {
-      const res = await app.inject({ method: 'POST', url: '/api/knowledge/generate' });
-      assert.equal(res.statusCode, 200);
-    });
-
-    it('GET /api/knowledge/config returns config values', async () => {
-      const res = await app.inject({ method: 'GET', url: '/api/knowledge/config' });
-      assert.equal(res.statusCode, 200);
-      const body = JSON.parse(res.payload);
-      assert.ok('knowledge_graph_interval_ms' in body);
-    });
-  });
-
   describe('GET /api/projects', () => {
     it('includes event-only projects', async () => {
       const dbMod = require('../src/op-db');
@@ -604,7 +560,7 @@ describe('op-server', () => {
   });
 
   describe('prompts API', () => {
-    it('GET /api/prompts returns paginated list', async () => {
+    it('GET /api/prompts returns paginated list with aggregates', async () => {
       const res = await app.inject({ method: 'GET', url: '/api/prompts?period=all' });
       assert.equal(res.statusCode, 200);
       const body = JSON.parse(res.body);
@@ -612,9 +568,16 @@ describe('op-server', () => {
       assert.ok(body.total > 0);
       assert.equal(body.page, 1);
       assert.equal(body.per_page, 20);
+      assert.equal(typeof body.total_events, 'number');
+      assert.equal(typeof body.total_cost, 'number');
+      assert.equal(typeof body.total_tokens, 'number');
+      assert.ok(body.total_events >= 0);
+      assert.ok(body.total_cost >= 0);
+      assert.ok(body.total_tokens >= 0);
       const p = body.prompts.find(p => p.prompt_text === 'add authentication');
       assert.ok(p);
       assert.equal(p.session_id, 'sess-prompt-api');
+      assert.equal(typeof p.total_tokens, 'number');
       assert.ok(p.event_breakdown);
     });
 
@@ -745,11 +708,6 @@ describe('op-server', () => {
       assert.equal(res.statusCode, 200);
       const body = JSON.parse(res.payload);
       assert.ok('port' in body);
-    });
-
-    it('GET /api/knowledge/status returns status', async () => {
-      const res = await app.inject({ method: 'GET', url: '/api/knowledge/status' });
-      assert.equal(res.statusCode, 200);
     });
 
     it('GET /api/unused returns paginated response', async () => {

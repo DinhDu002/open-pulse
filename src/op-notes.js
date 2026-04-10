@@ -122,26 +122,6 @@ function discoverRelevantContent(db, projectId, context) {
     }
   }
 
-  // Score auto-generated kg_nodes
-  const { nodes } = dbMod.getKgGraph(db);
-  for (const node of nodes) {
-    let score = 0;
-    const nameTokens = tokenize(node.name);
-    for (const ct of contextTokens) {
-      if (nameTokens.some(t => t.includes(ct) || ct.includes(t))) score += 2;
-    }
-    if (score > 0) {
-      results.push({
-        type: node.type,
-        id: node.id,
-        title: node.name,
-        excerpt: '',
-        score,
-        path: `${node.type}s/${node.name}.md`,
-      });
-    }
-  }
-
   results.sort((a, b) => b.score - a.score);
   return results.slice(0, 10);
 }

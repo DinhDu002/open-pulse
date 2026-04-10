@@ -29,10 +29,6 @@ describe('op-notes', () => {
       session_count: 1,
     });
 
-    // Seed some kg_nodes so autocomplete can find them
-    dbMod.upsertKgNode(db, { id: 'tool:Read', type: 'tool', name: 'Read', properties: '{}' });
-    dbMod.upsertKgNode(db, { id: 'tool:Edit', type: 'tool', name: 'Edit', properties: '{}' });
-    dbMod.upsertKgNode(db, { id: 'component:code-reviewer', type: 'component', name: 'code-reviewer', properties: '{}' });
   });
 
   after(() => {
@@ -208,32 +204,6 @@ describe('op-notes', () => {
     // Should find notes matching keywords
     const slugs = results.map(r => r.title);
     assert.ok(slugs.some(s => s.includes('API') || s.includes('Deployment')));
-  });
-
-  // --- Graph sync ---
-
-  it('syncNoteToGraph creates kg_node and kg_edges for backlinks', () => {
-    // Restore body with backlink (was cleared by update test)
-    dbMod.updateKbNote(db, 'note:test-1', { body: '# Updated\n\nSee [[tools/Read]] for details.' });
-    const note = dbMod.getKbNote(db, 'note:test-1');
-    notes.syncNoteToGraph(db, note);
-
-    const kgNode = dbMod.getKgNode(db, 'note:api-patterns');
-    assert.ok(kgNode, 'kg_node should exist');
-    assert.equal(kgNode.type, 'note');
-    assert.equal(kgNode.name, note.title);
-
-    // note:test-1 body has [[tools/Read]] — should create edge to tool:Read
-    const edges = dbMod.getKgEdges(db, 'note:api-patterns');
-    const refEdges = edges.filter(e => e.relationship === 'references');
-    assert.ok(refEdges.length > 0, 'should have reference edges');
-    assert.ok(refEdges.some(e => e.target_id === 'tool:Read'), 'should reference tool:Read');
-  });
-
-  it('removeNoteFromGraph removes kg_node and edges', () => {
-    notes.removeNoteFromGraph(db, 'api-patterns');
-    const kgNode = dbMod.getKgNode(db, 'note:api-patterns');
-    assert.equal(kgNode, null, 'kg_node should be removed');
   });
 
   // --- Slug collision ---
