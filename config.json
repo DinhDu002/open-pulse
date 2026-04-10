@@ -7,7 +7,7 @@
   "retention_warm_days": 7,
   "retention_cold_days": 90,
   "suggestion_agent_model": "opus",
-  "suggestion_agent_timeout_ms": 180000,
+  "suggestion_agent_timeout_ms": 300000,
   "suggestion_agent_max_suggestions": 25,
   "knowledge_graph_interval_ms": 300000,
   "knowledge_vault_interval_ms": 900000,
@@ -15,5 +15,12 @@
   "knowledge_pattern_min_occurrences": 5,
   "knowledge_session_lookback_days": 30,
   "knowledge_instinct_min_confidence": 0.3,
-  "knowledge_vault_max_index_items": 10
+  "knowledge_vault_max_index_items": 10,
+  "auto_evolve_enabled": true,
+  "auto_evolve_blacklist": ["agent", "hook"],
+  "auto_evolve_min_confidence": 0.85,
+  "daily_review_enabled": true,
+  "daily_review_model": "opus",
+  "daily_review_timeout_ms": 300000,
+  "daily_review_max_suggestions": 25
 }

@@ -12,6 +12,7 @@ const { ingestAll } = require('./op-ingest');
 const { runRetention } = require('./op-retention');
 const { parseQualifiedName } = require('./op-helpers');
 const { runPromotionCheck } = require('./op-promote');
+const { syncInstincts, runAutoEvolve } = require('./op-auto-evolve');
 const {
   syncAll,
   syncComponentsWithDb,
@@ -97,6 +98,22 @@ function buildApp(opts = {}) {
       try { runPromotionCheck(db); } catch { /* non-critical */ }
     }, config.cl_sync_interval_ms || 60000));
 
+    // Auto-evolve timer: sync instincts + auto-promote
+    if (config.auto_evolve_enabled !== false) {
+      const instinctDir = path.join(REPO_DIR, 'cl', 'instincts');
+      const logDir = path.join(REPO_DIR, 'logs');
+      timers.push(setInterval(() => {
+        try {
+          syncInstincts(db, instinctDir, config.auto_evolve_blacklist || ['agent', 'hook']);
+          runAutoEvolve(db, {
+            min_confidence: config.auto_evolve_min_confidence || 0.85,
+            blacklist: config.auto_evolve_blacklist || ['agent', 'hook'],
+            logDir,
+          });
+        } catch { /* non-critical */ }
+      }, config.cl_sync_interval_ms || 60000));
+    }
+
     // Retention: run once on startup, then daily
     const retentionOpts = {
       warmDays: config.retention_warm_days ?? 7,
@@ -147,6 +164,8 @@ function buildApp(opts = {}) {
   app.register(require('./routes/inventory'), routeOpts);
   app.register(require('./routes/insights'), routeOpts);
   app.register(require('./routes/knowledge'), routeOpts);
+  app.register(require('./routes/auto-evolves'), routeOpts);
+  app.register(require('./routes/daily-reviews'), routeOpts);
 
   // ── Cleanup on close ───────────────────────────────────────────────────
 
