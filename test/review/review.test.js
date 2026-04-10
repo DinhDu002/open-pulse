@@ -162,4 +162,14 @@ describe('op-daily-review', () => {
     const rows = db.prepare("SELECT * FROM daily_reviews WHERE title = 'Use TDD' AND review_date = '2026-04-10'").all();
     assert.equal(rows.length, 1);
   });
+
+  // -- daily_review_insights table --
+
+  it('daily_review_insights table exists with correct columns', () => {
+    const cols = db.prepare("SELECT name FROM pragma_table_info('daily_review_insights')").all().map(c => c.name);
+    const expected = ['id', 'review_date', 'insight_type', 'title', 'description', 'projects', 'target_type', 'severity', 'reasoning', 'summary_vi', 'status', 'created_at'];
+    for (const col of expected) {
+      assert.ok(cols.includes(col), `Missing column: ${col}`);
+    }
+  });
 });

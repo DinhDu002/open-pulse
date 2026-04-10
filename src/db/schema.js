@@ -180,6 +180,24 @@ CREATE TABLE IF NOT EXISTS daily_reviews (
 );
 CREATE INDEX IF NOT EXISTS idx_daily_reviews_date ON daily_reviews(review_date);
 CREATE INDEX IF NOT EXISTS idx_daily_reviews_status ON daily_reviews(status);
+
+CREATE TABLE IF NOT EXISTS daily_review_insights (
+  id                TEXT PRIMARY KEY,
+  review_date       TEXT NOT NULL,
+  insight_type      TEXT NOT NULL,
+  title             TEXT NOT NULL,
+  description       TEXT,
+  projects          TEXT,
+  target_type       TEXT,
+  severity          TEXT DEFAULT 'info',
+  reasoning         TEXT,
+  summary_vi        TEXT,
+  status            TEXT DEFAULT 'pending',
+  created_at        TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_dri_date ON daily_review_insights(review_date);
+CREATE INDEX IF NOT EXISTS idx_dri_type ON daily_review_insights(insight_type);
+CREATE INDEX IF NOT EXISTS idx_dri_status ON daily_review_insights(status);
 `;
 
 // ---------------------------------------------------------------------------

@@ -24,5 +24,6 @@
   "daily_review_enabled": true,
   "daily_review_model": "opus",
   "daily_review_timeout_ms": 300000,
-  "daily_review_max_suggestions": 25
+  "daily_review_max_suggestions": 25,
+  "daily_review_history_days": 1
 }
