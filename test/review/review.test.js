@@ -128,7 +128,7 @@ describe('op-daily-review', () => {
       max_suggestions: 25,
     });
     assert.ok(prompt.includes('Daily Review'));
-    assert.ok(prompt.includes('Work History Today'));
+    assert.ok(prompt.includes('Work History'));
     assert.ok(prompt.includes('Rules'));
     assert.ok(prompt.includes('Best Practices'));
   });
@@ -305,5 +305,56 @@ describe('op-daily-review', () => {
     assert.ok(configs['fake-project']);
     assert.ok(configs['fake-project'].claudeMd.includes('Fake Project'));
     assert.ok(configs['fake-project'].rules.length >= 1);
+  });
+
+  // -- parseReviewOutput --
+
+  it('parseReviewOutput parses labeled suggestions + insights blocks', () => {
+    const output = [
+      'Analysis:',
+      '```json suggestions',
+      '[{"category":"cleanup","title":"Remove unused","description":"d","target_type":"rule","action":"remove","confidence":0.8,"reasoning":"r","summary_vi":"v"}]',
+      '```',
+      '',
+      '```json insights',
+      '[{"insight_type":"duplicate","title":"Dup rule","description":"d","projects":["a","b"],"target_type":"rule","severity":"warning","reasoning":"r","summary_vi":"v"}]',
+      '```',
+    ].join('\n');
+    const result = review.parseReviewOutput(output);
+    assert.equal(result.suggestions.length, 1);
+    assert.equal(result.suggestions[0].title, 'Remove unused');
+    assert.equal(result.insights.length, 1);
+    assert.equal(result.insights[0].title, 'Dup rule');
+  });
+
+  it('parseReviewOutput falls back to single block as suggestions', () => {
+    const output = '```json\n[{"category":"cleanup","title":"Test","description":"d","target_type":"rule","action":"remove","confidence":0.5,"reasoning":"r"}]\n```';
+    const result = review.parseReviewOutput(output);
+    assert.equal(result.suggestions.length, 1);
+    assert.deepEqual(result.insights, []);
+  });
+
+  it('parseReviewOutput returns empty for invalid output', () => {
+    const result = review.parseReviewOutput('not json');
+    assert.deepEqual(result.suggestions, []);
+    assert.deepEqual(result.insights, []);
+  });
+
+  it('buildPrompt includes project configs section', () => {
+    const history = review.collectWorkHistory(db, new Date().toISOString().slice(0, 10));
+    const components = review.scanAllComponents(TEST_CLAUDE_DIR);
+    const practices = review.loadBestPractices(REPO_DIR);
+    const projectConfigs = { 'fake-project': { directory: '/tmp', claudeMd: '# Fake', rules: [], skills: [], agents: [], knowledge: [], hooks: [] } };
+    const prompt = review.buildPrompt(history, components, practices, {
+      date: '2026-04-10',
+      max_suggestions: 25,
+      projectConfigs,
+      historyDays: 1,
+    });
+    assert.ok(prompt.includes('Project Configurations'), 'Should have project configs section');
+    assert.ok(prompt.includes('fake-project'), 'Should include project name');
+    assert.ok(prompt.includes('# Fake'), 'Should include project CLAUDE.md content');
+    assert.ok(prompt.includes('json suggestions'), 'Should have labeled suggestions block');
+    assert.ok(prompt.includes('json insights'), 'Should have labeled insights block');
   });
 });

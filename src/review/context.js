@@ -202,7 +202,7 @@ function scanProjectConfigs(db, registryPath) {
 // ---------------------------------------------------------------------------
 
 function buildPrompt(history, components, practices, opts = {}) {
-  const { date = new Date().toISOString().slice(0, 10), max_suggestions = 25 } = opts;
+  const { date = new Date().toISOString().slice(0, 10), max_suggestions = 25, projectConfigs = {}, historyDays = 1 } = opts;
 
   const templatePath = path.join(__dirname, 'prompt.md');
   let template = fs.readFileSync(templatePath, 'utf8');
@@ -210,10 +210,33 @@ function buildPrompt(history, components, practices, opts = {}) {
   const formatComponents = (items) =>
     items.map(c => `#### ${c.name}\n\`\`\`\n${c.content}\n\`\`\``).join('\n\n');
 
+  // Format project configs section
+  const projectNames = Object.keys(projectConfigs);
+  let projectContent = 'None';
+  if (projectNames.length > 0) {
+    const sections = [];
+    for (const [name, cfg] of Object.entries(projectConfigs)) {
+      const parts = [`### Project: ${name} (${cfg.directory})`];
+      if (cfg.claudeMd) parts.push(`#### CLAUDE.md\n\`\`\`\n${cfg.claudeMd}\n\`\`\``);
+      if (cfg.rules.length) parts.push(`#### Rules (${cfg.rules.length})\n${formatComponents(cfg.rules)}`);
+      if (cfg.skills.length) parts.push(`#### Skills (${cfg.skills.length})\n${formatComponents(cfg.skills)}`);
+      if (cfg.agents.length) parts.push(`#### Agents (${cfg.agents.length})\n${formatComponents(cfg.agents)}`);
+      if (cfg.knowledge.length) parts.push(`#### Knowledge (${cfg.knowledge.length})\n${formatComponents(cfg.knowledge)}`);
+      if (cfg.hooks.length) parts.push(`#### Hooks\n${JSON.stringify(cfg.hooks, null, 2)}`);
+      sections.push(parts.join('\n\n'));
+    }
+    projectContent = sections.join('\n\n---\n\n');
+  }
+
+  const startDate = history.startDate || date;
+  const dateRange = startDate === date ? date : `${startDate} → ${date}`;
+
   const replacements = {
     '{{date}}': date,
+    '{{history_days}}': String(historyDays),
+    '{{date_range}}': dateRange,
     '{{work_history_json}}': JSON.stringify({
-      events: history.events.slice(0, 200),
+      events: history.events,
       sessions: history.sessions,
       totalCost: history.totalCost,
     }, null, 2),
@@ -227,6 +250,8 @@ function buildPrompt(history, components, practices, opts = {}) {
     '{{memory_content}}': formatComponents(components.memory) || 'None',
     '{{plugin_count}}': String(components.plugins.length),
     '{{plugins_content}}': JSON.stringify(components.plugins, null, 2),
+    '{{project_count}}': String(projectNames.length),
+    '{{project_configs_content}}': projectContent,
     '{{claude_code_knowledge}}': practices.map(p => `### ${p.name}\n${p.content}`).join('\n\n'),
     '{{max_suggestions}}': String(max_suggestions),
   };

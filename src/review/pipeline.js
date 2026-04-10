@@ -35,6 +35,35 @@ function parseSuggestions(output) {
   }
 }
 
+function parseReviewOutput(output) {
+  if (!output || typeof output !== 'string') return { suggestions: [], insights: [] };
+
+  // Try labeled blocks first: ```json suggestions and ```json insights
+  const sugMatch = output.match(/```json\s+suggestions\s*\n([\s\S]*?)\n```/);
+  const insMatch = output.match(/```json\s+insights\s*\n([\s\S]*?)\n```/);
+
+  if (sugMatch || insMatch) {
+    let suggestions = [];
+    let insights = [];
+    if (sugMatch) {
+      try {
+        const parsed = JSON.parse(sugMatch[1].trim());
+        if (Array.isArray(parsed)) suggestions = parsed.filter(s => s && s.title && s.category);
+      } catch { /* ignore */ }
+    }
+    if (insMatch) {
+      try {
+        const parsed = JSON.parse(insMatch[1].trim());
+        if (Array.isArray(parsed)) insights = parsed.filter(i => i && i.title && i.insight_type);
+      } catch { /* ignore */ }
+    }
+    return { suggestions, insights };
+  }
+
+  // Fallback: single unlabeled block treated as suggestions
+  return { suggestions: parseSuggestions(output), insights: [] };
+}
+
 function makeReviewId(title, date) {
   const hash = crypto
     .createHash('sha256')
@@ -240,6 +269,7 @@ module.exports = {
   loadBestPractices,
   buildPrompt,
   parseSuggestions,
+  parseReviewOutput,
   saveSuggestions,
   writeReport,
   makeReviewId,
