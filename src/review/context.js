@@ -134,6 +134,65 @@ function loadBestPractices(repoDir) {
 }
 
 // ---------------------------------------------------------------------------
+// Phase 5: Discover + scan project configs
+// ---------------------------------------------------------------------------
+
+function discoverProjectPaths(db, registryPath) {
+  const projects = db.prepare('SELECT name, directory FROM cl_projects WHERE directory IS NOT NULL').all();
+
+  // Merge with projects.json if available
+  const regPath = registryPath || path.join(REPO_DIR, 'projects.json');
+  if (fs.existsSync(regPath)) {
+    try {
+      const registry = JSON.parse(fs.readFileSync(regPath, 'utf8'));
+      const knownDirs = new Set(projects.map(p => p.directory));
+      for (const [, proj] of Object.entries(registry)) {
+        if (proj.root && !knownDirs.has(proj.root)) {
+          projects.push({ name: proj.name || path.basename(proj.root), directory: proj.root });
+          knownDirs.add(proj.root);
+        }
+      }
+    } catch { /* ignore parse errors */ }
+  }
+
+  return projects.filter(p => fs.existsSync(p.directory));
+}
+
+function scanOneProject(projectDir) {
+  let claudeMd = '';
+  const claudeMdPath = path.join(projectDir, 'CLAUDE.md');
+  if (fs.existsSync(claudeMdPath)) {
+    claudeMd = fs.readFileSync(claudeMdPath, 'utf8');
+  }
+
+  const dotClaude = path.join(projectDir, '.claude');
+  const rules = readDirFiles(path.join(dotClaude, 'rules'));
+  const skills = readDirFiles(path.join(dotClaude, 'skills'));
+  const agents = readDirFiles(path.join(dotClaude, 'agents'));
+  const knowledge = readDirFiles(path.join(dotClaude, 'knowledge'));
+
+  let hooks = [];
+  const settingsPath = path.join(dotClaude, 'settings.json');
+  if (fs.existsSync(settingsPath)) {
+    try {
+      const settings = JSON.parse(fs.readFileSync(settingsPath, 'utf8'));
+      hooks = settings.hooks || [];
+    } catch { /* ignore */ }
+  }
+
+  return { claudeMd, rules, skills, agents, knowledge, hooks };
+}
+
+function scanProjectConfigs(db, registryPath) {
+  const paths = discoverProjectPaths(db, registryPath);
+  const configs = {};
+  for (const { name, directory } of paths) {
+    configs[name] = { directory, ...scanOneProject(directory) };
+  }
+  return configs;
+}
+
+// ---------------------------------------------------------------------------
 // Phase 4: Build prompt
 // ---------------------------------------------------------------------------
 
@@ -181,4 +240,7 @@ module.exports = {
   buildPrompt,
   // exposed for tests via pipeline re-export
   readDirFiles,
+  discoverProjectPaths,
+  scanOneProject,
+  scanProjectConfigs,
 };

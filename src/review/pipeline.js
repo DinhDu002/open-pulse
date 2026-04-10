@@ -5,7 +5,10 @@ const fs = require('fs');
 const crypto = require('crypto');
 const { execFileSync } = require('child_process');
 
-const { collectWorkHistory, scanAllComponents, loadBestPractices, buildPrompt } = require('./context');
+const {
+  collectWorkHistory, scanAllComponents, loadBestPractices, buildPrompt,
+  discoverProjectPaths, scanOneProject, scanProjectConfigs,
+} = require('./context');
 const {
   queryDailyReviews, getDailyReview, updateDailyReviewStatus, getDailyReviewStats,
   queryInsights, getInsight, updateInsightStatus, getInsightStats,
@@ -251,4 +254,7 @@ module.exports = {
   getInsight,
   updateInsightStatus,
   getInsightStats,
+  discoverProjectPaths,
+  scanOneProject,
+  scanProjectConfigs,
 };

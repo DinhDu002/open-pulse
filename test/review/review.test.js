@@ -9,6 +9,7 @@ const os = require('os');
 const TEST_DIR = path.join(os.tmpdir(), `op-daily-review-test-${Date.now()}`);
 const TEST_DB = path.join(TEST_DIR, 'test.db');
 const TEST_CLAUDE_DIR = path.join(TEST_DIR, 'claude');
+const TEST_PROJECT_DIR = path.join(TEST_DIR, 'fake-project');
 const REPO_DIR = path.join(__dirname, '../..');
 
 describe('op-daily-review', () => {
@@ -25,8 +26,20 @@ describe('op-daily-review', () => {
     fs.writeFileSync(path.join(TEST_CLAUDE_DIR, 'agents', 'test-agent.md'), '---\nname: test\n---\nTest agent.');
     fs.writeFileSync(path.join(TEST_CLAUDE_DIR, 'skills', 'test-skill', 'SKILL.md'), '---\nname: test\n---\nTest skill.');
 
+    // Seed project directory for scanning tests
+    fs.mkdirSync(path.join(TEST_PROJECT_DIR, '.claude', 'rules'), { recursive: true });
+    fs.mkdirSync(path.join(TEST_PROJECT_DIR, '.claude', 'agents'), { recursive: true });
+    fs.writeFileSync(path.join(TEST_PROJECT_DIR, 'CLAUDE.md'), '# Fake Project\nProject instructions.');
+    fs.writeFileSync(path.join(TEST_PROJECT_DIR, '.claude', 'rules', 'style.md'), '# Style\nUse tabs.');
+    fs.writeFileSync(path.join(TEST_PROJECT_DIR, '.claude', 'agents', 'helper.md'), '---\nname: helper\n---\nHelper agent.');
+
     db = require('../../src/db/schema').createDb(TEST_DB);
     review = require('../../src/review/pipeline');
+
+    // Seed cl_projects for project scanning tests
+    db.prepare(
+      'INSERT INTO cl_projects (project_id, name, directory, first_seen_at, last_seen_at, session_count) VALUES (?, ?, ?, ?, ?, ?)'
+    ).run('proj-1', 'fake-project', TEST_PROJECT_DIR, new Date().toISOString(), new Date().toISOString(), 5);
 
     // Seed some events for today
     const today = new Date().toISOString();
@@ -225,5 +238,51 @@ describe('op-daily-review', () => {
     const stats = review.getInsightStats(db);
     assert.ok(Array.isArray(stats.byType));
     assert.ok(Array.isArray(stats.bySeverity));
+  });
+
+  // -- discoverProjectPaths --
+
+  it('discoverProjectPaths finds projects from cl_projects', () => {
+    const paths = review.discoverProjectPaths(db);
+    assert.ok(paths.length >= 1);
+    const found = paths.find(p => p.name === 'fake-project');
+    assert.ok(found, 'Should find fake-project');
+    assert.equal(found.directory, TEST_PROJECT_DIR);
+  });
+
+  it('discoverProjectPaths filters out non-existent directories', () => {
+    db.prepare(
+      'INSERT OR IGNORE INTO cl_projects (project_id, name, directory, first_seen_at, last_seen_at, session_count) VALUES (?, ?, ?, ?, ?, ?)'
+    ).run('proj-ghost', 'ghost', '/nonexistent/path', new Date().toISOString(), new Date().toISOString(), 0);
+    const paths = review.discoverProjectPaths(db);
+    const found = paths.find(p => p.name === 'ghost');
+    assert.ok(!found, 'Should not include nonexistent directory');
+  });
+
+  // -- scanOneProject --
+
+  it('scanOneProject reads project CLAUDE.md and .claude/ components', () => {
+    const result = review.scanOneProject(TEST_PROJECT_DIR);
+    assert.ok(result.claudeMd.includes('Fake Project'));
+    assert.ok(result.rules.length >= 1);
+    assert.ok(result.rules[0].content.includes('Use tabs'));
+    assert.ok(result.agents.length >= 1);
+  });
+
+  it('scanOneProject returns empty for project without .claude/', () => {
+    const emptyDir = path.join(TEST_DIR, 'empty-project');
+    fs.mkdirSync(emptyDir, { recursive: true });
+    const result = review.scanOneProject(emptyDir);
+    assert.equal(result.claudeMd, '');
+    assert.deepEqual(result.rules, []);
+  });
+
+  // -- scanProjectConfigs --
+
+  it('scanProjectConfigs returns configs keyed by project name', () => {
+    const configs = review.scanProjectConfigs(db);
+    assert.ok(configs['fake-project']);
+    assert.ok(configs['fake-project'].claudeMd.includes('Fake Project'));
+    assert.ok(configs['fake-project'].rules.length >= 1);
   });
 });
