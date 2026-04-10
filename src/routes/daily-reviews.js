@@ -3,6 +3,7 @@
 const {
   queryDailyReviews, getDailyReview, updateDailyReviewStatus,
   getDailyReviewStats, runDailyReview,
+  queryInsights, getInsight, updateInsightStatus, getInsightStats,
 } = require('../review/pipeline');
 
 module.exports = async function dailyReviewRoutes(app, opts) {
@@ -55,11 +56,49 @@ module.exports = async function dailyReviewRoutes(app, opts) {
         model: config.daily_review_model || 'opus',
         timeout: config.daily_review_timeout_ms || 300000,
         max_suggestions: config.daily_review_max_suggestions || 25,
+        historyDays: config.daily_review_history_days || 1,
       });
       if (result.error) return errorReply(reply, 500, result.error);
       reply.send(result);
     } catch (err) {
       return errorReply(reply, 500, err.message);
     }
+  });
+
+  // --- Insight routes ---
+
+  // GET /api/daily-reviews/insights/stats — MUST be before /:id
+  app.get('/api/daily-reviews/insights/stats', (req, reply) => {
+    reply.send(getInsightStats(db));
+  });
+
+  // GET /api/daily-reviews/insights
+  app.get('/api/daily-reviews/insights', (req, reply) => {
+    const { review_date, insight_type, status, severity } = req.query;
+    const { page, perPage } = parsePagination(req.query);
+    reply.send(queryInsights(db, { review_date, insight_type, status, severity, page, per_page: perPage }));
+  });
+
+  // GET /api/daily-reviews/insights/:id
+  app.get('/api/daily-reviews/insights/:id', (req, reply) => {
+    const row = getInsight(db, req.params.id);
+    if (!row) return errorReply(reply, 404, 'Insight not found');
+    reply.send(row);
+  });
+
+  // PUT /api/daily-reviews/insights/:id/resolve
+  app.put('/api/daily-reviews/insights/:id/resolve', (req, reply) => {
+    const row = getInsight(db, req.params.id);
+    if (!row) return errorReply(reply, 404, 'Insight not found');
+    updateInsightStatus(db, req.params.id, 'resolved');
+    reply.send(getInsight(db, req.params.id));
+  });
+
+  // PUT /api/daily-reviews/insights/:id/dismiss
+  app.put('/api/daily-reviews/insights/:id/dismiss', (req, reply) => {
+    const row = getInsight(db, req.params.id);
+    if (!row) return errorReply(reply, 404, 'Insight not found');
+    updateInsightStatus(db, req.params.id, 'dismissed');
+    reply.send(getInsight(db, req.params.id));
   });
 };
