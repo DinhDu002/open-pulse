@@ -4,7 +4,6 @@ import { get } from './api.js';
 
 const SECTIONS = [
   { key: 'instincts', label: 'Instincts' },
-  { key: 'suggestions', label: 'Suggestions' },
 ];
 
 let root = null;
@@ -13,7 +12,6 @@ let currentSection = 'instincts';
 
 const loaders = {
   instincts: () => import('./learning-instincts.js'),
-  suggestions: () => import('./learning-suggestions.js'),
 };
 let loadedModules = {};
 
@@ -29,11 +27,9 @@ async function loadStats(statsEl) {
   try {
     var results = await Promise.all([
       get('/instincts?per_page=1'),
-      get('/suggestions?status=pending'),
     ]);
     statsEl.innerHTML =
-      '<div>Instincts: <span>' + results[0].total + '</span></div>' +
-      '<div>Pending: <span>' + results[1].length + '</span></div>';
+      '<div>Instincts: <span>' + results[0].total + '</span></div>';
   } catch(e) { statsEl.innerHTML = '<div>Stats unavailable</div>'; }
 }
 

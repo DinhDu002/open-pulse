@@ -25,7 +25,7 @@ describe('op-ingest', () => {
   });
 
   beforeEach(() => {
-    for (const f of ['events.jsonl', 'insights.jsonl']) {
+    for (const f of ['events.jsonl']) {
       const p = path.join(TEST_DIR, 'data', f);
       for (const suffix of ['', '.processing', '.retries', '.failed']) {
         const fp = p + suffix;
@@ -51,20 +51,6 @@ describe('op-ingest', () => {
     assert.equal(rows.length, 1);
   });
 
-  it('ingestFile processes insights.jsonl into DB', () => {
-    const filePath = path.join(TEST_DIR, 'data', 'insights.jsonl');
-    const insight = {
-      id: 'insight-ingest-1', source: 'daily_analysis', category: 'optimization',
-      title: 'Optimize query', description: 'Database query can be optimized', confidence: 0.7,
-    };
-    fs.writeFileSync(filePath, JSON.stringify(insight) + '\n');
-    const result = ingest.ingestFile(db, filePath, 'insights');
-    assert.equal(result.processed, 1);
-    const rows = db.prepare('SELECT * FROM insights WHERE id = ?').all('insight-ingest-1');
-    assert.equal(rows.length, 1);
-    assert.equal(rows[0].source, 'daily_analysis');
-  });
-
   it('ingestFile skips empty/missing file', () => {
     const filePath = path.join(TEST_DIR, 'data', 'nonexistent.jsonl');
     const result = ingest.ingestFile(db, filePath, 'events');
@@ -87,29 +73,6 @@ describe('op-ingest', () => {
     assert.equal(row.tool_input, '{"command":"npm test"}');
     assert.equal(row.tool_response, 'All 37 tests passed');
     assert.equal(row.seq_num, 5);
-  });
-
-  it('ingestFile upsert increments observation_count on re-ingest of same insight ID', () => {
-    const filePath = path.join(TEST_DIR, 'data', 'insights.jsonl');
-    const insight = {
-      id: 'insight-upsert-1', source: 'daily_analysis', category: 'optimization',
-      title: 'Optimize query', description: 'original description', confidence: 0.6,
-    };
-    fs.writeFileSync(filePath, JSON.stringify(insight) + '\n');
-    ingest.ingestFile(db, filePath, 'insights');
-
-    const before = db.prepare('SELECT * FROM insights WHERE id = ?').get('insight-upsert-1');
-    assert.equal(before.observation_count, 1);
-
-    // Re-ingest same insight ID with updated fields
-    const updated = { ...insight, confidence: 0.8, description: 'updated description' };
-    fs.writeFileSync(filePath, JSON.stringify(updated) + '\n');
-    ingest.ingestFile(db, filePath, 'insights');
-
-    const row = db.prepare('SELECT * FROM insights WHERE id = ?').get('insight-upsert-1');
-    assert.equal(row.observation_count, 2, 'observation_count should increment on upsert');
-    assert.equal(row.confidence, 0.8, 'confidence should be updated');
-    assert.equal(row.description, 'updated description', 'description should be updated');
   });
 
   it('ingestFile handles malformed lines', () => {

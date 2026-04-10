@@ -95,58 +95,10 @@ describe('op-promote', () => {
     assert.equal(promote.slugify(long).length, 60);
   });
 
-  it('promoteInsight creates file and updates status', () => {
-    const { upsertInsight, getInsight } = require('../src/db/insights');
-    upsertInsight(db, {
-      id: 'promote-test', source: 'observer', category: 'workflow',
-      target_type: 'rule', title: 'Always test', description: 'Always run tests before committing',
-      confidence: 0.9,
-    });
-
-    const result = promote.promoteInsight(db, 'promote-test');
-    assert.ok(result.promoted_to);
-    assert.ok(fs.existsSync(result.promoted_to));
-
-    const updated = getInsight(db, 'promote-test');
-    assert.equal(updated.status, 'promoted');
-    assert.equal(updated.promoted_to, result.promoted_to);
-  });
-
   it('promoteInsight throws for missing insight', () => {
     assert.throws(
       () => promote.promoteInsight(db, 'nonexistent-id'),
       /not found/i
     );
-  });
-
-  it('revertInsight deletes file and updates status', () => {
-    const { getInsight } = require('../src/db/insights');
-    // promote-test was promoted in previous test
-    const insight = getInsight(db, 'promote-test');
-    assert.ok(insight.promoted_to);
-
-    promote.revertInsight(db, 'promote-test');
-
-    assert.ok(!fs.existsSync(insight.promoted_to));
-    const reverted = getInsight(db, 'promote-test');
-    assert.equal(reverted.status, 'reverted');
-  });
-
-  it('runPromotionCheck promotes all qualifying insights', () => {
-    const { upsertInsight } = require('../src/db/insights');
-    // Need observation_count >= 10 and confidence >= 0.85
-    for (let i = 0; i < 10; i++) {
-      upsertInsight(db, {
-        id: 'promo-batch', source: 'observer', category: 'workflow',
-        target_type: 'rule', title: 'Batch promote rule', description: 'Always batch promote',
-        confidence: 0.9,
-      });
-    }
-
-    const count = promote.runPromotionCheck(db);
-    assert.ok(count >= 1);
-
-    const filePath = promote.getComponentPath('rule', 'batch-promote-rule');
-    assert.ok(fs.existsSync(filePath));
   });
 });

@@ -165,29 +165,6 @@ CREATE TABLE IF NOT EXISTS kb_notes (
 CREATE UNIQUE INDEX IF NOT EXISTS idx_kb_notes_project_slug ON kb_notes(project_id, slug);
 CREATE INDEX IF NOT EXISTS idx_kb_notes_project ON kb_notes(project_id);
 
-CREATE TABLE IF NOT EXISTS insights (
-  id                TEXT PRIMARY KEY,
-  source            TEXT NOT NULL,
-  category          TEXT NOT NULL,
-  target_type       TEXT,
-  title             TEXT NOT NULL,
-  description       TEXT NOT NULL,
-  confidence        REAL DEFAULT 0.3,
-  observation_count INTEGER DEFAULT 1,
-  validation_count  INTEGER DEFAULT 0,
-  rejection_count   INTEGER DEFAULT 0,
-  status            TEXT DEFAULT 'active',
-  action_data       TEXT,
-  promoted_to       TEXT,
-  project_id        TEXT,
-  created_at        TEXT NOT NULL,
-  updated_at        TEXT NOT NULL
-);
-CREATE INDEX IF NOT EXISTS idx_insights_source ON insights(source);
-CREATE INDEX IF NOT EXISTS idx_insights_status ON insights(status);
-CREATE INDEX IF NOT EXISTS idx_insights_target ON insights(target_type);
-CREATE INDEX IF NOT EXISTS idx_insights_project ON insights(project_id);
-
 CREATE TABLE IF NOT EXISTS auto_evolves (
   id                TEXT PRIMARY KEY,
   title             TEXT NOT NULL,
@@ -253,6 +230,7 @@ function createDb(dbPath) {
   }
   // Drop legacy tables (no longer used)
   db.exec('DROP TABLE IF EXISTS cl_observations');
+  db.exec('DROP TABLE IF EXISTS insights');
 
   // Migrate: dedup cl_projects by directory, add unique index
   const dupes = db.prepare(`
@@ -305,7 +283,6 @@ const events = require('./db/events');
 const sessions = require('./db/sessions');
 const knowledge = require('./db/knowledge');
 const components = require('./db/components');
-const insights = require('./db/insights');
 
 module.exports = {
   DEFAULT_DB_PATH,
@@ -314,5 +291,4 @@ module.exports = {
   ...sessions,
   ...knowledge,
   ...components,
-  ...insights,
 };

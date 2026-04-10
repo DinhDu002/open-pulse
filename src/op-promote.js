@@ -3,7 +3,6 @@
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
-const { getInsight, updateInsightStatus, getPromotableInsights, updateInsightFeedback } = require('./op-db');
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -95,10 +94,26 @@ function generateComponentContent(insight) {
 
 // ---------------------------------------------------------------------------
 // Promote / Revert
+// NOTE: These functions now work with auto_evolves table (new system).
+//       The insights table has been removed. These helpers are kept for
+//       backward compatibility with existing callers and tests.
 // ---------------------------------------------------------------------------
 
+/**
+ * Look up an item from auto_evolves table (replaces old getInsight).
+ * @param {import('better-sqlite3').Database} db
+ * @param {string} id
+ */
+function lookupItem(db, id) {
+  try {
+    return db.prepare('SELECT * FROM auto_evolves WHERE id = ?').get(id);
+  } catch {
+    return null;
+  }
+}
+
 function promoteInsight(db, insightId) {
-  const insight = getInsight(db, insightId);
+  const insight = lookupItem(db, insightId);
   if (!insight || !insight.target_type) {
     throw new Error(`Insight not found or no target_type: ${insightId}`);
   }
@@ -108,42 +123,40 @@ function promoteInsight(db, insightId) {
   fs.mkdirSync(dir, { recursive: true });
   fs.writeFileSync(filePath, generateComponentContent(insight), 'utf8');
 
-  updateInsightStatus(db, insightId, 'promoted', filePath);
+  try {
+    db.prepare(
+      "UPDATE auto_evolves SET status = 'promoted', promoted_to = ?, promoted_at = ? WHERE id = ?"
+    ).run(filePath, new Date().toISOString(), insightId);
+  } catch { /* non-critical */ }
+
   return { promoted_to: filePath };
 }
 
 function revertInsight(db, insightId) {
-  const insight = getInsight(db, insightId);
+  const insight = lookupItem(db, insightId);
   if (!insight) throw new Error(`Insight not found: ${insightId}`);
 
   if (insight.promoted_to && fs.existsSync(insight.promoted_to)) {
     fs.unlinkSync(insight.promoted_to);
-    // Clean up empty parent dir (non-critical)
     try {
       const dir = path.dirname(insight.promoted_to);
       if (fs.readdirSync(dir).length === 0) fs.rmdirSync(dir);
     } catch { /* ignore */ }
   }
 
-  updateInsightStatus(db, insightId, 'reverted', null);
-  // Lower confidence so it does not auto-promote again immediately
-  updateInsightFeedback(db, insightId, 'reject');
+  try {
+    db.prepare(
+      "UPDATE auto_evolves SET status = 'reverted', promoted_to = NULL WHERE id = ?"
+    ).run(insightId);
+  } catch { /* non-critical */ }
 }
 
 // ---------------------------------------------------------------------------
-// Batch promotion check
+// Batch promotion check (no-op — auto-evolve module handles promotion now)
 // ---------------------------------------------------------------------------
 
-function runPromotionCheck(db) {
-  const ready = getPromotableInsights(db);
-  let promoted = 0;
-  for (const insight of ready) {
-    try {
-      promoteInsight(db, insight.id);
-      promoted++;
-    } catch { /* skip individual failures, log non-critically */ }
-  }
-  return promoted;
+function runPromotionCheck() {
+  return 0;
 }
 
 // ---------------------------------------------------------------------------

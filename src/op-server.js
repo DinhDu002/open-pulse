@@ -11,7 +11,6 @@ const { generateAllVaults } = require('./op-vault-generator');
 const { ingestAll } = require('./op-ingest');
 const { runRetention } = require('./op-retention');
 const { parseQualifiedName } = require('./op-helpers');
-const { runPromotionCheck } = require('./op-promote');
 const { syncInstincts, runAutoEvolve } = require('./op-auto-evolve');
 const {
   syncAll,
@@ -93,11 +92,6 @@ function buildApp(opts = {}) {
       try { componentETag = syncComponentsWithDb(db); } catch { /* non-critical */ }
     }, config.cl_sync_interval_ms || 60000));
 
-    // Promote timer: auto-promote ready insights
-    timers.push(setInterval(() => {
-      try { runPromotionCheck(db); } catch { /* non-critical */ }
-    }, config.cl_sync_interval_ms || 60000));
-
     // Auto-evolve timer: sync instincts + auto-promote
     if (config.auto_evolve_enabled !== false) {
       const instinctDir = path.join(REPO_DIR, 'cl', 'instincts');
@@ -162,7 +156,6 @@ function buildApp(opts = {}) {
   // Register route plugins
   app.register(require('./routes/core'), routeOpts);
   app.register(require('./routes/inventory'), routeOpts);
-  app.register(require('./routes/insights'), routeOpts);
   app.register(require('./routes/knowledge'), routeOpts);
   app.register(require('./routes/auto-evolves'), routeOpts);
   app.register(require('./routes/daily-reviews'), routeOpts);

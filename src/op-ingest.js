@@ -33,23 +33,6 @@ function normaliseEvent(raw) {
 }
 
 
-function normaliseInsight(raw) {
-  return {
-    id:          raw.id          ?? null,
-    source:      raw.source      ?? 'manual',
-    category:    raw.category    ?? 'general',
-    target_type: raw.target_type ?? null,
-    title:       raw.title       ?? (raw.description || '').slice(0, 100),
-    description: raw.description ?? '',
-    confidence:  raw.confidence  ?? 0.3,
-    action_data: typeof raw.action_data === 'string'
-                   ? raw.action_data
-                   : JSON.stringify(raw.action_data ?? null),
-    project_id:  raw.project_id  ?? null,
-  };
-}
-
-
 // ---------------------------------------------------------------------------
 // Parse JSONL — returns { rows, errors }
 // ---------------------------------------------------------------------------
@@ -177,9 +160,6 @@ function processContent(db, processingPath, type) {
       linkEventsToPrompts(db, events);
       insertEventBatch(db, events);
       updatePromptStatsAfterInsert(db, events);
-    } else if (type === 'insights') {
-      const { upsertInsightBatch } = require('./op-db');
-      upsertInsightBatch(db, rows.map(normaliseInsight));
     }
   }
 
@@ -199,7 +179,7 @@ function processContent(db, processingPath, type) {
  *
  * @param {import('better-sqlite3').Database} db
  * @param {string} filePath  - full path to the .jsonl file
- * @param {'events'|'insights'} type
+ * @param {'events'} type
  * @returns {{ processed: number, errors: number }}
  */
 function ingestFile(db, filePath, type) {
@@ -258,14 +238,12 @@ function ingestFile(db, filePath, type) {
  *
  * @param {import('better-sqlite3').Database} db
  * @param {string} dataDir
- * @returns {{ events: object, insights: object }}
+ * @returns {{ events: object }}
  */
 function ingestAll(db, dataDir) {
   const results = {};
-  for (const type of ['events', 'insights']) {
-    const filePath = path.join(dataDir, `${type}.jsonl`);
-    results[type] = ingestFile(db, filePath, type);
-  }
+  const filePath = path.join(dataDir, 'events.jsonl');
+  results.events = ingestFile(db, filePath, 'events');
   return results;
 }
 

@@ -8,7 +8,6 @@ const REPO_DIR = process.env.OPEN_PULSE_DIR || path.join(__dirname, '..');
 
 const {
   upsertClProject,
-  upsertInsight,
   deleteProject,
   upsertComponent,
   deleteComponentsNotSeenSince,
@@ -16,7 +15,6 @@ const {
 } = require('./op-db');
 
 const {
-  parseFrontmatter,
   getKnownSkills,
   getKnownAgents,
   getPluginComponents,
@@ -58,52 +56,6 @@ function syncProjectsToDb(db) {
   } catch { /* registry not found or invalid */ }
 }
 
-function syncInstinctsToDb(db) {
-  const syncDir = (dir, scope, projectId) => {
-    try {
-      const files = fs.readdirSync(dir).filter(f => f.endsWith('.md') || f.endsWith('.yaml'));
-      for (const file of files) {
-        const filePath = path.join(dir, file);
-        try {
-          const content = fs.readFileSync(filePath, 'utf8');
-          const meta = parseFrontmatter(content);
-          const bodyMatch = content.match(/^---[\s\S]*?---\s*([\s\S]*)$/);
-          const body = bodyMatch ? bodyMatch[1].trim() : content;
-          const now = new Date().toISOString();
-
-          upsertInsight(db, {
-            id: meta.id || file.replace(/\.(md|yaml)$/, ''),
-            source: 'observer',
-            category: meta.domain || meta.category || 'general',
-            target_type: null,
-            title: meta.trigger || meta.id || file.replace(/\.(md|yaml)$/, ''),
-            description: body,
-            confidence: parseFloat(meta.confidence) || 0.3,
-            project_id: meta.project_id || (scope === 'global' ? null : projectId) || null,
-          });
-        } catch { /* skip unreadable */ }
-      }
-    } catch { /* dir not found */ }
-  };
-
-  // Global instincts via <repo>/cl/ paths
-  syncDir(path.join(REPO_DIR, 'cl', 'instincts', 'personal'), 'global', '');
-  syncDir(path.join(REPO_DIR, 'cl', 'instincts', 'inherited'), 'global', '');
-
-  // Per-project instincts (only for projects that exist in cl_projects)
-  const validProjectIds = new Set(
-    db.prepare('SELECT project_id FROM cl_projects').all().map(r => r.project_id)
-  );
-  const projectsDir = path.join(REPO_DIR, 'cl', 'projects');
-  try {
-    for (const entry of fs.readdirSync(projectsDir, { withFileTypes: true })) {
-      if (!entry.isDirectory() || !validProjectIds.has(entry.name)) continue;
-      syncDir(path.join(projectsDir, entry.name, 'instincts', 'personal'), 'project', entry.name);
-      syncDir(path.join(projectsDir, entry.name, 'instincts', 'inherited'), 'project', entry.name);
-    }
-  } catch { /* projects dir not found */ }
-}
-
 let _lastSyncMtimes = { projects: 0, instincts: 0 };
 
 function syncAll(db) {
@@ -121,7 +73,6 @@ function syncAll(db) {
 
   try {
     syncProjectsToDb(db);
-    syncInstinctsToDb(db);
     _lastSyncMtimes = { projects: projectsMtime, instincts: instinctsMtime };
   } catch { /* non-critical */ }
 }
@@ -260,7 +211,6 @@ function runScan(db) {
 
 module.exports = {
   syncProjectsToDb,
-  syncInstinctsToDb,
   syncAll,
   syncComponentsWithDb,
   runScan,
