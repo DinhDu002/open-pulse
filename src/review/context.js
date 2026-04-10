@@ -18,24 +18,29 @@ function getClaudeDir() {
 // Phase 1: Collect work history
 // ---------------------------------------------------------------------------
 
-function collectWorkHistory(db, date) {
+function collectWorkHistory(db, date, historyDays = 1) {
+  const days = Math.max(1, historyDays);
+  const endDate = date;
+  const startMs = new Date(date + 'T00:00:00Z').getTime() - (days - 1) * 86400000;
+  const startDate = new Date(startMs).toISOString().slice(0, 10);
+
   const events = db.prepare(`
     SELECT event_type, name, detail, estimated_cost_usd AS cost, input_tokens, output_tokens, timestamp
     FROM events
-    WHERE DATE(timestamp) = ?
+    WHERE DATE(timestamp) BETWEEN ? AND ?
     ORDER BY timestamp ASC
-  `).all(date);
+  `).all(startDate, endDate);
 
   const sessions = db.prepare(`
     SELECT session_id, started_at, ended_at, model, total_cost_usd AS cost, total_input_tokens, total_output_tokens
     FROM sessions
-    WHERE DATE(started_at) = ?
+    WHERE DATE(started_at) BETWEEN ? AND ?
     ORDER BY started_at ASC
-  `).all(date);
+  `).all(startDate, endDate);
 
   const totalCost = events.reduce((sum, e) => sum + (e.cost || 0), 0);
 
-  return { events, sessions, totalCost };
+  return { events, sessions, totalCost, startDate, endDate };
 }
 
 // ---------------------------------------------------------------------------

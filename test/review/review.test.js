@@ -56,6 +56,11 @@ describe('op-daily-review', () => {
       VALUES (?, ?, ?, ?, ?, ?)
     `);
     stmtS.run('sess-1', today, 'sonnet', 0.013, 800, 450);
+
+    // Seed events for yesterday (multi-day history test)
+    const yesterday = new Date(Date.now() - 86400000).toISOString();
+    stmtE.run('sess-2', yesterday, 'tool_call', 'Bash', 'Run tests', 0.003, 150, 80);
+    stmtS.run('sess-2', yesterday, 'opus', 0.003, 150, 80);
   });
 
   after(() => {
@@ -77,6 +82,22 @@ describe('op-daily-review', () => {
   it('collectWorkHistory returns empty for future date', () => {
     const history = review.collectWorkHistory(db, '2099-01-01');
     assert.equal(history.events.length, 0);
+  });
+
+  it('collectWorkHistory with historyDays=2 includes yesterday', () => {
+    const today = new Date().toISOString().slice(0, 10);
+    const history = review.collectWorkHistory(db, today, 2);
+    assert.ok(history.events.length >= 4, `Should include today + yesterday events, got ${history.events.length}`);
+    assert.ok(history.sessions.length >= 2, `Should include both sessions, got ${history.sessions.length}`);
+    assert.ok(history.startDate);
+    assert.ok(history.endDate);
+  });
+
+  it('collectWorkHistory with historyDays=1 matches default behavior', () => {
+    const today = new Date().toISOString().slice(0, 10);
+    const history1 = review.collectWorkHistory(db, today, 1);
+    const historyDefault = review.collectWorkHistory(db, today);
+    assert.equal(history1.events.length, historyDefault.events.length);
   });
 
   // -- scanAllComponents --
