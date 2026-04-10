@@ -140,7 +140,13 @@ function buildApp(opts = {}) {
   };
 
   // Register route plugins
-  app.register(require('./routes/core'), routeOpts);
+  app.register(require('./routes/health'), routeOpts);
+  app.register(require('./routes/events'), routeOpts);
+  app.register(require('./routes/prompts'), routeOpts);
+  app.register(require('./routes/cost'), routeOpts);
+  app.register(require('./routes/projects'), routeOpts);
+  app.register(require('./routes/scanner'), routeOpts);
+  app.register(require('./routes/config'), routeOpts);
   app.register(require('./routes/inventory'), routeOpts);
   app.register(require('./routes/knowledge'), routeOpts);
   app.register(require('./routes/auto-evolves'), routeOpts);
