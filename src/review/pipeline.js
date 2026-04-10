@@ -152,7 +152,7 @@ function saveInsights(db, insights, reviewDate) {
 // Report generation
 // ---------------------------------------------------------------------------
 
-function writeReport(suggestions, history, reportDir, date) {
+function writeReport(suggestions, history, reportDir, date, insights = []) {
   const dir = reportDir || path.join(REPO_DIR, 'reports');
   fs.mkdirSync(dir, { recursive: true });
 
@@ -178,6 +178,20 @@ function writeReport(suggestions, history, reportDir, date) {
     lines.push('');
   });
 
+  if (insights.length > 0) {
+    lines.push(`## Cross-Project Insights (${insights.length} total)`);
+    lines.push('');
+    insights.forEach((ins, i) => {
+      lines.push(`### ${i + 1}. [${ins.insight_type}] ${ins.title}`);
+      lines.push(`- **Severity:** ${ins.severity || 'info'}`);
+      lines.push(`- **Projects:** ${(ins.projects || []).join(', ') || 'N/A'}`);
+      lines.push(`- **Target:** ${ins.target_type || 'N/A'}`);
+      lines.push(`- **Reasoning:** ${ins.reasoning || 'N/A'}`);
+      lines.push(`- **Description:** ${ins.description || 'N/A'}`);
+      lines.push('');
+    });
+  }
+
   const reportPath = path.join(dir, `${date}-daily-review.md`);
   fs.writeFileSync(reportPath, lines.join('\n'));
   return reportPath;
@@ -193,15 +207,22 @@ async function runDailyReview(db, opts = {}) {
     model = 'opus',
     timeout = 300000,
     max_suggestions = 25,
+    historyDays = 1,
     reportDir,
     repoDir,
     claudeDir,
   } = opts;
 
-  const history = collectWorkHistory(db, date);
+  const history = collectWorkHistory(db, date, historyDays);
   const components = scanAllComponents(claudeDir);
+  const projectConfigs = scanProjectConfigs(db);
   const practices = loadBestPractices(repoDir);
-  const prompt = buildPrompt(history, components, practices, { date, max_suggestions });
+  const prompt = buildPrompt(history, components, practices, {
+    date,
+    max_suggestions,
+    projectConfigs,
+    historyDays,
+  });
 
   let output;
   try {
@@ -214,18 +235,22 @@ async function runDailyReview(db, opts = {}) {
       timeout,
       encoding: 'utf8',
       env: { ...process.env, OP_SKIP_COLLECT: '1', OP_HOOK_PROFILE: 'minimal' },
-      maxBuffer: 10 * 1024 * 1024,
+      maxBuffer: 50 * 1024 * 1024,
     });
   } catch (err) {
     console.error('Claude invocation failed:', err.message);
-    return { suggestions: [], reportPath: null, error: err.message };
+    return { suggestions: [], insights: [], reportPath: null, error: err.message };
   }
 
-  const suggestions = parseSuggestions(output).slice(0, max_suggestions);
-  saveSuggestions(db, suggestions, date);
-  const reportPath = writeReport(suggestions, history, reportDir, date);
+  const { suggestions: rawSuggestions, insights: rawInsights } = parseReviewOutput(output);
+  const suggestions = rawSuggestions.slice(0, max_suggestions);
+  const insights = rawInsights;
 
-  return { suggestions, reportPath };
+  saveSuggestions(db, suggestions, date);
+  saveInsights(db, insights, date);
+  const reportPath = writeReport(suggestions, history, reportDir, date, insights);
+
+  return { suggestions, insights, reportPath };
 }
 
 // ---------------------------------------------------------------------------

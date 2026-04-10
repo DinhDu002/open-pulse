@@ -340,6 +340,20 @@ describe('op-daily-review', () => {
     assert.deepEqual(result.insights, []);
   });
 
+  // -- writeReport with insights --
+
+  it('writeReport includes insights section', () => {
+    const history = { events: [], sessions: [], totalCost: 0 };
+    const suggestions = [{ category: 'cleanup', title: 'Test', action: 'remove', target_type: 'rule', confidence: 0.5, reasoning: 'r', description: 'd' }];
+    const insights = [{ insight_type: 'duplicate', title: 'Dup', projects: ['a', 'b'], target_type: 'rule', severity: 'warning', reasoning: 'r', description: 'd' }];
+    const reportDir = path.join(TEST_DIR, 'reports');
+    const reportPath = review.writeReport(suggestions, history, reportDir, '2026-04-10', insights);
+    const content = fs.readFileSync(reportPath, 'utf8');
+    assert.ok(content.includes('Suggestions (1 total)'));
+    assert.ok(content.includes('Cross-Project Insights (1 total)'));
+    assert.ok(content.includes('[duplicate] Dup'));
+  });
+
   it('buildPrompt includes project configs section', () => {
     const history = review.collectWorkHistory(db, new Date().toISOString().slice(0, 10));
     const components = review.scanAllComponents(TEST_CLAUDE_DIR);
