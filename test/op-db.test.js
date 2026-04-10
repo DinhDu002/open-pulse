@@ -438,36 +438,96 @@ describe('op-db', () => {
   });
 
   it('migration backfills project_name from cl_projects', () => {
-    // Insert a cl_project
-    db.prepare(`
-      INSERT OR IGNORE INTO cl_projects (project_id, name, directory, first_seen_at, last_seen_at, session_count)
-      VALUES ('bp-test', 'my-project', '/tmp/my-project', '2026-01-01', '2026-01-01', 1)
-    `).run();
+    const Database = require('better-sqlite3');
+    const tmpPath = path.join(os.tmpdir(), `op-db-backfill-exact-${Date.now()}.db`);
+    try {
+      // Build old schema WITHOUT project_name column, then seed data
+      const tmpDb = new Database(tmpPath);
+      tmpDb.pragma('journal_mode = WAL');
+      tmpDb.exec([
+        'CREATE TABLE IF NOT EXISTS events (',
+        '  id INTEGER PRIMARY KEY AUTOINCREMENT,',
+        '  timestamp TEXT NOT NULL,',
+        '  session_id TEXT,',
+        '  event_type TEXT NOT NULL,',
+        '  name TEXT,',
+        '  working_directory TEXT',
+        ');',
+        'CREATE TABLE IF NOT EXISTS cl_projects (',
+        '  id INTEGER PRIMARY KEY AUTOINCREMENT,',
+        '  project_id TEXT NOT NULL UNIQUE,',
+        '  name TEXT,',
+        '  directory TEXT,',
+        '  first_seen_at TEXT,',
+        '  last_seen_at TEXT,',
+        '  session_count INTEGER DEFAULT 0',
+        ');',
+      ].join('\n'));
+      tmpDb.prepare(
+        'INSERT INTO cl_projects (project_id, name, directory, first_seen_at, last_seen_at, session_count)' +
+        " VALUES ('bp-test', 'my-project', '/tmp/my-project', '2026-01-01', '2026-01-01', 1)"
+      ).run();
+      tmpDb.prepare(
+        'INSERT INTO events (timestamp, session_id, event_type, name, working_directory)' +
+        " VALUES ('2026-04-10T01:00:00Z', 'bp-sess', 'tool_call', 'Read', '/tmp/my-project')"
+      ).run();
+      tmpDb.close();
 
-    // Insert an event with matching working_directory but no project_name
-    db.prepare(`
-      INSERT INTO events (timestamp, session_id, event_type, name, working_directory)
-      VALUES ('2026-04-10T01:00:00Z', 'bp-sess', 'tool_call', 'Read', '/tmp/my-project')
-    `).run();
-
-    // Re-run migration (backfill)
-    const { createDb } = require('../src/op-db');
-    createDb(process.env.OPEN_PULSE_DB || db.name);
-
-    const row = db.prepare("SELECT project_name FROM events WHERE session_id = 'bp-sess'").get();
-    assert.equal(row.project_name, 'my-project');
+      // createDb triggers migration + backfill on a DB where column is absent
+      const { createDb: createDbFresh } = require('../src/op-db');
+      const migratedDb = createDbFresh(tmpPath);
+      const row = migratedDb.prepare("SELECT project_name FROM events WHERE session_id = 'bp-sess'").get();
+      migratedDb.close();
+      assert.equal(row.project_name, 'my-project');
+    } finally {
+      try { fs.unlinkSync(tmpPath); } catch {}
+      try { fs.unlinkSync(tmpPath + '-shm'); } catch {}
+      try { fs.unlinkSync(tmpPath + '-wal'); } catch {}
+    }
   });
 
   it('migration backfills project_name with basename fallback', () => {
-    db.prepare(`
-      INSERT INTO events (timestamp, session_id, event_type, name, working_directory)
-      VALUES ('2026-04-10T01:01:00Z', 'bp-sess-2', 'tool_call', 'Read', '/tmp/unknown-project')
-    `).run();
+    const Database = require('better-sqlite3');
+    const tmpPath = path.join(os.tmpdir(), `op-db-backfill-basename-${Date.now()}.db`);
+    try {
+      // Build old schema WITHOUT project_name column, seed event with no matching project
+      const tmpDb = new Database(tmpPath);
+      tmpDb.pragma('journal_mode = WAL');
+      tmpDb.exec([
+        'CREATE TABLE IF NOT EXISTS events (',
+        '  id INTEGER PRIMARY KEY AUTOINCREMENT,',
+        '  timestamp TEXT NOT NULL,',
+        '  session_id TEXT,',
+        '  event_type TEXT NOT NULL,',
+        '  name TEXT,',
+        '  working_directory TEXT',
+        ');',
+        'CREATE TABLE IF NOT EXISTS cl_projects (',
+        '  id INTEGER PRIMARY KEY AUTOINCREMENT,',
+        '  project_id TEXT NOT NULL UNIQUE,',
+        '  name TEXT,',
+        '  directory TEXT,',
+        '  first_seen_at TEXT,',
+        '  last_seen_at TEXT,',
+        '  session_count INTEGER DEFAULT 0',
+        ');',
+      ].join('\n'));
+      tmpDb.prepare(
+        'INSERT INTO events (timestamp, session_id, event_type, name, working_directory)' +
+        " VALUES ('2026-04-10T01:01:00Z', 'bp-sess-2', 'tool_call', 'Read', '/tmp/unknown-project')"
+      ).run();
+      tmpDb.close();
 
-    const { createDb } = require('../src/op-db');
-    createDb(process.env.OPEN_PULSE_DB || db.name);
-
-    const row = db.prepare("SELECT project_name FROM events WHERE session_id = 'bp-sess-2'").get();
-    assert.equal(row.project_name, 'unknown-project');
+      // createDb triggers migration + basename backfill on a DB where column is absent
+      const { createDb: createDbFresh } = require('../src/op-db');
+      const migratedDb = createDbFresh(tmpPath);
+      const row = migratedDb.prepare("SELECT project_name FROM events WHERE session_id = 'bp-sess-2'").get();
+      migratedDb.close();
+      assert.equal(row.project_name, 'unknown-project');
+    } finally {
+      try { fs.unlinkSync(tmpPath); } catch {}
+      try { fs.unlinkSync(tmpPath + '-shm'); } catch {}
+      try { fs.unlinkSync(tmpPath + '-wal'); } catch {}
+    }
   });
 });
