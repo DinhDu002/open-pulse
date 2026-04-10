@@ -187,6 +187,39 @@ CREATE INDEX IF NOT EXISTS idx_insights_source ON insights(source);
 CREATE INDEX IF NOT EXISTS idx_insights_status ON insights(status);
 CREATE INDEX IF NOT EXISTS idx_insights_target ON insights(target_type);
 CREATE INDEX IF NOT EXISTS idx_insights_project ON insights(project_id);
+
+CREATE TABLE IF NOT EXISTS auto_evolves (
+  id                TEXT PRIMARY KEY,
+  title             TEXT NOT NULL,
+  description       TEXT,
+  target_type       TEXT NOT NULL,
+  confidence        REAL DEFAULT 0.05,
+  observation_count INTEGER DEFAULT 1,
+  rejection_count   INTEGER DEFAULT 0,
+  status            TEXT DEFAULT 'active',
+  promoted_to       TEXT,
+  created_at        TEXT NOT NULL,
+  updated_at        TEXT,
+  promoted_at       TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_auto_evolves_status ON auto_evolves(status);
+CREATE INDEX IF NOT EXISTS idx_auto_evolves_target ON auto_evolves(target_type);
+
+CREATE TABLE IF NOT EXISTS daily_reviews (
+  id                TEXT PRIMARY KEY,
+  review_date       TEXT NOT NULL,
+  category          TEXT,
+  title             TEXT NOT NULL,
+  description       TEXT,
+  target_type       TEXT,
+  action            TEXT,
+  confidence        REAL,
+  reasoning         TEXT,
+  status            TEXT DEFAULT 'pending',
+  created_at        TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_daily_reviews_date ON daily_reviews(review_date);
+CREATE INDEX IF NOT EXISTS idx_daily_reviews_status ON daily_reviews(status);
 `;
 
 // ---------------------------------------------------------------------------
