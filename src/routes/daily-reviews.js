@@ -3,7 +3,7 @@
 const {
   queryDailyReviews, getDailyReview, updateDailyReviewStatus,
   getDailyReviewStats, runDailyReview,
-} = require('../../scripts/op-daily-review');
+} = require('../review/pipeline');
 
 module.exports = async function dailyReviewRoutes(app, opts) {
   const { db, helpers, config } = opts;
@@ -51,10 +51,12 @@ module.exports = async function dailyReviewRoutes(app, opts) {
     }
     try {
       const result = await runDailyReview(db, {
+        date: req.body && req.body.date ? req.body.date : undefined,
         model: config.daily_review_model || 'opus',
         timeout: config.daily_review_timeout_ms || 300000,
         max_suggestions: config.daily_review_max_suggestions || 25,
       });
+      if (result.error) return errorReply(reply, 500, result.error);
       reply.send(result);
     } catch (err) {
       return errorReply(reply, 500, err.message);

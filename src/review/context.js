@@ -1,0 +1,184 @@
+'use strict';
+
+const path = require('path');
+const fs = require('fs');
+const os = require('os');
+
+// ---------------------------------------------------------------------------
+// Paths
+// ---------------------------------------------------------------------------
+
+const REPO_DIR = process.env.OPEN_PULSE_DIR || path.resolve(__dirname, '..', '..');
+
+function getClaudeDir() {
+  return process.env.OPEN_PULSE_CLAUDE_DIR || path.join(os.homedir(), '.claude');
+}
+
+// ---------------------------------------------------------------------------
+// Phase 1: Collect work history
+// ---------------------------------------------------------------------------
+
+function collectWorkHistory(db, date) {
+  const events = db.prepare(`
+    SELECT event_type, name, detail, estimated_cost_usd AS cost, input_tokens, output_tokens, timestamp
+    FROM events
+    WHERE DATE(timestamp) = ?
+    ORDER BY timestamp ASC
+  `).all(date);
+
+  const sessions = db.prepare(`
+    SELECT session_id, started_at, ended_at, model, total_cost_usd AS cost, total_input_tokens, total_output_tokens
+    FROM sessions
+    WHERE DATE(started_at) = ?
+    ORDER BY started_at ASC
+  `).all(date);
+
+  const totalCost = events.reduce((sum, e) => sum + (e.cost || 0), 0);
+
+  return { events, sessions, totalCost };
+}
+
+// ---------------------------------------------------------------------------
+// Phase 2: Scan all component files
+// ---------------------------------------------------------------------------
+
+function readDirFiles(dirPath, pattern = '.md') {
+  if (!fs.existsSync(dirPath)) return [];
+  const results = [];
+  const entries = fs.readdirSync(dirPath, { withFileTypes: true });
+
+  for (const entry of entries) {
+    const fullPath = path.join(dirPath, entry.name);
+    if (entry.isDirectory()) {
+      const skillFile = path.join(fullPath, 'SKILL.md');
+      if (fs.existsSync(skillFile)) {
+        results.push({
+          name: entry.name,
+          path: skillFile,
+          content: fs.readFileSync(skillFile, 'utf8'),
+        });
+      }
+    } else if (entry.name.endsWith(pattern)) {
+      results.push({
+        name: entry.name.replace(pattern, ''),
+        path: fullPath,
+        content: fs.readFileSync(fullPath, 'utf8'),
+      });
+    }
+  }
+  return results;
+}
+
+function scanAllComponents(claudeDir) {
+  const dir = claudeDir || getClaudeDir();
+
+  const rules = readDirFiles(path.join(dir, 'rules'));
+  const knowledge = readDirFiles(path.join(dir, 'knowledge'));
+  const skills = readDirFiles(path.join(dir, 'skills'));
+  const agents = readDirFiles(path.join(dir, 'agents'));
+
+  let hooks = [];
+  const settingsPath = path.join(dir, 'settings.json');
+  if (fs.existsSync(settingsPath)) {
+    try {
+      const settings = JSON.parse(fs.readFileSync(settingsPath, 'utf8'));
+      hooks = settings.hooks || [];
+    } catch { /* ignore parse errors */ }
+  }
+
+  const memory = [];
+  const projectsDir = path.join(dir, 'projects');
+  if (fs.existsSync(projectsDir)) {
+    const projects = fs.readdirSync(projectsDir, { withFileTypes: true });
+    for (const proj of projects) {
+      if (!proj.isDirectory()) continue;
+      const memDir = path.join(projectsDir, proj.name, 'memory');
+      if (fs.existsSync(memDir)) {
+        memory.push(...readDirFiles(memDir));
+      }
+    }
+  }
+
+  let plugins = [];
+  const pluginsPath = path.join(dir, 'plugins', 'installed_plugins.json');
+  if (fs.existsSync(pluginsPath)) {
+    try {
+      plugins = JSON.parse(fs.readFileSync(pluginsPath, 'utf8'));
+    } catch { /* ignore */ }
+  }
+
+  return { rules, knowledge, skills, agents, hooks, memory, plugins };
+}
+
+// ---------------------------------------------------------------------------
+// Phase 3: Load best practices
+// ---------------------------------------------------------------------------
+
+function loadBestPractices(repoDir) {
+  const refDir = path.join(
+    repoDir || REPO_DIR,
+    'claude', 'skills', 'claude-code-knowledge', 'references'
+  );
+  if (!fs.existsSync(refDir)) return [];
+
+  const results = [];
+  const entries = fs.readdirSync(refDir, { withFileTypes: true });
+  for (const entry of entries) {
+    if (!entry.isFile() || !entry.name.endsWith('.md')) continue;
+    results.push({
+      name: entry.name,
+      content: fs.readFileSync(path.join(refDir, entry.name), 'utf8'),
+    });
+  }
+  return results;
+}
+
+// ---------------------------------------------------------------------------
+// Phase 4: Build prompt
+// ---------------------------------------------------------------------------
+
+function buildPrompt(history, components, practices, opts = {}) {
+  const { date = new Date().toISOString().slice(0, 10), max_suggestions = 25 } = opts;
+
+  const templatePath = path.join(__dirname, 'prompt.md');
+  let template = fs.readFileSync(templatePath, 'utf8');
+
+  const formatComponents = (items) =>
+    items.map(c => `#### ${c.name}\n\`\`\`\n${c.content}\n\`\`\``).join('\n\n');
+
+  const replacements = {
+    '{{date}}': date,
+    '{{work_history_json}}': JSON.stringify({
+      events: history.events.slice(0, 200),
+      sessions: history.sessions,
+      totalCost: history.totalCost,
+    }, null, 2),
+    '{{rule_count}}': String(components.rules.length),
+    '{{rules_content}}': formatComponents(components.rules) || 'None',
+    '{{skill_count}}': String(components.skills.length),
+    '{{skills_content}}': formatComponents(components.skills) || 'None',
+    '{{agent_count}}': String(components.agents.length),
+    '{{agents_content}}': formatComponents(components.agents) || 'None',
+    '{{hooks_config}}': JSON.stringify(components.hooks, null, 2),
+    '{{memory_content}}': formatComponents(components.memory) || 'None',
+    '{{plugin_count}}': String(components.plugins.length),
+    '{{plugins_content}}': JSON.stringify(components.plugins, null, 2),
+    '{{claude_code_knowledge}}': practices.map(p => `### ${p.name}\n${p.content}`).join('\n\n'),
+    '{{max_suggestions}}': String(max_suggestions),
+  };
+
+  for (const [key, val] of Object.entries(replacements)) {
+    template = template.replaceAll(key, val);
+  }
+
+  return template;
+}
+
+module.exports = {
+  collectWorkHistory,
+  scanAllComponents,
+  loadBestPractices,
+  buildPrompt,
+  // exposed for tests via pipeline re-export
+  readDirFiles,
+};
