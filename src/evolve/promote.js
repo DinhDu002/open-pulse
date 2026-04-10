@@ -1,0 +1,90 @@
+'use strict';
+
+const path = require('path');
+const fs = require('fs');
+const { slugify } = require('../lib/slugify');
+const { getComponentPath } = require('../lib/paths');
+
+// ---------------------------------------------------------------------------
+// Component content generation
+// ---------------------------------------------------------------------------
+
+function generateComponent(insight) {
+  const { target_type, title, description } = insight;
+
+  switch (target_type) {
+    case 'rule':
+      return `# ${title}\n\n${description}\n`;
+
+    case 'skill':
+      return [
+        '---',
+        `name: ${slugify(title)}`,
+        `description: ${title}`,
+        '---',
+        '',
+        `${description}`,
+        '',
+      ].join('\n');
+
+    case 'knowledge':
+      return `# ${title}\n\n${description}\n`;
+
+    default:
+      return `# ${title}\n\n${description}\n`;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Auto-promote cycle
+// ---------------------------------------------------------------------------
+
+function runAutoEvolve(db, opts = {}) {
+  const {
+    min_confidence = 0.85,
+    blacklist = ['hook'],
+    logDir,
+  } = opts;
+
+  const allTypes = ['rule', 'knowledge', 'skill', 'agent', 'hook'];
+  const allowed = allTypes.filter(t => !blacklist.includes(t));
+  const placeholders = allowed.map(() => '?').join(',');
+
+  const ready = db.prepare(`
+    SELECT * FROM auto_evolves
+    WHERE status = 'active'
+      AND confidence >= ?
+      AND rejection_count = 0
+      AND target_type IN (${placeholders})
+  `).all(min_confidence, ...allowed);
+
+  let promoted = 0;
+
+  for (const row of ready) {
+    try {
+      const filePath = getComponentPath(row.target_type, row.title);
+      const dir = path.dirname(filePath);
+      fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(filePath, generateComponent(row), 'utf8');
+
+      const now = new Date().toISOString();
+      db.prepare(`
+        UPDATE auto_evolves
+        SET status = 'promoted', promoted_to = ?, promoted_at = ?, updated_at = ?
+        WHERE id = ?
+      `).run(filePath, now, now, row.id);
+
+      if (logDir) {
+        const logPath = path.join(logDir, 'auto-evolve.log');
+        const logLine = `[${now}] PROMOTED ${row.target_type} "${row.title}" -> ${filePath}\n`;
+        fs.appendFileSync(logPath, logLine);
+      }
+
+      promoted++;
+    } catch { /* skip individual failures */ }
+  }
+
+  return { promoted };
+}
+
+module.exports = { generateComponent, runAutoEvolve };
