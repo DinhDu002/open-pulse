@@ -164,7 +164,7 @@ open-pulse/
 
 ## Database Schema
 
-12 tables:
+13 tables:
 
 | Table | Purpose | Key fields |
 |---|---|---|
@@ -177,6 +177,7 @@ open-pulse/
 | `scan_results` | Setup scanner reports | scanned_at, report (JSON), issue counts by severity |
 | `auto_evolves` | Observer-detected patterns | id, title, target_type, confidence, observation_count, status, promoted_to |
 | `daily_reviews` | Opus analysis suggestions | id, review_date, category, title, target_type, action, confidence, status |
+| `daily_review_insights` | Cross-project insights from daily review | id, review_date, insight_type, title, projects (JSON), target_type, severity, status |
 | `knowledge_entries` | LLM-extracted project knowledge | project_id, category, title, body, source_file, status |
 | `kg_vault_hashes` | Content hashes for vault files | project_id, file_path, content_hash, generated_at |
 | `kg_sync_state` | KV state for graph sync | key, value |
@@ -256,6 +257,11 @@ open-pulse/
 | PUT | `/api/daily-reviews/:id/accept` | Accept suggestion |
 | PUT | `/api/daily-reviews/:id/dismiss` | Dismiss suggestion |
 | POST | `/api/daily-reviews/run` | Manual trigger daily review |
+| GET | `/api/daily-reviews/insights/stats` | Insight counts by type, severity |
+| GET | `/api/daily-reviews/insights?review_date=&insight_type=&status=&severity=` | List insights |
+| GET | `/api/daily-reviews/insights/:id` | Insight detail |
+| PUT | `/api/daily-reviews/insights/:id/resolve` | Mark insight resolved |
+| PUT | `/api/daily-reviews/insights/:id/dismiss` | Dismiss insight |
 
 ### Scanner
 
@@ -298,6 +304,7 @@ open-pulse/
 | `daily_review_model` | "opus" | Model for daily review (opus/sonnet) |
 | `daily_review_timeout_ms` | 300000 | Timeout for daily review Claude invocation |
 | `daily_review_max_suggestions` | 25 | Max suggestions per daily review run |
+| `daily_review_history_days` | 1 | Number of days of work history to include in daily review |
 
 ## Key Design Decisions
 
@@ -316,6 +323,7 @@ open-pulse/
 - **`cl_` DB prefix**: The `cl_` prefix on DB tables (e.g., `cl_projects`) and the `cl/` runtime directory stand for the instinct-based observer subsystem. The code itself lives in `src/evolve/`.
 - **3-tier retention**: hot (0-7d full data), warm (7-90d NULLs tool_input/response), cold (90d+ deleted). Configurable, runs daily. Sessions never deleted.
 - **Cold start seeding**: 10 universal starter instincts + CLAUDE.md rule parser. Idempotent — skips existing files on reinstall.
+- **Cross-project daily review**: Pipeline scans all registered project configs (CLAUDE.md, .claude/rules|skills|agents|knowledge) from `cl_projects` + `projects.json`. Cross-project insights stored in separate `daily_review_insights` table with types: duplicate, conflict, gap, unused, cross_dependency. Uses Opus 1M context with raw content for maximum analysis quality.
 
 ## Commands
 
