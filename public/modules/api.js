@@ -2,11 +2,9 @@
 const BASE = '/api';
 
 async function request(method, path, body) {
-  const opts = {
-    method,
-    headers: { 'Content-Type': 'application/json' },
-  };
+  const opts = { method };
   if (body !== undefined) {
+    opts.headers = { 'Content-Type': 'application/json' };
     opts.body = JSON.stringify(body);
   }
   const res = await fetch(BASE + path, opts);

@@ -4,8 +4,8 @@
 /**
  * Safely merge Open Pulse hooks into ~/.claude/settings.json.
  * - Backs up settings.json before modification
- * - Removes old collector/automation-suggester hooks
- * - Adds new op-collector and op-suggestion-analyzer hooks
+ * - Removes old collector/automation-suggester/suggestion-analyzer hooks
+ * - Adds new op-collector hooks
  * - Validates JSON before and after
  */
 
@@ -38,6 +38,8 @@ function main() {
     'dashboard/collector.js',
     'automation-suggester-start.js',
     'automation-suggester-stop.js',
+    'op-collector.js',
+    'op-suggestion-analyzer.js',
   ];
 
   for (const [event, groups] of Object.entries(settings.hooks)) {
@@ -54,14 +56,6 @@ function main() {
 
   // Add new hooks
   const collectorPath = path.join(repoDir, 'collector', 'op-collector.js');
-  const analyzerPath = path.join(repoDir, 'collector', 'op-suggestion-analyzer.js');
-
-  // PreToolUse: collector
-  if (!settings.hooks.PreToolUse) settings.hooks.PreToolUse = [];
-  settings.hooks.PreToolUse.push({
-    matcher: '',
-    hooks: [{ type: 'command', command: `node "${collectorPath}" pre-tool`, timeout: 5 }],
-  });
 
   // PostToolUse: collector
   if (!settings.hooks.PostToolUse) settings.hooks.PostToolUse = [];
@@ -81,10 +75,6 @@ function main() {
   settings.hooks.Stop.push({
     matcher: '',
     hooks: [{ type: 'command', command: `node "${collectorPath}" stop`, timeout: 10 }],
-  });
-  settings.hooks.Stop.push({
-    matcher: '*',
-    hooks: [{ type: 'command', command: `node "${analyzerPath}"`, timeout: 10, async: true }],
   });
 
   // Validate JSON

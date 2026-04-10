@@ -119,8 +119,8 @@ function buildApp(opts = {}) {
       try { runRetention(db, retentionOpts); } catch { /* non-critical */ }
     }, ONE_DAY_MS));
 
-    // Suggestion analysis: handled by external agent script (launchd 3 AM daily)
-    // Manual trigger available via POST /api/suggestions/analyze
+    // Daily review: handled by external script (launchd 3 AM daily)
+    // Manual trigger available via POST /api/daily-reviews/run
 
     // Knowledge graph sync timer (skip if no new events)
     let _lastKgEventCount = 0;

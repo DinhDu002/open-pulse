@@ -25,10 +25,11 @@ function actionBadge(action) {
 }
 
 function statusBadge(status) {
-  const colors = { pending: 'var(--warning)', accepted: 'var(--success)', dismissed: 'var(--text-muted)' };
+  const colors = { pending: '#fdcb6e', accepted: '#00b894', dismissed: '#8b8fa3' };
   const span = document.createElement('span');
   span.className = 'badge';
-  span.style.cssText = `background:${colors[status] || 'var(--text-muted)'}26;color:${colors[status] || 'var(--text-muted)'}`;
+  const c = colors[status] || '#8b8fa3';
+  span.style.cssText = `background:${c}26;color:${c}`;
   span.textContent = status;
   return span;
 }
@@ -36,7 +37,7 @@ function statusBadge(status) {
 async function renderStats(container) {
   const stats = await get('/daily-reviews/stats');
   const cards = document.createElement('div');
-  cards.className = 'stats-grid';
+  cards.className = 'stat-grid';
   for (const { status, count } of (stats.byStatus || [])) {
     const card = document.createElement('div');
     card.className = 'stat-card';

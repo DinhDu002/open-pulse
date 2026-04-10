@@ -222,61 +222,6 @@ function getKnownAgents() {
   }
 }
 
-function getKnownRules() {
-  const rulesDir = path.join(CLAUDE_DIR, 'rules');
-  const results = [];
-  try {
-    for (const entry of fs.readdirSync(rulesDir, { withFileTypes: true })) {
-      if (entry.isFile() && entry.name.endsWith('.md')) {
-        results.push(entry.name.replace(/\.md$/, ''));
-      }
-    }
-  } catch { /* ignore */ }
-  const commonDir = path.join(rulesDir, 'common');
-  try {
-    for (const entry of fs.readdirSync(commonDir, { withFileTypes: true })) {
-      if (entry.isFile() && entry.name.endsWith('.md')) {
-        results.push('common/' + entry.name.replace(/\.md$/, ''));
-      }
-    }
-  } catch { /* ignore */ }
-  return results;
-}
-
-function parseHooksFromSettings(settingsPath, project) {
-  const results = [];
-  try {
-    const settings = JSON.parse(fs.readFileSync(settingsPath, 'utf8'));
-    if (!settings.hooks) return results;
-    for (const [event, entries] of Object.entries(settings.hooks)) {
-      if (!Array.isArray(entries)) continue;
-      for (const entry of entries) {
-        const matcher = entry.matcher || '';
-        const hooks = entry.hooks || [];
-        for (const hook of hooks) {
-          results.push({
-            name: matcher || event,
-            event,
-            matcher,
-            command: hook.command || '',
-            project,
-          });
-        }
-      }
-    }
-  } catch { /* no settings.json or invalid */ }
-  return results;
-}
-
-function getKnownHooks() {
-  const results = parseHooksFromSettings(path.join(CLAUDE_DIR, 'settings.json'), 'global');
-  for (const projPath of getKnownProjectPaths()) {
-    const projSettings = path.join(projPath, '.claude', 'settings.json');
-    results.push(...parseHooksFromSettings(projSettings, path.basename(projPath)));
-  }
-  return results;
-}
-
 /** Check if a directory is the root of a git repository. */
 function isGitRepo(dir) {
   try { return fs.statSync(path.join(dir, '.git')).isDirectory(); }
@@ -312,9 +257,6 @@ module.exports = {
   readItemMeta,
   getKnownSkills,
   getKnownAgents,
-  getKnownRules,
-  parseHooksFromSettings,
-  getKnownHooks,
   isGitRepo,
   errorReply,
   parsePagination,

@@ -37,7 +37,7 @@ Scan the user's actual configuration:
 ### 3. Continuous Learning
 Check learned patterns:
 - `~/.claude/projects/*/memory/` — project instincts
-- Observation data from continuous-learning-v2
+- Observation data from op-continuous-learning
 
 ### 4. Web Research
 When internal knowledge is insufficient:

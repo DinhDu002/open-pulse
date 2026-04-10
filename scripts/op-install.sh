@@ -132,7 +132,7 @@ cat > "$AGENT_PLIST_PATH" << PLIST
   <key>ProgramArguments</key>
   <array>
     <string>${NODE_PATH}</string>
-    <string>${REPO_DIR}/scripts/op-suggestion-agent.js</string>
+    <string>${REPO_DIR}/scripts/op-daily-review.js</string>
   </array>
   <key>WorkingDirectory</key>
   <string>${REPO_DIR}</string>
@@ -165,8 +165,8 @@ echo "=== Open Pulse installed ==="
 echo "Dashboard: http://127.0.0.1:3827"
 echo "Logs:      $REPO_DIR/logs/"
 echo ""
-echo "Suggestion agent: runs daily at 3:00 AM"
-echo "  Manual:  node $REPO_DIR/scripts/op-suggestion-agent.js"
+echo "Daily review: runs daily at 3:00 AM"
+echo "  Manual:  node $REPO_DIR/scripts/op-daily-review.js"
 echo "  Logs:    $REPO_DIR/logs/suggestion-agent-stdout.log"
 echo ""
 echo "Management:"

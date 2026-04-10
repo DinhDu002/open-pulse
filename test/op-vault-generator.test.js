@@ -16,6 +16,7 @@ describe('op-vault-generator', () => {
   before(() => {
     fs.mkdirSync(TEST_DIR, { recursive: true });
     fs.mkdirSync(TEST_PROJECT_DIR, { recursive: true });
+    fs.mkdirSync(path.join(TEST_PROJECT_DIR, '.git'), { recursive: true });
 
     dbMod = require('../src/op-db');
     vg = require('../src/op-vault-generator');

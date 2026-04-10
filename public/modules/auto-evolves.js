@@ -19,10 +19,11 @@ function confidenceBar(score) {
 }
 
 function statusBadge(status) {
-  const colors = { active: 'var(--accent)', promoted: 'var(--success)', reverted: 'var(--danger)' };
+  const colors = { active: '#6c5ce7', promoted: '#00b894', reverted: '#e17055' };
   const span = document.createElement('span');
   span.className = 'badge';
-  span.style.cssText = `background:${colors[status] || 'var(--text-muted)'}26;color:${colors[status] || 'var(--text-muted)'}`;
+  const c = colors[status] || '#8b8fa3';
+  span.style.cssText = `background:${c}26;color:${c}`;
   span.textContent = status;
   return span;
 }
@@ -37,7 +38,7 @@ function typeBadge(type) {
 async function renderStats(container) {
   const stats = await get('/auto-evolves/stats');
   const cards = document.createElement('div');
-  cards.className = 'stats-grid';
+  cards.className = 'stat-grid';
   for (const { status, count } of (stats.byStatus || [])) {
     const card = document.createElement('div');
     card.className = 'stat-card';

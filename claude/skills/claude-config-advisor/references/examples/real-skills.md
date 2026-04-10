@@ -12,9 +12,9 @@ Review code for OWASP Top 10 vulnerabilities...
 ```
 **Pattern**: Domain knowledge skill, auto-invoked on security topics.
 
-## Complex with references: continuous-learning-v2
+## Complex with references: op-continuous-learning
 ```
-skills/continuous-learning-v2/
+skills/op-continuous-learning/
 ├── SKILL.md         # Main instructions + commands
 ├── agents/
 │   └── observer.md  # Haiku agent for pattern detection

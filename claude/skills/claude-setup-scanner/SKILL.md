@@ -48,7 +48,7 @@ Read instincts from the continuous-learning system:
 ls ~/.claude/projects/*/memory/*.md 2>/dev/null
 
 # Check for observations
-ls ~/.claude/skills/continuous-learning-v2/data/ 2>/dev/null
+ls ~/.claude/skills/op-continuous-learning/data/ 2>/dev/null
 ```
 
 #### Instinct → Component Mapping

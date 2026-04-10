@@ -1,4 +1,4 @@
-"""Tests for continuous-learning-v2 instinct-cli.py
+"""Tests for op-continuous-learning instinct-cli.py
 
 Covers:
   - parse_instinct_file() — content preservation, edge cases

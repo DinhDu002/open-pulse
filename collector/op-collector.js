@@ -224,7 +224,7 @@ function parseEvent(hookType, input, sessionId, workDir, model, opts = {}) {
 
   // Agent tool
   if (toolName === 'Agent') {
-    const agentName = toolInput.subagent_type || '';
+    const agentName = toolInput.subagent_type || 'general-purpose';
     return {
       ...base,
       // Short-form

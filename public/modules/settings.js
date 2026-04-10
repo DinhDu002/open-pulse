@@ -169,22 +169,22 @@ export function mount(el) {
   get('/health').then(data => {
     statStatus.valueEl.textContent = data.status || 'ok';
     statStatus.valueEl.style.color = data.status === 'ok' ? 'var(--success)' : 'var(--danger)';
-    statDb.valueEl.textContent = data.dbSize || '—';
-    statEvents.valueEl.textContent = data.totalEvents ?? '—';
+    statDb.valueEl.textContent = data.db_size_bytes ? (data.db_size_bytes / 1024 / 1024).toFixed(1) + ' MB' : '—';
+    statEvents.valueEl.textContent = data.total_events ?? '—';
   }).catch(() => {
     statStatus.valueEl.textContent = 'error';
     statStatus.valueEl.style.color = 'var(--danger)';
   });
 
   // Load config
-  get('/settings/config').then(data => {
+  get('/config').then(data => {
     configArea.value = JSON.stringify(data, null, 2);
   }).catch(() => {
     configArea.placeholder = 'Could not load config';
   });
 
   // Load errors
-  get('/settings/errors').then(data => {
+  get('/errors').then(data => {
     errorsContent.removeChild(errSpinner);
     const errors = Array.isArray(data) ? data : (data.errors || []);
 

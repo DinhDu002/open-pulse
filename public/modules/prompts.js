@@ -368,13 +368,13 @@ function renderFlowTimeline(el, events) {
     // Seq number
     const seq = document.createElement('div');
     seq.className = 'flow-seq';
-    seq.textContent = String(ev.seq_num != null ? ev.seq_num : idx + 1);
+    seq.textContent = String(idx + 1);
     row.appendChild(seq);
 
     // Colored dot
     const dot = document.createElement('div');
     dot.className = 'flow-dot';
-    dot.style.background = dotColor(ev.type, ev.name);
+    dot.style.background = dotColor(ev.event_type, ev.name);
     row.appendChild(dot);
 
     // Main area: name + detail
@@ -383,7 +383,7 @@ function renderFlowTimeline(el, events) {
 
     const nameEl = document.createElement('span');
     nameEl.className = 'flow-name';
-    nameEl.textContent = ev.name || ev.type || 'event';
+    nameEl.textContent = ev.name || ev.event_type || 'event';
     main.appendChild(nameEl);
 
     if (ev.detail) {
@@ -513,24 +513,17 @@ async function renderDetail(el, promptId) {
       meta.appendChild(proj);
     }
 
-    // Session link — built with DOM nodes to avoid innerHTML
+    // Session ID label (read-only, no link)
     if (prompt.session_id) {
       const sessSpan = document.createElement('span');
-      sessSpan.textContent = '🔗 Session: ';
-
-      const sessLink = document.createElement('a');
-      sessLink.href = '#sessions/' + prompt.session_id;
-      sessLink.style.color = 'var(--accent)';
-      sessLink.style.textDecoration = 'none';
-      sessLink.textContent = prompt.session_id.slice(0, 8) + '…';
-
-      sessSpan.appendChild(sessLink);
+      sessSpan.style.color = 'var(--muted)';
+      sessSpan.textContent = 'Session: ' + prompt.session_id.slice(0, 8) + '…';
       meta.appendChild(sessSpan);
     }
 
-    if (prompt.started_at) {
+    if (prompt.timestamp) {
       const timeSpan = document.createElement('span');
-      timeSpan.textContent = '🕐 ' + dayjs(prompt.started_at).format('MMM D, HH:mm');
+      timeSpan.textContent = '🕐 ' + dayjs(prompt.timestamp).format('MMM D, HH:mm');
       meta.appendChild(timeSpan);
     }
 
@@ -540,9 +533,9 @@ async function renderDetail(el, promptId) {
       meta.appendChild(durSpan);
     }
 
-    if (prompt.cost) {
+    if (prompt.total_cost_usd) {
       const costSpan = document.createElement('span');
-      costSpan.textContent = '💰 ' + formatCost(prompt.cost);
+      costSpan.textContent = '💰 ' + formatCost(prompt.total_cost_usd);
       meta.appendChild(costSpan);
     }
 

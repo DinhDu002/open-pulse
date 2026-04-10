@@ -28,7 +28,7 @@ describe('op-backfill-prompts', () => {
       { timestamp: '2026-04-08T10:00:05Z', session_id: 'sess-bf-1',
         event_type: 'tool_call', name: 'Bash', user_prompt: 'run tests', seq_num: 3 },
       { timestamp: '2026-04-08T10:00:10Z', session_id: 'sess-bf-1',
-        event_type: 'session_end', name: 'session_end', seq_num: 4 },
+        event_type: 'session_end', name: 'session_end', user_prompt: 'run tests', seq_num: 4 },
       { timestamp: '2026-04-08T11:00:01Z', session_id: 'sess-bf-2',
         event_type: 'tool_call', name: 'Read', user_prompt: 'fix bug', seq_num: 1 },
     ];

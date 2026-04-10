@@ -13,6 +13,16 @@ const {
 } = require('./op-db');
 
 // ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+/** Check if a directory is the root of a git repository. */
+function isGitRepo(dir) {
+  try { return fs.statSync(path.join(dir, '.git')).isDirectory(); }
+  catch { return false; }
+}
+
+// ---------------------------------------------------------------------------
 // nodeIdToPath
 // ---------------------------------------------------------------------------
 
@@ -202,7 +212,7 @@ function renderInstinctPage(node) {
 // ---------------------------------------------------------------------------
 
 /**
- * Generates markdown for a component node (skill/agent/hook/rule).
+ * Generates markdown for a component node (skill/agent).
  *
  * @param {object} node          - kg_nodes row
  * @param {Array}  outgoingEdges - kg_edges rows where source_id = node.id
@@ -404,6 +414,18 @@ function renderIndexPage(nodes, edges, projectName) {
     lines.push('');
   }
 
+  // User Notes
+  const noteNodes = nodes.filter(n => n.type === 'note');
+  if (noteNodes.length > 0) {
+    lines.push('## Notes', '');
+    for (const node of noteNodes) {
+      const props = parseProperties(node);
+      const slug = props.slug || node.name;
+      lines.push(`- [[notes/${slug}]] — ${node.name}`);
+    }
+    lines.push('');
+  }
+
   return lines.join('\n');
 }
 
@@ -422,7 +444,7 @@ function renderIndexPage(nodes, edges, projectName) {
 function generateVault(db, projectId) {
   // Look up the project directory
   const project = db.prepare('SELECT * FROM cl_projects WHERE project_id = ?').get(projectId);
-  if (!project || !project.directory) {
+  if (!project || !project.directory || !isGitRepo(project.directory)) {
     return { filesWritten: 0, filesSkipped: 0 };
   }
 
@@ -431,7 +453,7 @@ function generateVault(db, projectId) {
 
   // Query all KG nodes and edges, filter out session nodes (too noisy)
   const { nodes, edges } = getKgGraph(db);
-  const filteredNodes = nodes.filter(n => n.type !== 'session' && n.type !== 'project');
+  const filteredNodes = nodes.filter(n => n.type !== 'session' && n.type !== 'project' && n.type !== 'note');
 
   let filesWritten = 0;
   let filesSkipped = 0;

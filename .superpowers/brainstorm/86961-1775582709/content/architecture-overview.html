@@ -1,0 +1,134 @@
+<h2>Knowledge Graph — Architecture Overview</h2>
+<p class="subtitle">Phase 1: Two-Pass pipeline với graph storage + vault generation</p>
+
+<div class="mockup">
+  <div class="mockup-header">System Architecture</div>
+  <div class="mockup-body" style="padding: 24px; font-family: monospace; font-size: 13px; line-height: 2.2;">
+    <div style="display: flex; gap: 32px; align-items: flex-start;">
+
+      <!-- Left: Data Sources -->
+      <div style="flex: 1; min-width: 200px;">
+        <div style="background: #2d4a2d; padding: 12px; border-radius: 8px; text-align: center; margin-bottom: 8px;">
+          <strong style="color: #8fbc8f;">Open Pulse SQLite</strong>
+        </div>
+        <div style="padding-left: 12px; color: #888; font-size: 12px;">
+          events (tool calls, sessions)<br>
+          cl_instincts (patterns)<br>
+          components (inventory)<br>
+          suggestions (recommendations)<br>
+          sessions (aggregates)
+        </div>
+      </div>
+
+      <!-- Center: Processing -->
+      <div style="flex: 1.5; min-width: 280px;">
+        <div style="background: #2d3a4a; padding: 12px; border-radius: 8px; text-align: center; margin-bottom: 16px;">
+          <strong style="color: #87ceeb;">Pass 1: Deterministic</strong>
+          <div style="color: #888; font-size: 11px; margin-top: 4px;">Timer: 5 min &nbsp;|&nbsp; SQL queries → graph upsert</div>
+        </div>
+
+        <div style="text-align: center; color: #555; margin: 8px 0;">▼</div>
+
+        <div style="background: #3a2d4a; padding: 12px; border-radius: 8px; text-align: center; margin-bottom: 16px;">
+          <strong style="color: #b08ad6;">kg_nodes + kg_edges</strong>
+          <div style="color: #888; font-size: 11px; margin-top: 4px;">SQLite tables in open-pulse.db</div>
+        </div>
+
+        <div style="text-align: center; color: #555; margin: 8px 0;">▼</div>
+
+        <div style="background: #2d3a4a; padding: 12px; border-radius: 8px; text-align: center; margin-bottom: 16px;">
+          <strong style="color: #87ceeb;">Vault Generator</strong>
+          <div style="color: #888; font-size: 11px; margin-top: 4px;">Timer: 15 min &nbsp;|&nbsp; graph → .md files (SHA-256 skip unchanged)</div>
+        </div>
+
+        <div style="text-align: center; color: #555; margin: 8px 0;">▼</div>
+
+        <div style="background: #4a3a2d; padding: 12px; border-radius: 8px; text-align: center;">
+          <strong style="color: #daa520;">Pass 2: LLM Enrichment</strong>
+          <div style="color: #888; font-size: 11px; margin-top: 4px;">On-demand / daily &nbsp;|&nbsp; Haiku → summaries, insights</div>
+        </div>
+      </div>
+
+      <!-- Right: Output -->
+      <div style="flex: 1.2; min-width: 220px;">
+        <div style="background: #2d4a3a; padding: 12px; border-radius: 8px; text-align: center; margin-bottom: 8px;">
+          <strong style="color: #8fbc8f;">Per-Project Output</strong>
+        </div>
+        <div style="padding-left: 12px; color: #aaa; font-size: 12px;">
+          <div style="margin-bottom: 8px;">
+            <strong style="color: #ccc;">project/.claude/knowledge/</strong>
+          </div>
+          <div style="padding-left: 8px; border-left: 2px solid #444;">
+            index.md &nbsp;<span style="color:#666;">← CLAUDE.md @ref</span><br>
+            tools/<br>
+            &nbsp;&nbsp;Read.md<br>
+            &nbsp;&nbsp;Edit.md<br>
+            components/<br>
+            &nbsp;&nbsp;code-reviewer.md<br>
+            patterns/<br>
+            &nbsp;&nbsp;file-modification.md<br>
+            sessions/<br>
+            &nbsp;&nbsp;recent-summary.md<br>
+            insights/<br>
+            &nbsp;&nbsp;cost-hotspots.md<br>
+            &nbsp;&nbsp;error-patterns.md<br>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div style="margin-top: 24px;">
+  <h3>Node Types trong Knowledge Graph</h3>
+  <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-top: 12px;">
+    <div style="background: #1a2a1a; padding: 12px; border-radius: 8px; border: 1px solid #2d4a2d;">
+      <strong style="color: #8fbc8f;">tool:*</strong>
+      <div style="color: #888; font-size: 12px;">Read, Edit, Write, Bash, Grep...</div>
+    </div>
+    <div style="background: #1a2a1a; padding: 12px; border-radius: 8px; border: 1px solid #2d4a2d;">
+      <strong style="color: #8fbc8f;">component:*</strong>
+      <div style="color: #888; font-size: 12px;">skills, agents, hooks, rules</div>
+    </div>
+    <div style="background: #1a2a1a; padding: 12px; border-radius: 8px; border: 1px solid #2d4a2d;">
+      <strong style="color: #8fbc8f;">instinct:*</strong>
+      <div style="color: #888; font-size: 12px;">learned behavioral patterns</div>
+    </div>
+    <div style="background: #1a1a2a; padding: 12px; border-radius: 8px; border: 1px solid #2d2d4a;">
+      <strong style="color: #87ceeb;">pattern:*</strong>
+      <div style="color: #888; font-size: 12px;">workflow sequences (A→B→C)</div>
+    </div>
+    <div style="background: #1a1a2a; padding: 12px; border-radius: 8px; border: 1px solid #2d2d4a;">
+      <strong style="color: #87ceeb;">session:*</strong>
+      <div style="color: #888; font-size: 12px;">session summaries + context</div>
+    </div>
+    <div style="background: #2a1a2a; padding: 12px; border-radius: 8px; border: 1px solid #4a2d4a;">
+      <strong style="color: #b08ad6;">project:*</strong>
+      <div style="color: #888; font-size: 12px;">tracked project roots</div>
+    </div>
+  </div>
+</div>
+
+<div style="margin-top: 24px;">
+  <h3>Edge Types (Relationships)</h3>
+  <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; margin-top: 12px;">
+    <div style="background: #1a1a1a; padding: 10px; border-radius: 6px; border: 1px solid #333;">
+      <code style="color: #daa520;">triggers</code> — <span style="color: #888;">tool A commonly followed by tool B</span>
+    </div>
+    <div style="background: #1a1a1a; padding: 10px; border-radius: 6px; border: 1px solid #333;">
+      <code style="color: #daa520;">belongs_to</code> — <span style="color: #888;">component belongs to project</span>
+    </div>
+    <div style="background: #1a1a1a; padding: 10px; border-radius: 6px; border: 1px solid #333;">
+      <code style="color: #daa520;">learned_from</code> — <span style="color: #888;">instinct derived from sessions</span>
+    </div>
+    <div style="background: #1a1a1a; padding: 10px; border-radius: 6px; border: 1px solid #333;">
+      <code style="color: #daa520;">co_occurs</code> — <span style="color: #888;">tools used together in sessions</span>
+    </div>
+    <div style="background: #1a1a1a; padding: 10px; border-radius: 6px; border: 1px solid #333;">
+      <code style="color: #daa520;">suggests</code> — <span style="color: #888;">instinct led to suggestion</span>
+    </div>
+    <div style="background: #1a1a1a; padding: 10px; border-radius: 6px; border: 1px solid #333;">
+      <code style="color: #daa520;">used_in</code> — <span style="color: #888;">tool/component used in session</span>
+    </div>
+  </div>
+</div>

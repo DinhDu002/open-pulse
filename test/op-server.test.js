@@ -521,6 +521,27 @@ describe('op-server', () => {
     });
   });
 
+  describe('GET /api/projects', () => {
+    it('includes event-only projects', async () => {
+      const dbMod = require('../src/op-db');
+      const testDb = require('better-sqlite3')(process.env.OPEN_PULSE_DB);
+
+      dbMod.insertEvent(testDb, {
+        timestamp: '2026-04-10T06:00:00Z', session_id: 'evonly-1',
+        event_type: 'tool_call', name: 'Read',
+        working_directory: '/tmp/event-only-proj', project_name: 'event-only-proj',
+      });
+      testDb.close();
+
+      const res = await app.inject({ method: 'GET', url: '/api/projects' });
+      assert.equal(res.statusCode, 200);
+      const projects = JSON.parse(res.body);
+
+      const eventOnly = projects.find(p => p.name === 'event-only-proj');
+      assert.ok(eventOnly, 'should include project known only from events');
+    });
+  });
+
   describe('DELETE /api/projects/:id', () => {
     it('returns 404 for non-existent project', async () => {
       const res = await app.inject({ method: 'DELETE', url: '/api/projects/nonexistent' });

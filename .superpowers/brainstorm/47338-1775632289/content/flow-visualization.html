@@ -1,0 +1,85 @@
+<h2>How should the prompt flow be displayed?</h2>
+<p class="subtitle">Click the option that feels most useful for understanding Claude's workflow</p>
+
+<div class="options">
+  <div class="option" data-choice="a" onclick="toggleSelect(this)">
+    <div class="letter">A</div>
+    <div class="content">
+      <h3>Grouped Timeline</h3>
+      <p>Events grouped under the prompt text, shown as an indented list with icons per event type. Simple, fits existing UI style.</p>
+      <div style="background:#1a1a2e;border-radius:8px;padding:16px;margin-top:12px;font-family:monospace;font-size:13px;line-height:1.8">
+        <div style="color:#e0e0ff;font-weight:bold;margin-bottom:8px">💬 "hãy thêm tính năng authentication"</div>
+        <div style="padding-left:20px;color:#888">
+          <div>📖 Read — src/server.js <span style="color:#555">120ms</span></div>
+          <div>📖 Read — src/auth.js <span style="color:#555">85ms</span></div>
+          <div>🔍 Grep — "passport" <span style="color:#555">45ms</span></div>
+          <div>🤖 Agent — Explore codebase <span style="color:#555">3.2s</span></div>
+          <div style="padding-left:20px;color:#666;font-size:11px">↳ 5 sub-events inside agent</div>
+          <div>✏️ Edit — src/auth.js <span style="color:#555">200ms</span></div>
+          <div>✏️ Write — src/middleware.js <span style="color:#555">150ms</span></div>
+          <div>⚡ Bash — npm test <span style="color:#555">4.1s ✅</span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="option" data-choice="b" onclick="toggleSelect(this)">
+    <div class="letter">B</div>
+    <div class="content">
+      <h3>Step-by-Step Flow</h3>
+      <p>Vertical flowchart with connected steps. Each step shows what Claude did and why. More visual but takes more space.</p>
+      <div style="background:#1a1a2e;border-radius:8px;padding:16px;margin-top:12px;font-size:13px">
+        <div style="display:flex;align-items:start;gap:12px;margin-bottom:4px">
+          <div style="display:flex;flex-direction:column;align-items:center">
+            <div style="width:32px;height:32px;border-radius:50%;background:#2a4a8a;display:flex;align-items:center;justify-content:center;color:white;font-size:14px">1</div>
+            <div style="width:2px;height:24px;background:#333"></div>
+          </div>
+          <div style="color:#ccc"><strong style="color:#e0e0ff">Research</strong> — Read 2 files, Grep 1 pattern<br><span style="color:#666">src/server.js, src/auth.js</span></div>
+        </div>
+        <div style="display:flex;align-items:start;gap:12px;margin-bottom:4px">
+          <div style="display:flex;flex-direction:column;align-items:center">
+            <div style="width:32px;height:32px;border-radius:50%;background:#2a6a4a;display:flex;align-items:center;justify-content:center;color:white;font-size:14px">2</div>
+            <div style="width:2px;height:24px;background:#333"></div>
+          </div>
+          <div style="color:#ccc"><strong style="color:#e0e0ff">Delegate</strong> — Agent: Explore codebase<br><span style="color:#666">5 sub-events, 3.2s</span></div>
+        </div>
+        <div style="display:flex;align-items:start;gap:12px;margin-bottom:4px">
+          <div style="display:flex;flex-direction:column;align-items:center">
+            <div style="width:32px;height:32px;border-radius:50%;background:#6a4a2a;display:flex;align-items:center;justify-content:center;color:white;font-size:14px">3</div>
+            <div style="width:2px;height:24px;background:#333"></div>
+          </div>
+          <div style="color:#ccc"><strong style="color:#e0e0ff">Implement</strong> — Edit 1 file, Write 1 file<br><span style="color:#666">src/auth.js, src/middleware.js</span></div>
+        </div>
+        <div style="display:flex;align-items:start;gap:12px">
+          <div style="display:flex;flex-direction:column;align-items:center">
+            <div style="width:32px;height:32px;border-radius:50%;background:#4a2a6a;display:flex;align-items:center;justify-content:center;color:white;font-size:14px">4</div>
+          </div>
+          <div style="color:#ccc"><strong style="color:#e0e0ff">Verify</strong> — Bash: npm test ✅<br><span style="color:#666">4.1s, passed</span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="option" data-choice="c" onclick="toggleSelect(this)">
+    <div class="letter">C</div>
+    <div class="content">
+      <h3>Hybrid: Grouped + Expandable</h3>
+      <p>Default shows grouped timeline (like A), but each event row is expandable to show tool_input/tool_response details. Best of both worlds.</p>
+      <div style="background:#1a1a2e;border-radius:8px;padding:16px;margin-top:12px;font-family:monospace;font-size:13px;line-height:1.8">
+        <div style="color:#e0e0ff;font-weight:bold;margin-bottom:8px">💬 "hãy thêm tính năng authentication"</div>
+        <div style="padding-left:20px;color:#888">
+          <div>📖 Read — src/server.js <span style="color:#555">120ms</span></div>
+          <div style="background:#111;border-radius:4px;padding:4px 8px;margin:4px 0;cursor:pointer;color:#aaa">
+            ▶ 🔍 Grep — "passport" <span style="color:#555">45ms</span>
+          </div>
+          <div style="background:#0a0a1a;border-left:2px solid #2a4a8a;padding:8px 12px;margin:4px 0 4px 16px;color:#666;font-size:11px">
+            <div><strong>Input:</strong> pattern="passport", path="src/"</div>
+            <div><strong>Result:</strong> 3 matches in 2 files</div>
+          </div>
+          <div>✏️ Edit — src/auth.js <span style="color:#555">200ms</span></div>
+          <div>⚡ Bash — npm test <span style="color:#555">4.1s ✅</span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>

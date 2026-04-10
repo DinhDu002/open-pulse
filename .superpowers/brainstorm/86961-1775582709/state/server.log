@@ -1,0 +1,7 @@
+{"type":"server-started","port":65038,"host":"127.0.0.1","url_host":"localhost","url":"http://localhost:65038","screen_dir":"/Users/du/Workspace/open-pulse/.superpowers/brainstorm/86961-1775582709/content","state_dir":"/Users/du/Workspace/open-pulse/.superpowers/brainstorm/86961-1775582709/state"}
+{"type":"screen-added","file":"/Users/du/Workspace/open-pulse/.superpowers/brainstorm/86961-1775582709/content/architecture-overview.html"}
+{"type":"screen-added","file":"/Users/du/Workspace/open-pulse/.superpowers/brainstorm/86961-1775582709/content/vault-structure.html"}
+{"type":"screen-added","file":"/Users/du/Workspace/open-pulse/.superpowers/brainstorm/86961-1775582709/content/pipeline-detail.html"}
+{"type":"screen-added","file":"/Users/du/Workspace/open-pulse/.superpowers/brainstorm/86961-1775582709/content/ui-and-api.html"}
+{"type":"screen-added","file":"/Users/du/Workspace/open-pulse/.superpowers/brainstorm/86961-1775582709/content/waiting.html"}
+{"type":"server-stopped","reason":"idle timeout"}

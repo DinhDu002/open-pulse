@@ -17,6 +17,7 @@ function run(db) {
       `SELECT id, timestamp, user_prompt, seq_num, estimated_cost_usd
        FROM events
        WHERE session_id = ? AND prompt_id IS NULL
+         AND event_type != 'session_end'
        ORDER BY seq_num`
     ).all(sessionId);
 

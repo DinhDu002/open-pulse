@@ -62,7 +62,7 @@
       "matcher": "*",
       "hooks": [{
         "type": "command",
-        "command": "bash ~/.claude/skills/continuous-learning-v2/hooks/observe.sh",
+        "command": "bash ~/.claude/skills/op-continuous-learning/hooks/observe.sh",
         "async": true,
         "timeout": 3000
       }]

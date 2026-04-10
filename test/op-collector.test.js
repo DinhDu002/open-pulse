@@ -55,6 +55,15 @@ describe('op-collector', () => {
     assert.equal(event.name, 'code-reviewer');
   });
 
+  it('parseEvent defaults to general-purpose when subagent_type missing', () => {
+    const event = mod.parseEvent('post-tool', {
+      tool_name: 'Agent',
+      tool_input: { description: 'do something', prompt: 'test' },
+    }, 'sess-1', '/tmp', 'opus');
+    assert.equal(event.event_type, 'agent_spawn');
+    assert.equal(event.name, 'general-purpose');
+  });
+
   it('parseEvent returns session_end for stop hook', () => {
     const event = mod.parseEvent('stop', {
       usage: { input_tokens: 5000, output_tokens: 3000 },

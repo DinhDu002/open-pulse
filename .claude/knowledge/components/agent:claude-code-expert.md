@@ -1,0 +1,19 @@
+---
+type: component
+component_type: agent
+invocations: 0
+sessions_used: 0
+last_used: 2026-04-10T09:14:59.626Z
+generated_at: 2026-04-10T09:20:59.060Z
+---
+
+# claude-code-expert
+
+## Description
+
+Claude Code expert — answers questions about features, advises on configuration, scans setup for optimization, and searches for community solutions. Use when you need comprehensive Claude Code guidance combining multiple knowledge sources.
+
+## Stats
+
+- **Invocations:** 0
+- **Sessions used:** 0

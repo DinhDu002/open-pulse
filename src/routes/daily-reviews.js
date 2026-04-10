@@ -46,6 +46,9 @@ module.exports = async function dailyReviewRoutes(app, opts) {
 
   // POST /api/daily-reviews/run
   app.post('/api/daily-reviews/run', async (req, reply) => {
+    if (config.daily_review_enabled === false) {
+      return errorReply(reply, 400, 'Daily review is disabled');
+    }
     try {
       const result = await runDailyReview(db, {
         model: config.daily_review_model || 'opus',

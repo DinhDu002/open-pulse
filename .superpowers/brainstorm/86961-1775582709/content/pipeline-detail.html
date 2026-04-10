@@ -1,0 +1,133 @@
+<h2>Pipeline Detail — Two-Pass Processing</h2>
+<p class="subtitle">Entity extraction → Graph build → Vault generation → LLM enrichment</p>
+
+<div class="mockup">
+  <div class="mockup-header">Pass 1: Deterministic Pipeline (every 5 min)</div>
+  <div class="mockup-body" style="padding: 20px; font-size: 13px; line-height: 1.8;">
+    <div style="display: flex; gap: 20px;">
+      <div style="flex: 1; background: #1a2a1a; padding: 14px; border-radius: 8px; border: 1px solid #2d4a2d;">
+        <strong style="color: #8fbc8f;">Step 1: Extract Nodes</strong>
+        <div style="color: #aaa; font-size: 12px; margin-top: 8px;">
+          SQL queries on existing tables:<br><br>
+          <code style="color: #daa520;">tools</code> ← SELECT DISTINCT name FROM events WHERE event_type IN ('tool_call','skill_invoke','agent_spawn')<br><br>
+          <code style="color: #daa520;">components</code> ← SELECT * FROM components<br><br>
+          <code style="color: #daa520;">instincts</code> ← SELECT * FROM cl_instincts WHERE confidence > 0.3<br><br>
+          <code style="color: #daa520;">sessions</code> ← SELECT * FROM sessions (last 30d)<br><br>
+          <code style="color: #daa520;">projects</code> ← SELECT * FROM cl_projects<br><br>
+          <code style="color: #daa520;">patterns</code> ← derived from trigger analysis (A→B pairs)
+        </div>
+      </div>
+      <div style="flex: 1; background: #1a1a2a; padding: 14px; border-radius: 8px; border: 1px solid #2d2d4a;">
+        <strong style="color: #87ceeb;">Step 2: Extract Edges</strong>
+        <div style="color: #aaa; font-size: 12px; margin-top: 8px;">
+          From existing data:<br><br>
+          <code style="color: #daa520;">triggers</code> ← LEAD(name) OVER session window<br>
+          <span style="color:#666;">(already in suggestion engine)</span><br><br>
+          <code style="color: #daa520;">co_occurs</code> ← tools in same session<br>
+          <span style="color:#666;">COUNT(*) GROUP BY tool pair per session</span><br><br>
+          <code style="color: #daa520;">belongs_to</code> ← component.project → project<br><br>
+          <code style="color: #daa520;">learned_from</code> ← instinct.project_id → project<br><br>
+          <code style="color: #daa520;">suggests</code> ← suggestion.instinct_id → instinct<br><br>
+          <code style="color: #daa520;">used_in</code> ← events.session_id → session
+        </div>
+      </div>
+      <div style="flex: 1; background: #2a1a2a; padding: 14px; border-radius: 8px; border: 1px solid #4a2d4a;">
+        <strong style="color: #b08ad6;">Step 3: Upsert Graph</strong>
+        <div style="color: #aaa; font-size: 12px; margin-top: 8px;">
+          Transaction:<br><br>
+          1. Upsert nodes<br>
+          <code style="color: #888;">INSERT OR REPLACE INTO kg_nodes</code><br><br>
+          2. Upsert edges with weight update<br>
+          <code style="color: #888;">INSERT INTO kg_edges ... ON CONFLICT UPDATE weight = weight + new</code><br><br>
+          3. Update <code>last_updated</code> timestamp<br><br>
+          4. Mark <code>kg_sync_cursor</code><br>
+          <span style="color:#666;">track last processed event ID<br>→ next run starts from cursor</span>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="mockup" style="margin-top: 20px;">
+  <div class="mockup-header">Vault Generator (every 15 min, after Pass 1)</div>
+  <div class="mockup-body" style="padding: 20px; font-size: 13px; line-height: 1.8;">
+    <div style="display: flex; gap: 20px;">
+      <div style="flex: 1; background: #1a2a1a; padding: 14px; border-radius: 8px; border: 1px solid #2d4a2d;">
+        <strong style="color: #8fbc8f;">Per Project</strong>
+        <div style="color: #aaa; font-size: 12px; margin-top: 8px;">
+          For each project in cl_projects:<br><br>
+          1. Query graph: all nodes + edges for this project<br>
+          <span style="color:#666;">(project nodes + global tools/patterns used in project sessions)</span><br><br>
+          2. Filter: only include nodes with activity in this project<br><br>
+          3. Target dir: <code>{project_dir}/.claude/knowledge/</code>
+        </div>
+      </div>
+      <div style="flex: 1; background: #1a1a2a; padding: 14px; border-radius: 8px; border: 1px solid #2d2d4a;">
+        <strong style="color: #87ceeb;">SHA-256 Skip</strong>
+        <div style="color: #aaa; font-size: 12px; margin-top: 8px;">
+          For each vault file to generate:<br><br>
+          1. Build content from template + graph data<br><br>
+          2. Hash content (SHA-256)<br><br>
+          3. Compare with existing file hash<br>
+          <span style="color:#666;">(stored in kg_vault_hashes table)</span><br><br>
+          4. Skip write if hash matches<br><br>
+          <span style="color: #8fbc8f;">→ Typical run: 5-10% of files actually rewritten</span>
+        </div>
+      </div>
+      <div style="flex: 1; background: #2a2a1a; padding: 14px; border-radius: 8px; border: 1px solid #4a4a2d;">
+        <strong style="color: #daa520;">CLAUDE.md Injection</strong>
+        <div style="color: #aaa; font-size: 12px; margin-top: 8px;">
+          One-time setup per project:<br><br>
+          1. Check if <code>@.claude/knowledge/index.md</code> exists in CLAUDE.md<br><br>
+          2. If not, append:<br>
+          <code style="color: #888;">@.claude/knowledge/index.md</code><br><br>
+          3. Never modify existing CLAUDE.md content<br><br>
+          4. Add <code>.claude/knowledge/</code> to .gitignore<br><br>
+          <span style="color: #daa520;">⚠ Asks user confirmation first time</span>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="mockup" style="margin-top: 20px;">
+  <div class="mockup-header">Pass 2: LLM Enrichment (on-demand or daily)</div>
+  <div class="mockup-body" style="padding: 20px; font-size: 13px; line-height: 1.8;">
+    <div style="display: flex; gap: 20px;">
+      <div style="flex: 1; background: #2a1a1a; padding: 14px; border-radius: 8px; border: 1px solid #4a2d2d;">
+        <strong style="color: #e88;">When It Runs</strong>
+        <div style="color: #aaa; font-size: 12px; margin-top: 8px;">
+          • Manual trigger from Open Pulse UI<br>
+          • Daily timer (configurable, default off)<br>
+          • After significant changes (50+ new events since last run)<br><br>
+          <span style="color: #888;">User controls: enable/disable, frequency, API key config</span>
+        </div>
+      </div>
+      <div style="flex: 1; background: #1a2a2a; padding: 14px; border-radius: 8px; border: 1px solid #2d4a4a;">
+        <strong style="color: #5fbfbf;">What It Adds</strong>
+        <div style="color: #aaa; font-size: 12px; margin-top: 8px;">
+          Haiku analyzes graph + recent events:<br><br>
+          • <strong>Pattern summaries</strong><br>
+          <span style="color:#888;">"Read→Edit→Write is a file modification workflow"</span><br><br>
+          • <strong>Session insights</strong><br>
+          <span style="color:#888;">"Recent sessions focus on API refactoring"</span><br><br>
+          • <strong>Recommendations</strong><br>
+          <span style="color:#888;">"Consider creating an agent for frequent debug→test loop"</span><br><br>
+          • <strong>Component descriptions</strong><br>
+          <span style="color:#888;">Fill missing descriptions from usage context</span>
+        </div>
+      </div>
+      <div style="flex: 1; background: #1a1a2a; padding: 14px; border-radius: 8px; border: 1px solid #2d2d4a;">
+        <strong style="color: #87ceeb;">How It Merges</strong>
+        <div style="color: #aaa; font-size: 12px; margin-top: 8px;">
+          Enrichments stored in <code>kg_nodes.properties</code>:<br><br>
+          <code style="color: #888;">{ "summary": "...", "enriched_at": "..." }</code><br><br>
+          Vault generator checks:<br>
+          • If <code>enriched_at</code> exists → use LLM summary<br>
+          • Otherwise → use template text<br><br>
+          <span style="color: #8fbc8f;">Enrichment = overlay, never replaces deterministic data</span>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>

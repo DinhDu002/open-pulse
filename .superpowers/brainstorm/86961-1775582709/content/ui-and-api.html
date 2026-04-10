@@ -1,0 +1,218 @@
+<h2>Open Pulse UI — Knowledge Management</h2>
+<p class="subtitle">New SPA module + API endpoints + Cytoscape.js graph view</p>
+
+<div class="mockup">
+  <div class="mockup-header">knowledge.js — New SPA Module (2 tabs)</div>
+  <div class="mockup-body" style="padding: 0;">
+
+    <!-- Tab bar -->
+    <div style="display: flex; border-bottom: 1px solid #333; background: #1a1a1a;">
+      <div style="padding: 10px 20px; color: #87ceeb; border-bottom: 2px solid #87ceeb; font-size: 13px;">Graph Explorer</div>
+      <div style="padding: 10px 20px; color: #666; font-size: 13px;">Projects & Sync</div>
+    </div>
+
+    <!-- Tab 1: Graph Explorer -->
+    <div style="padding: 16px;">
+      <div style="display: flex; gap: 16px; margin-bottom: 16px;">
+        <!-- Controls bar -->
+        <div style="flex: 1; display: flex; gap: 8px; align-items: center;">
+          <select style="background: #222; color: #aaa; border: 1px solid #444; padding: 6px 10px; border-radius: 4px; font-size: 12px;">
+            <option>All projects</option>
+            <option>open-pulse</option>
+            <option>crm-backend</option>
+          </select>
+          <select style="background: #222; color: #aaa; border: 1px solid #444; padding: 6px 10px; border-radius: 4px; font-size: 12px;">
+            <option>All types</option>
+            <option>tools</option>
+            <option>components</option>
+            <option>patterns</option>
+            <option>instincts</option>
+          </select>
+          <input type="text" placeholder="Search nodes..." style="background: #222; color: #aaa; border: 1px solid #444; padding: 6px 10px; border-radius: 4px; font-size: 12px; width: 180px;">
+        </div>
+        <div style="display: flex; gap: 6px;">
+          <div style="background: #2d4a2d; color: #8fbc8f; padding: 4px 10px; border-radius: 12px; font-size: 11px;">243 nodes</div>
+          <div style="background: #2d2d4a; color: #87ceeb; padding: 4px 10px; border-radius: 12px; font-size: 11px;">891 edges</div>
+        </div>
+      </div>
+
+      <div style="display: flex; gap: 16px;">
+        <!-- Graph canvas -->
+        <div style="flex: 2; background: #0d0d0d; border: 1px solid #333; border-radius: 8px; height: 360px; display: flex; align-items: center; justify-content: center; position: relative;">
+          <!-- Simulated graph nodes -->
+          <svg width="100%" height="100%" viewBox="0 0 500 340">
+            <!-- Edges -->
+            <line x1="250" y1="100" x2="150" y2="180" stroke="#333" stroke-width="1"/>
+            <line x1="250" y1="100" x2="350" y2="160" stroke="#333" stroke-width="1"/>
+            <line x1="250" y1="100" x2="250" y2="200" stroke="#555" stroke-width="2"/>
+            <line x1="150" y1="180" x2="100" y2="260" stroke="#333" stroke-width="1"/>
+            <line x1="150" y1="180" x2="200" y2="270" stroke="#333" stroke-width="1"/>
+            <line x1="350" y1="160" x2="400" y2="240" stroke="#333" stroke-width="1"/>
+            <line x1="350" y1="160" x2="300" y2="260" stroke="#333" stroke-width="1"/>
+            <line x1="250" y1="200" x2="200" y2="270" stroke="#444" stroke-width="1"/>
+            <line x1="250" y1="200" x2="300" y2="260" stroke="#444" stroke-width="1"/>
+
+            <!-- Central node -->
+            <circle cx="250" cy="100" r="22" fill="#2d4a2d" stroke="#8fbc8f" stroke-width="2"/>
+            <text x="250" y="104" text-anchor="middle" fill="#8fbc8f" font-size="10">Read</text>
+
+            <!-- Connected nodes -->
+            <circle cx="150" cy="180" r="18" fill="#2d4a2d" stroke="#6a9a6a" stroke-width="1.5"/>
+            <text x="150" y="184" text-anchor="middle" fill="#8fbc8f" font-size="9">Edit</text>
+
+            <circle cx="350" cy="160" r="18" fill="#2d4a2d" stroke="#6a9a6a" stroke-width="1.5"/>
+            <text x="350" y="164" text-anchor="middle" fill="#8fbc8f" font-size="9">Grep</text>
+
+            <circle cx="250" cy="200" r="16" fill="#2d2d4a" stroke="#6a6aaa" stroke-width="1.5"/>
+            <text x="250" y="204" text-anchor="middle" fill="#87ceeb" font-size="8">code-reviewer</text>
+
+            <circle cx="100" cy="260" r="14" fill="#2a1a2a" stroke="#7a5a8a" stroke-width="1"/>
+            <text x="100" y="264" text-anchor="middle" fill="#b08ad6" font-size="8">file-mod</text>
+
+            <circle cx="200" cy="270" r="14" fill="#2d4a2d" stroke="#6a9a6a" stroke-width="1"/>
+            <text x="200" y="274" text-anchor="middle" fill="#8fbc8f" font-size="8">Write</text>
+
+            <circle cx="400" cy="240" r="14" fill="#2d4a2d" stroke="#6a9a6a" stroke-width="1"/>
+            <text x="400" y="244" text-anchor="middle" fill="#8fbc8f" font-size="8">Glob</text>
+
+            <circle cx="300" cy="260" r="14" fill="#1a2a2a" stroke="#4a7a7a" stroke-width="1"/>
+            <text x="300" y="264" text-anchor="middle" fill="#5fbfbf" font-size="8">tdd-guide</text>
+          </svg>
+
+          <!-- Legend -->
+          <div style="position: absolute; bottom: 8px; left: 8px; font-size: 10px; color: #555; display: flex; gap: 12px;">
+            <span><span style="color: #8fbc8f;">●</span> tool</span>
+            <span><span style="color: #87ceeb;">●</span> component</span>
+            <span><span style="color: #b08ad6;">●</span> pattern</span>
+            <span><span style="color: #5fbfbf;">●</span> instinct</span>
+          </div>
+          <div style="position: absolute; top: 8px; right: 8px; font-size: 10px; color: #444;">
+            Cytoscape.js · click to explore · scroll to zoom
+          </div>
+        </div>
+
+        <!-- Side panel: node detail -->
+        <div style="flex: 1; background: #111; border: 1px solid #333; border-radius: 8px; padding: 14px; font-size: 12px;">
+          <div style="color: #8fbc8f; font-size: 14px; font-weight: bold; margin-bottom: 8px;">Read</div>
+          <div style="color: #666; font-size: 11px; margin-bottom: 12px;">tool · built-in</div>
+
+          <div style="color: #888; margin-bottom: 4px; font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px;">Stats</div>
+          <div style="color: #aaa; margin-bottom: 12px; line-height: 1.8;">
+            Invocations: <strong style="color: #ccc;">1,247</strong><br>
+            Sessions: <strong style="color: #ccc;">89</strong><br>
+            Success: <strong style="color: #8fbc8f;">98.5%</strong><br>
+            Avg/session: <strong style="color: #ccc;">14.0</strong>
+          </div>
+
+          <div style="color: #888; margin-bottom: 4px; font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px;">Connections</div>
+          <div style="color: #aaa; line-height: 2;">
+            <span style="color: #daa520;">triggers→</span> Edit (47), Write (23)<br>
+            <span style="color: #daa520;">←triggered</span> code-reviewer (89)<br>
+            <span style="color: #daa520;">co-occurs</span> Grep (72), Glob (65)<br>
+            <span style="color: #daa520;">pattern</span> file-modification
+          </div>
+
+          <div style="margin-top: 12px; padding-top: 12px; border-top: 1px solid #333;">
+            <a href="#" style="color: #87ceeb; font-size: 11px; text-decoration: none;">View vault file →</a>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="mockup" style="margin-top: 20px;">
+  <div class="mockup-header">Tab 2: Projects & Sync</div>
+  <div class="mockup-body" style="padding: 16px;">
+    <div style="display: flex; gap: 16px; margin-bottom: 16px;">
+      <div style="background: #1a2a1a; padding: 12px 16px; border-radius: 8px; border: 1px solid #2d4a2d; flex: 1; text-align: center;">
+        <div style="color: #8fbc8f; font-size: 20px; font-weight: bold;">3</div>
+        <div style="color: #666; font-size: 11px;">Projects</div>
+      </div>
+      <div style="background: #1a1a2a; padding: 12px 16px; border-radius: 8px; border: 1px solid #2d2d4a; flex: 1; text-align: center;">
+        <div style="color: #87ceeb; font-size: 20px; font-weight: bold;">243</div>
+        <div style="color: #666; font-size: 11px;">Total Nodes</div>
+      </div>
+      <div style="background: #2a1a2a; padding: 12px 16px; border-radius: 8px; border: 1px solid #4a2d4a; flex: 1; text-align: center;">
+        <div style="color: #b08ad6; font-size: 20px; font-weight: bold;">891</div>
+        <div style="color: #666; font-size: 11px;">Total Edges</div>
+      </div>
+      <div style="background: #2a2a1a; padding: 12px 16px; border-radius: 8px; border: 1px solid #4a4a2d; flex: 1; text-align: center;">
+        <div style="color: #daa520; font-size: 20px; font-weight: bold;">2m ago</div>
+        <div style="color: #666; font-size: 11px;">Last Sync</div>
+      </div>
+    </div>
+
+    <!-- Project rows -->
+    <div style="border: 1px solid #333; border-radius: 8px; overflow: hidden;">
+      <div style="display: flex; padding: 10px 14px; background: #1a1a1a; border-bottom: 1px solid #333; align-items: center;">
+        <div style="flex: 2; color: #ccc; font-weight: bold;">open-pulse</div>
+        <div style="flex: 1; color: #888; font-size: 12px;">87 nodes · 312 edges</div>
+        <div style="flex: 1; color: #888; font-size: 12px;">42 vault files</div>
+        <div style="flex: 1; color: #8fbc8f; font-size: 12px;">● synced 2m ago</div>
+        <div style="display: flex; gap: 6px;">
+          <button style="background: #2d3a4a; color: #87ceeb; border: none; padding: 4px 10px; border-radius: 4px; font-size: 11px; cursor: pointer;">Sync</button>
+          <button style="background: #4a3a2d; color: #daa520; border: none; padding: 4px 10px; border-radius: 4px; font-size: 11px; cursor: pointer;">Enrich</button>
+        </div>
+      </div>
+      <div style="display: flex; padding: 10px 14px; background: #151515; border-bottom: 1px solid #333; align-items: center;">
+        <div style="flex: 2; color: #ccc; font-weight: bold;">crm-backend</div>
+        <div style="flex: 1; color: #888; font-size: 12px;">124 nodes · 467 edges</div>
+        <div style="flex: 1; color: #888; font-size: 12px;">58 vault files</div>
+        <div style="flex: 1; color: #8fbc8f; font-size: 12px;">● synced 2m ago</div>
+        <div style="display: flex; gap: 6px;">
+          <button style="background: #2d3a4a; color: #87ceeb; border: none; padding: 4px 10px; border-radius: 4px; font-size: 11px; cursor: pointer;">Sync</button>
+          <button style="background: #4a3a2d; color: #daa520; border: none; padding: 4px 10px; border-radius: 4px; font-size: 11px; cursor: pointer;">Enrich</button>
+        </div>
+      </div>
+      <div style="display: flex; padding: 10px 14px; background: #1a1a1a; align-items: center;">
+        <div style="flex: 2; color: #ccc; font-weight: bold;">carthings-workspace</div>
+        <div style="flex: 1; color: #888; font-size: 12px;">32 nodes · 112 edges</div>
+        <div style="flex: 1; color: #888; font-size: 12px;">18 vault files</div>
+        <div style="flex: 1; color: #daa520; font-size: 12px;">● 15m ago</div>
+        <div style="display: flex; gap: 6px;">
+          <button style="background: #2d3a4a; color: #87ceeb; border: none; padding: 4px 10px; border-radius: 4px; font-size: 11px; cursor: pointer;">Sync</button>
+          <button style="background: #4a3a2d; color: #daa520; border: none; padding: 4px 10px; border-radius: 4px; font-size: 11px; cursor: pointer;">Enrich</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div style="margin-top: 24px;">
+  <h3>New API Endpoints</h3>
+  <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 12px; font-size: 12px;">
+    <div style="background: #1a1a1a; padding: 10px; border-radius: 6px; border: 1px solid #333;">
+      <code style="color: #8fbc8f;">GET</code> <code style="color: #ccc;">/api/knowledge/status</code>
+      <div style="color: #666; margin-top: 4px;">Overall KG stats (nodes, edges, last sync)</div>
+    </div>
+    <div style="background: #1a1a1a; padding: 10px; border-radius: 6px; border: 1px solid #333;">
+      <code style="color: #8fbc8f;">GET</code> <code style="color: #ccc;">/api/knowledge/projects</code>
+      <div style="color: #666; margin-top: 4px;">Per-project KG status + vault file counts</div>
+    </div>
+    <div style="background: #1a1a1a; padding: 10px; border-radius: 6px; border: 1px solid #333;">
+      <code style="color: #8fbc8f;">GET</code> <code style="color: #ccc;">/api/knowledge/graph?project=</code>
+      <div style="color: #666; margin-top: 4px;">Graph data for Cytoscape.js (nodes + edges)</div>
+    </div>
+    <div style="background: #1a1a1a; padding: 10px; border-radius: 6px; border: 1px solid #333;">
+      <code style="color: #8fbc8f;">GET</code> <code style="color: #ccc;">/api/knowledge/node/:id</code>
+      <div style="color: #666; margin-top: 4px;">Single node detail + connections</div>
+    </div>
+    <div style="background: #1a1a1a; padding: 10px; border-radius: 6px; border: 1px solid #333;">
+      <code style="color: #87ceeb;">POST</code> <code style="color: #ccc;">/api/knowledge/sync</code>
+      <div style="color: #666; margin-top: 4px;">Force Pass 1 sync (graph extraction)</div>
+    </div>
+    <div style="background: #1a1a1a; padding: 10px; border-radius: 6px; border: 1px solid #333;">
+      <code style="color: #87ceeb;">POST</code> <code style="color: #ccc;">/api/knowledge/generate</code>
+      <div style="color: #666; margin-top: 4px;">Force vault generation for project(s)</div>
+    </div>
+    <div style="background: #1a1a1a; padding: 10px; border-radius: 6px; border: 1px solid #333;">
+      <code style="color: #daa520;">POST</code> <code style="color: #ccc;">/api/knowledge/enrich</code>
+      <div style="color: #666; margin-top: 4px;">Trigger Pass 2 Haiku enrichment</div>
+    </div>
+    <div style="background: #1a1a1a; padding: 10px; border-radius: 6px; border: 1px solid #333;">
+      <code style="color: #8fbc8f;">GET</code> <code style="color: #ccc;">/api/knowledge/config</code>
+      <div style="color: #666; margin-top: 4px;">KG-specific config (timers, Pass 2 toggle)</div>
+    </div>
+  </div>
+</div>

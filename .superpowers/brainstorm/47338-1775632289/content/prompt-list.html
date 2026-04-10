@@ -1,0 +1,120 @@
+<h2>What should each prompt row show?</h2>
+<p class="subtitle">The #prompts page lists all user messages. Pick the layout that gives the most useful overview.</p>
+
+<div class="options">
+  <div class="option" data-choice="a" onclick="toggleSelect(this)">
+    <div class="letter">A</div>
+    <div class="content">
+      <h3>Compact — Text + Stats</h3>
+      <p>Prompt text with inline badges for event count, cost, and time. Dense, scannable.</p>
+      <div style="background:#1a1a2e;border-radius:8px;padding:16px;margin-top:12px;font-size:13px">
+        <div style="display:flex;justify-content:space-between;align-items:center;padding:10px 0;border-bottom:1px solid #222">
+          <div style="flex:1;color:#e0e0ff;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin-right:16px">"hãy thêm tính năng authentication cho API"</div>
+          <div style="display:flex;gap:12px;flex-shrink:0;font-size:11px">
+            <span style="color:#888">🔧 12 events</span>
+            <span style="color:#888">💰 $0.45</span>
+            <span style="color:#888">⏱ 2m 30s</span>
+            <span style="color:#555">10:32 AM</span>
+          </div>
+        </div>
+        <div style="display:flex;justify-content:space-between;align-items:center;padding:10px 0;border-bottom:1px solid #222">
+          <div style="flex:1;color:#e0e0ff;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin-right:16px">"fix lỗi null pointer trong data processor"</div>
+          <div style="display:flex;gap:12px;flex-shrink:0;font-size:11px">
+            <span style="color:#888">🔧 5 events</span>
+            <span style="color:#888">💰 $0.12</span>
+            <span style="color:#888">⏱ 45s</span>
+            <span style="color:#555">10:28 AM</span>
+          </div>
+        </div>
+        <div style="display:flex;justify-content:space-between;align-items:center;padding:10px 0">
+          <div style="flex:1;color:#e0e0ff;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin-right:16px">"chạy test suite và fix failing tests"</div>
+          <div style="display:flex;gap:12px;flex-shrink:0;font-size:11px">
+            <span style="color:#888">🔧 28 events</span>
+            <span style="color:#888">💰 $1.20</span>
+            <span style="color:#888">⏱ 8m 15s</span>
+            <span style="color:#555">10:15 AM</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="option" data-choice="b" onclick="toggleSelect(this)">
+    <div class="letter">B</div>
+    <div class="content">
+      <h3>Rich — Text + Mini Flow Preview</h3>
+      <p>Prompt text with a mini horizontal flow showing event types as colored dots. Gives quick sense of what Claude did.</p>
+      <div style="background:#1a1a2e;border-radius:8px;padding:16px;margin-top:12px;font-size:13px">
+        <div style="padding:12px 0;border-bottom:1px solid #222">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+            <div style="color:#e0e0ff">"hãy thêm tính năng authentication cho API"</div>
+            <div style="font-size:11px;color:#555">10:32 AM • open-pulse</div>
+          </div>
+          <div style="display:flex;align-items:center;gap:4px;padding-left:8px">
+            <div title="Read" style="width:8px;height:8px;border-radius:50%;background:#4a8a4a"></div>
+            <div title="Read" style="width:8px;height:8px;border-radius:50%;background:#4a8a4a"></div>
+            <div title="Grep" style="width:8px;height:8px;border-radius:50%;background:#8a8a4a"></div>
+            <div title="Agent" style="width:8px;height:8px;border-radius:50%;background:#8a4a8a"></div>
+            <div title="Edit" style="width:8px;height:8px;border-radius:50%;background:#4a4a8a"></div>
+            <div title="Write" style="width:8px;height:8px;border-radius:50%;background:#4a4a8a"></div>
+            <div title="Bash" style="width:8px;height:8px;border-radius:50%;background:#8a6a2a"></div>
+            <span style="color:#666;font-size:11px;margin-left:8px">12 events • $0.45 • 2m 30s</span>
+          </div>
+        </div>
+        <div style="padding:12px 0;border-bottom:1px solid #222">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+            <div style="color:#e0e0ff">"fix lỗi null pointer trong data processor"</div>
+            <div style="font-size:11px;color:#555">10:28 AM • open-pulse</div>
+          </div>
+          <div style="display:flex;align-items:center;gap:4px;padding-left:8px">
+            <div title="Read" style="width:8px;height:8px;border-radius:50%;background:#4a8a4a"></div>
+            <div title="Grep" style="width:8px;height:8px;border-radius:50%;background:#8a8a4a"></div>
+            <div title="Edit" style="width:8px;height:8px;border-radius:50%;background:#4a4a8a"></div>
+            <div title="Bash" style="width:8px;height:8px;border-radius:50%;background:#8a6a2a"></div>
+            <div title="Bash" style="width:8px;height:8px;border-radius:50%;background:#8a6a2a"></div>
+            <span style="color:#666;font-size:11px;margin-left:8px">5 events • $0.12 • 45s</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="option" data-choice="c" onclick="toggleSelect(this)">
+    <div class="letter">C</div>
+    <div class="content">
+      <h3>Card — Session Context + Stats</h3>
+      <p>Each prompt as a card showing which session/project it belongs to, event breakdown by type, cost, and duration.</p>
+      <div style="background:#1a1a2e;border-radius:8px;padding:16px;margin-top:12px;font-size:13px">
+        <div style="background:#111;border-radius:8px;padding:14px;margin-bottom:10px;border:1px solid #222">
+          <div style="color:#e0e0ff;margin-bottom:8px;font-size:14px">"hãy thêm tính năng authentication cho API"</div>
+          <div style="display:flex;gap:16px;font-size:11px;color:#666;margin-bottom:8px">
+            <span>📁 open-pulse</span>
+            <span>🕐 10:32 AM</span>
+            <span>⏱ 2m 30s</span>
+            <span>💰 $0.45</span>
+          </div>
+          <div style="display:flex;gap:8px;font-size:11px">
+            <span style="background:#1a2a1a;color:#4a8a4a;padding:2px 8px;border-radius:4px">📖 4 reads</span>
+            <span style="background:#1a1a2a;color:#4a4a8a;padding:2px 8px;border-radius:4px">✏️ 2 edits</span>
+            <span style="background:#2a1a2a;color:#8a4a8a;padding:2px 8px;border-radius:4px">🤖 1 agent</span>
+            <span style="background:#2a2a1a;color:#8a6a2a;padding:2px 8px;border-radius:4px">⚡ 3 bash</span>
+          </div>
+        </div>
+        <div style="background:#111;border-radius:8px;padding:14px;border:1px solid #222">
+          <div style="color:#e0e0ff;margin-bottom:8px;font-size:14px">"fix lỗi null pointer trong data processor"</div>
+          <div style="display:flex;gap:16px;font-size:11px;color:#666;margin-bottom:8px">
+            <span>📁 open-pulse</span>
+            <span>🕐 10:28 AM</span>
+            <span>⏱ 45s</span>
+            <span>💰 $0.12</span>
+          </div>
+          <div style="display:flex;gap:8px;font-size:11px">
+            <span style="background:#1a2a1a;color:#4a8a4a;padding:2px 8px;border-radius:4px">📖 1 read</span>
+            <span style="background:#1a1a2a;color:#4a4a8a;padding:2px 8px;border-radius:4px">✏️ 1 edit</span>
+            <span style="background:#2a2a1a;color:#8a6a2a;padding:2px 8px;border-radius:4px">⚡ 2 bash</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>

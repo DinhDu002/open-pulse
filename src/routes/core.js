@@ -375,6 +375,22 @@ module.exports = async function coreRoutes(app, opts) {
 
   // ── Projects ─────────────────────────────────────────────────────────────
 
+  app.get('/api/projects', async () => {
+    const registered = db.prepare(
+      'SELECT name, directory FROM cl_projects ORDER BY last_seen_at DESC'
+    ).all();
+
+    const registeredNames = new Set(registered.map(r => r.name));
+    const eventOnly = db.prepare(
+      "SELECT DISTINCT project_name AS name FROM events WHERE project_name IS NOT NULL"
+    ).all().filter(r => !registeredNames.has(r.name));
+
+    return [
+      ...registered.map(r => ({ name: r.name, directory: r.directory })),
+      ...eventOnly.map(r => ({ name: r.name, directory: null })),
+    ];
+  });
+
   app.get('/api/projects/:id/summary', async (request, reply) => {
     const summary = getProjectSummary(db, request.params.id);
     if (!summary) return reply.code(404).send({ error: 'Project not found' });
