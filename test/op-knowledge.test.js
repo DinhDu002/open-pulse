@@ -538,6 +538,26 @@ describe('op-knowledge', () => {
       const prompt = buildScanPrompt('Proj', {});
       assert.ok(prompt.includes('JSON array'), 'should request JSON array');
     });
+
+    it('includes existing titles when provided', () => {
+      const prompt = buildScanPrompt('Proj', { 'README.md': '# Hello' }, ['Existing Entry A', 'Existing Entry B']);
+      assert.ok(prompt.includes('Existing Entry A'), 'should include existing title A');
+      assert.ok(prompt.includes('Existing Entry B'), 'should include existing title B');
+      assert.ok(prompt.includes('avoid duplicating'), 'should instruct to avoid duplicates');
+    });
+
+    it('includes CLAUDE.md content when provided', () => {
+      const claudeMd = '# Project Guide\n\n## Architecture\nHook -> JSONL -> DB';
+      const prompt = buildScanPrompt('Proj', { 'README.md': '# Hello' }, [], claudeMd);
+      assert.ok(prompt.includes('Hook -> JSONL -> DB'), 'should include CLAUDE.md content');
+      assert.ok(prompt.includes('Already documented'), 'should label as already documented');
+    });
+
+    it('includes quality rules matching extract prompt', () => {
+      const prompt = buildScanPrompt('Proj', { 'README.md': '# Hello' });
+      assert.ok(prompt.includes('CANNOT be derived by reading the source code'), 'should include quality rules');
+      assert.ok(prompt.includes('ACTIONABLE'), 'should require actionable entries');
+    });
   });
 
   // ---------------------------------------------------------------------------
