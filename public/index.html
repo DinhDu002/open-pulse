@@ -643,10 +643,8 @@
 
     /* ── Badges ── */
     .badge { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 11px; font-weight: 600; }
-    .badge-hook { background: #6c5ce740; color: var(--accent); }
     .badge-skill { background: #00b89440; color: var(--success); }
     .badge-agent { background: #fdcb6e40; color: var(--warning); }
-    .badge-rule { background: #e1705540; color: var(--danger); }
     .badge-agent-configured { background: rgba(0, 184, 148, 0.15); color: var(--success); }
     .badge-agent-builtin { background: rgba(139, 143, 163, 0.15); color: var(--text-muted); }
     .badge-origin { background: rgba(108, 92, 231, 0.12); color: var(--accent); }
@@ -756,10 +754,11 @@
       width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0;
     }
     .flow-main { flex: 1; display: flex; align-items: center; gap: 0; min-width: 0; }
-    .flow-name { font-weight: 500; font-family: 'SF Mono', monospace; font-size: 12px; }
+    .flow-name { font-weight: 500; font-family: 'SF Mono', monospace; font-size: 12px; flex-shrink: 0; }
     .flow-detail {
       color: var(--text-muted); margin-left: 8px; font-size: 12px;
       overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+      flex: 1; min-width: 0;
     }
     .flow-duration { color: var(--text-muted); font-size: 11px; flex-shrink: 0; }
     .flow-status { font-size: 11px; width: 16px; text-align: center; flex-shrink: 0; }
@@ -795,7 +794,7 @@
 
     /* ── Prompt detail header ── */
     .prompt-header { margin-bottom: 20px; }
-    .prompt-text { font-size: 16px; margin-bottom: 6px; line-height: 1.4; }
+    .prompt-text { font-size: 16px; margin-bottom: 6px; line-height: 1.4; word-break: break-word; overflow-wrap: break-word; }
     .back-link {
       color: var(--accent); text-decoration: none; font-size: 13px;
       display: inline-block; margin-bottom: 12px;
@@ -820,13 +819,13 @@
       <h1>Open <span>Pulse</span></h1>
       <nav id="nav">
         <a href="#dashboard" class="active">Dashboard</a>
-        <a href="#sessions">Sessions</a>
         <a href="#prompts">Prompts</a>
         <a href="#inventory">Inventory</a>
-        <a href="#expert">Expert</a>
         <a href="#projects">Projects</a>
         <a href="#learning">Learning</a>
         <a href="#knowledge" class="nav-link">Knowledge</a>
+        <a href="#auto-evolves">Auto-evolve</a>
+        <a href="#daily-reviews">Daily Review</a>
         <a href="#settings">Settings</a>
       </nav>
     </div>
