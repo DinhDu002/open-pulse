@@ -232,7 +232,7 @@ function renderPagination(container, page, totalPages, onPageChange) {
   container.appendChild(pager);
 }
 
-function renderItemDetail(el, item, type, onBack, { onPageChange } = {}) {
+function renderItemDetail(el, item, type, onBack, { onPageChange, onProjectChange, detailProject } = {}) {
   el.textContent = '';
 
   const header = document.createElement('div');
@@ -262,6 +262,33 @@ function renderItemDetail(el, item, type, onBack, { onPageChange } = {}) {
     el.appendChild(desc);
   }
 
+  // Project tabs
+  const byProject = item.by_project || [];
+  if (byProject.length > 0) {
+    const totalCount = byProject.reduce((s, p) => s + p.count, 0);
+    const tabBar = document.createElement('div');
+    tabBar.style.cssText = 'display:flex; gap:0; margin-bottom:16px; border-bottom:2px solid var(--border); overflow-x:auto;';
+
+    const allTab = document.createElement('button');
+    allTab.style.cssText = 'padding:8px 16px; border:none; background:none; cursor:pointer; font-size:0.9rem; border-bottom:2px solid transparent; margin-bottom:-2px; white-space:nowrap; color:var(--text);';
+    if (!detailProject) allTab.style.borderBottomColor = 'var(--accent)';
+    allTab.textContent = 'All (' + totalCount + ')';
+    allTab.addEventListener('click', () => onProjectChange && onProjectChange(''));
+    tabBar.appendChild(allTab);
+
+    byProject.forEach(p => {
+      const projName = p.project || 'unknown';
+      const tab = document.createElement('button');
+      tab.style.cssText = 'padding:8px 16px; border:none; background:none; cursor:pointer; font-size:0.9rem; border-bottom:2px solid transparent; margin-bottom:-2px; white-space:nowrap; color:var(--text);';
+      if (detailProject === projName) tab.style.borderBottomColor = 'var(--accent)';
+      tab.textContent = projName + ' (' + p.count + ')';
+      tab.addEventListener('click', () => onProjectChange && onProjectChange(projName));
+      tabBar.appendChild(tab);
+    });
+
+    el.appendChild(tabBar);
+  }
+
   // Triggers section (what this item triggers)
   const triggers = item.triggers || [];
   if (triggers.length > 0) {
@@ -287,48 +314,6 @@ function renderItemDetail(el, item, type, onBack, { onPageChange } = {}) {
       trigCard.appendChild(row);
     });
     el.appendChild(trigCard);
-  }
-
-  // Usage by Project breakdown
-  const byProject = item.by_project || [];
-  if (byProject.length > 0) {
-    const bpCard = document.createElement('div');
-    bpCard.className = 'card';
-    const bpTitle = document.createElement('div');
-    bpTitle.className = 'card-title';
-    bpTitle.textContent = 'Usage by Project';
-    bpCard.appendChild(bpTitle);
-
-    const totalCount = byProject.reduce((s, p) => s + p.count, 0);
-
-    byProject.forEach(p => {
-      const row = document.createElement('div');
-      row.style.cssText = 'padding:6px 0; display:flex; align-items:center; gap:8px; border-bottom:1px solid var(--border);';
-
-      const nameEl = document.createElement('span');
-      nameEl.style.cssText = 'min-width:160px;';
-      nameEl.textContent = p.project || 'unknown';
-
-      const countEl = document.createElement('span');
-      countEl.style.cssText = 'min-width:40px; text-align:right;';
-      countEl.textContent = p.count;
-
-      const pct = totalCount > 0 ? Math.round((p.count / totalCount) * 100) : 0;
-      const barWrap = document.createElement('div');
-      barWrap.style.cssText = 'flex:1; height:8px; background:var(--border); border-radius:4px; overflow:hidden;';
-      const bar = document.createElement('div');
-      bar.style.cssText = 'height:100%; background:var(--accent); border-radius:4px; width:' + pct + '%;';
-      barWrap.appendChild(bar);
-
-      const pctEl = document.createElement('span');
-      pctEl.className = 'text-muted';
-      pctEl.style.cssText = 'min-width:40px; text-align:right;';
-      pctEl.textContent = pct + '%';
-
-      row.append(nameEl, countEl, barWrap, pctEl);
-      bpCard.appendChild(row);
-    });
-    el.appendChild(bpCard);
   }
 
   // Invocation history
@@ -385,35 +370,7 @@ export function mount(el, { period } = {}) {
     tabsEl.appendChild(btn);
   });
 
-  let currentProject = '';
-
-  const filterWrap = document.createElement('div');
-  filterWrap.style.cssText = 'display:flex; align-items:center; gap:8px; justify-content:space-between;';
-
-  const projectSelect = document.createElement('select');
-  projectSelect.className = 'project-filter';
-  const defaultOpt = document.createElement('option');
-  defaultOpt.value = '';
-  defaultOpt.textContent = 'All Projects';
-  projectSelect.appendChild(defaultOpt);
-
-  get('/projects').then(projects => {
-    for (const proj of projects) {
-      const opt = document.createElement('option');
-      opt.value = proj.name;
-      opt.textContent = proj.name;
-      projectSelect.appendChild(opt);
-    }
-  });
-
-  projectSelect.addEventListener('change', () => {
-    currentProject = projectSelect.value;
-    loadTab(activeTab);
-  });
-
-  filterWrap.appendChild(tabsEl);
-  filterWrap.appendChild(projectSelect);
-  el.appendChild(filterWrap);
+  el.appendChild(tabsEl);
   el.appendChild(content);
 
   function loadTab(tab, isRefresh = false) {
@@ -427,10 +384,9 @@ export function mount(el, { period } = {}) {
       content.appendChild(sp);
     }
 
-    const projectParam = currentProject ? '&project=' + encodeURIComponent(currentProject) : '';
     let apiPath;
-    if (tab === 'skills') apiPath = '/inventory/skills?period=' + p + projectParam;
-    else if (tab === 'agents') apiPath = '/inventory/agents?period=' + p + projectParam;
+    if (tab === 'skills') apiPath = '/inventory/skills?period=' + p;
+    else if (tab === 'agents') apiPath = '/inventory/agents?period=' + p;
     const fetchFn = isRefresh
       ? () => getWithETag(apiPath, currentETag)
       : () => get(apiPath).then(data => ({ data, etag: null, notModified: false }));
@@ -447,11 +403,16 @@ export function mount(el, { period } = {}) {
       if (tab === 'skills') {
         renderSkillsTab(content, items, item => {
           inDetailView = true;
-          function loadDetail(pg) {
-            const url = '/inventory/skills/' + encodeURIComponent(item.name) + '?period=' + p + '&page=' + pg + projectParam;
+          let detailProject = '';
+          function loadDetail(pg, proj) {
+            if (proj !== undefined) detailProject = proj;
+            const projParam = detailProject ? '&project=' + encodeURIComponent(detailProject) : '';
+            const url = '/inventory/skills/' + encodeURIComponent(item.name) + '?period=' + p + '&page=' + pg + projParam;
             get(url).then(detail => {
               renderItemDetail(content, detail, 'skill', () => { inDetailView = false; loadTab('skills'); }, {
-                onPageChange: loadDetail,
+                onPageChange: pg => loadDetail(pg),
+                onProjectChange: proj => loadDetail(1, proj),
+                detailProject,
               });
             });
           }
@@ -460,11 +421,16 @@ export function mount(el, { period } = {}) {
       } else if (tab === 'agents') {
         renderAgentsTab(content, items, item => {
           inDetailView = true;
-          function loadDetail(pg) {
-            const url = '/inventory/agents/' + encodeURIComponent(item.name) + '?period=' + p + '&page=' + pg + projectParam;
+          let detailProject = '';
+          function loadDetail(pg, proj) {
+            if (proj !== undefined) detailProject = proj;
+            const projParam = detailProject ? '&project=' + encodeURIComponent(detailProject) : '';
+            const url = '/inventory/agents/' + encodeURIComponent(item.name) + '?period=' + p + '&page=' + pg + projParam;
             get(url).then(detail => {
               renderItemDetail(content, detail, 'agent', () => { inDetailView = false; loadTab('agents'); }, {
-                onPageChange: loadDetail,
+                onPageChange: pg => loadDetail(pg),
+                onProjectChange: proj => loadDetail(1, proj),
+                detailProject,
               });
             });
           }

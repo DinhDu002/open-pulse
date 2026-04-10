@@ -1,4 +1,4 @@
-import { get, put, post } from './api.js';
+import { get, post } from './api.js';
 
 function categoryBadge(cat) {
   const colors = {
@@ -25,41 +25,41 @@ function actionBadge(action) {
 }
 
 function statusBadge(status) {
-  const colors = { pending: '#fdcb6e', accepted: '#00b894', dismissed: '#8b8fa3' };
+  const colors = { pending: '#fdcb6e', accepted: '#00b894', dismissed: '#e17055' };
   const span = document.createElement('span');
   span.className = 'badge';
   const c = colors[status] || '#8b8fa3';
-  span.style.cssText = `background:${c}26;color:${c}`;
-  span.textContent = status;
+  span.style.cssText = `background:${c}26;color:${c};font-size:10px;font-weight:600`;
+  span.textContent = status || 'pending';
   return span;
 }
 
 async function renderStats(container) {
   const stats = await get('/daily-reviews/stats');
-  const cards = document.createElement('div');
-  cards.className = 'stat-grid';
-  for (const { status, count } of (stats.byStatus || [])) {
-    const card = document.createElement('div');
-    card.className = 'stat-card';
-    const valDiv = document.createElement('div');
-    valDiv.className = 'stat-value';
-    valDiv.textContent = count;
-    const labelDiv = document.createElement('div');
-    labelDiv.className = 'stat-label';
-    labelDiv.textContent = status;
-    card.appendChild(valDiv);
-    card.appendChild(labelDiv);
-    cards.appendChild(card);
-  }
-  container.appendChild(cards);
+  const total = (stats.byStatus || []).reduce((sum, s) => sum + s.count, 0);
+  const card = document.createElement('div');
+  card.className = 'stat-grid';
+  const c = document.createElement('div');
+  c.className = 'stat-card';
+  const valDiv = document.createElement('div');
+  valDiv.className = 'stat-value';
+  valDiv.textContent = total;
+  const labelDiv = document.createElement('div');
+  labelDiv.className = 'stat-label';
+  labelDiv.textContent = 'suggestions';
+  c.appendChild(valDiv);
+  c.appendChild(labelDiv);
+  card.appendChild(c);
+  container.appendChild(card);
 }
 
-async function renderList(container, filterDate, filterStatus) {
+async function renderList(container, filterDate, filterStatus, page = 1) {
   const params = new URLSearchParams();
   if (filterDate) params.set('review_date', filterDate);
   if (filterStatus) params.set('status', filterStatus);
-  const qs = params.toString() ? `?${params}` : '';
-  const data = await get(`/daily-reviews${qs}`);
+  params.set('page', page);
+  params.set('per_page', '50');
+  const data = await get(`/daily-reviews?${params}`);
 
   if (!data.rows || data.rows.length === 0) {
     const emptyDiv = document.createElement('div');
@@ -73,7 +73,7 @@ async function renderList(container, filterDate, filterStatus) {
   table.className = 'data-table';
   const thead = document.createElement('thead');
   const headerRow = document.createElement('tr');
-  for (const col of ['Date', 'Category', 'Title', 'Action', 'Target', 'Confidence', 'Status', 'Actions']) {
+  for (const col of ['Date', 'Category', 'Title', 'Action', 'Target', 'Confidence']) {
     const th = document.createElement('th');
     th.textContent = col;
     headerRow.appendChild(th);
@@ -94,20 +94,11 @@ async function renderList(container, filterDate, filterStatus) {
     tr.appendChild(tdCat);
 
     const tdTitle = document.createElement('td');
-    if (row.reasoning) {
-      const details = document.createElement('details');
-      details.className = 'inline-details';
-      const summary = document.createElement('summary');
-      summary.textContent = row.title;
-      details.appendChild(summary);
-      const p = document.createElement('p');
-      p.className = 'reasoning-text';
-      p.textContent = row.reasoning;
-      details.appendChild(p);
-      tdTitle.appendChild(details);
-    } else {
-      tdTitle.textContent = row.title;
-    }
+    const titleLink = document.createElement('a');
+    titleLink.href = '#daily-reviews/' + row.id;
+    titleLink.textContent = row.title;
+    titleLink.style.cssText = 'color:var(--accent);text-decoration:none;cursor:pointer';
+    tdTitle.appendChild(titleLink);
     tr.appendChild(tdTitle);
 
     const tdAction = document.createElement('td');
@@ -122,42 +113,141 @@ async function renderList(container, filterDate, filterStatus) {
     tdConf.textContent = row.confidence ? row.confidence.toFixed(2) : '\u2014';
     tr.appendChild(tdConf);
 
-    const tdStatus = document.createElement('td');
-    tdStatus.appendChild(statusBadge(row.status));
-    tr.appendChild(tdStatus);
-
-    const tdActions = document.createElement('td');
-    if (row.status === 'pending') {
-      const acceptBtn = document.createElement('button');
-      acceptBtn.className = 'btn btn-sm btn-success';
-      acceptBtn.textContent = 'Accept';
-      acceptBtn.onclick = async () => {
-        await put(`/daily-reviews/${row.id}/accept`);
-        container.textContent = '';
-        renderList(container, filterDate, filterStatus);
-      };
-      tdActions.appendChild(acceptBtn);
-
-      const dismissBtn = document.createElement('button');
-      dismissBtn.className = 'btn btn-sm';
-      dismissBtn.textContent = 'Dismiss';
-      dismissBtn.style.marginLeft = '4px';
-      dismissBtn.onclick = async () => {
-        await put(`/daily-reviews/${row.id}/dismiss`);
-        container.textContent = '';
-        renderList(container, filterDate, filterStatus);
-      };
-      tdActions.appendChild(dismissBtn);
-    }
-    tr.appendChild(tdActions);
-
     tbody.appendChild(tr);
   }
   table.appendChild(tbody);
   container.appendChild(table);
 }
 
-export function mount(app, opts = {}) {
+async function renderDetail(el, reviewId) {
+  el.textContent = '';
+  const loading = document.createElement('div');
+  loading.className = 'empty-state';
+  loading.textContent = 'Loading…';
+  el.appendChild(loading);
+
+  try {
+    const review = await get('/daily-reviews/' + reviewId);
+    el.removeChild(loading);
+
+    // Back link
+    const backLink = document.createElement('a');
+    backLink.href = '#daily-reviews';
+    backLink.className = 'back-link';
+    backLink.textContent = '\u2190 Back to Daily Reviews';
+    el.appendChild(backLink);
+
+    // Header card
+    const header = document.createElement('div');
+    header.className = 'card';
+    header.style.marginBottom = '20px';
+
+    const title = document.createElement('h2');
+    title.style.cssText = 'margin:0 0 12px 0;font-size:18px';
+    title.textContent = review.title;
+    header.appendChild(title);
+
+    // Badges row
+    const badges = document.createElement('div');
+    badges.style.cssText = 'display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px';
+    badges.appendChild(categoryBadge(review.category));
+    badges.appendChild(actionBadge(review.action));
+    badges.appendChild(statusBadge(review.status));
+    header.appendChild(badges);
+
+    // Meta row
+    const meta = document.createElement('div');
+    meta.style.cssText = 'display:flex;gap:16px;flex-wrap:wrap;font-size:13px;color:var(--muted)';
+
+    const dateSpan = document.createElement('span');
+    dateSpan.textContent = 'Date: ' + review.review_date;
+    meta.appendChild(dateSpan);
+
+    if (review.target_type) {
+      const targetSpan = document.createElement('span');
+      targetSpan.textContent = 'Target: ' + review.target_type;
+      meta.appendChild(targetSpan);
+    }
+
+    if (review.confidence != null) {
+      const confSpan = document.createElement('span');
+      confSpan.textContent = 'Confidence: ' + review.confidence.toFixed(2);
+      meta.appendChild(confSpan);
+    }
+
+    if (review.created_at) {
+      const createdSpan = document.createElement('span');
+      createdSpan.textContent = 'Created: ' + new Date(review.created_at).toLocaleString();
+      meta.appendChild(createdSpan);
+    }
+
+    header.appendChild(meta);
+    el.appendChild(header);
+
+    // Description section
+    if (review.description) {
+      const descCard = document.createElement('div');
+      descCard.className = 'card';
+      descCard.style.marginBottom = '20px';
+      const descTitle = document.createElement('div');
+      descTitle.className = 'card-title';
+      descTitle.textContent = 'Description';
+      descCard.appendChild(descTitle);
+      const descBody = document.createElement('div');
+      descBody.style.cssText = 'white-space:pre-wrap;font-size:14px;line-height:1.6';
+      descBody.textContent = review.description;
+      descCard.appendChild(descBody);
+      el.appendChild(descCard);
+    }
+
+    // Reasoning section
+    if (review.reasoning) {
+      const reasonCard = document.createElement('div');
+      reasonCard.className = 'card';
+      reasonCard.style.marginBottom = '20px';
+      const reasonTitle = document.createElement('div');
+      reasonTitle.className = 'card-title';
+      reasonTitle.textContent = 'Reasoning';
+      reasonCard.appendChild(reasonTitle);
+      const reasonBody = document.createElement('div');
+      reasonBody.style.cssText = 'white-space:pre-wrap;font-size:14px;line-height:1.6';
+      reasonBody.textContent = review.reasoning;
+      reasonCard.appendChild(reasonBody);
+      el.appendChild(reasonCard);
+    }
+
+    // Vietnamese summary section
+    if (review.summary_vi) {
+      const viCard = document.createElement('div');
+      viCard.className = 'card';
+      viCard.style.marginBottom = '20px';
+      const viTitle = document.createElement('div');
+      viTitle.className = 'card-title';
+      viTitle.textContent = 'Tóm tắt';
+      viCard.appendChild(viTitle);
+      const viBody = document.createElement('div');
+      viBody.style.cssText = 'white-space:pre-wrap;font-size:14px;line-height:1.6';
+      viBody.textContent = review.summary_vi;
+      viCard.appendChild(viBody);
+      el.appendChild(viCard);
+    }
+
+  } catch (err) {
+    if (loading.parentNode === el) el.removeChild(loading);
+    const errDiv = document.createElement('div');
+    errDiv.className = 'empty-state';
+    errDiv.style.color = 'var(--danger)';
+    errDiv.textContent = 'Failed to load review: ' + err.message;
+    el.appendChild(errDiv);
+  }
+}
+
+export async function mount(app, { period, params } = {}) {
+  if (params) {
+    await renderDetail(app, params);
+    return;
+  }
+
   app.textContent = '';
 
   const header = document.createElement('div');
@@ -171,12 +261,18 @@ export function mount(app, opts = {}) {
   runBtn.textContent = 'Run Now';
   runBtn.onclick = async () => {
     runBtn.disabled = true;
-    runBtn.textContent = 'Running...';
+    runBtn.textContent = 'Running\u2026';
     try {
       await post('/daily-reviews/run');
-      mount(app, opts);
+      mount(app, { period, params });
     } catch (err) {
-      runBtn.textContent = 'Failed';
+      runBtn.disabled = false;
+      runBtn.textContent = 'Run Now';
+      const errEl = document.createElement('div');
+      errEl.style.cssText = 'color:#e17055;font-size:13px;margin-top:8px';
+      errEl.textContent = err.message || 'Daily review failed';
+      header.appendChild(errEl);
+      setTimeout(() => errEl.remove(), 8000);
     }
   };
   header.appendChild(runBtn);
@@ -193,16 +289,6 @@ export function mount(app, opts = {}) {
   dateInput.value = new Date().toISOString().slice(0, 10);
   filterBar.appendChild(dateInput);
 
-  for (const s of ['all', 'pending', 'accepted', 'dismissed']) {
-    const btn = document.createElement('button');
-    btn.className = 'btn btn-sm';
-    btn.textContent = s;
-    btn.onclick = () => {
-      listEl.textContent = '';
-      renderList(listEl, dateInput.value, s === 'all' ? '' : s);
-    };
-    filterBar.appendChild(btn);
-  }
   app.appendChild(filterBar);
 
   const listEl = document.createElement('div');

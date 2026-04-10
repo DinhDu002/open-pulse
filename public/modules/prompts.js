@@ -16,6 +16,13 @@ function formatCost(usd) {
   return '$' + (usd || 0).toFixed(4);
 }
 
+function formatTokens(n) {
+  if (!n || n <= 0) return '0';
+  if (n >= 1_000_000) return (n / 1_000_000).toFixed(1) + 'M';
+  if (n >= 1_000) return (n / 1_000).toFixed(1) + 'K';
+  return String(n);
+}
+
 function formatTime(ts) {
   if (!ts) return '—';
   return dayjs(ts).format('HH:mm');
@@ -65,7 +72,7 @@ function eventTypeLabel(type) {
 
 // ── Summary cards ─────────────────────────────────────────────────────────────
 
-function renderSummaryCards(el, { total, totalEvents, totalCost }) {
+function renderSummaryCards(el, { total, totalEvents, totalTokens }) {
   const grid = document.createElement('div');
   grid.className = 'stat-grid';
   grid.style.marginBottom = '20px';
@@ -73,7 +80,7 @@ function renderSummaryCards(el, { total, totalEvents, totalCost }) {
   const cards = [
     { label: 'Prompts', value: String(total || 0), extra: '' },
     { label: 'Events', value: String(totalEvents || 0), extra: '' },
-    { label: 'Total Cost', value: formatCost(totalCost), extra: ' cost' },
+    { label: 'Total Tokens', value: formatTokens(totalTokens), extra: '' },
   ];
 
   cards.forEach(c => {
@@ -117,9 +124,9 @@ function renderPromptCard(prompt) {
 
   const metaItems = [];
   if (prompt.project) metaItems.push('📁 ' + prompt.project);
-  metaItems.push('🕐 ' + formatTime(prompt.started_at));
+  metaItems.push('🕐 ' + formatTime(prompt.timestamp));
   if (prompt.duration_ms) metaItems.push('⏱ ' + formatDuration(prompt.duration_ms));
-  if (prompt.cost) metaItems.push('💰 ' + formatCost(prompt.cost));
+  if (prompt.total_tokens) metaItems.push('🔤 ' + formatTokens(prompt.total_tokens) + ' tokens');
   if (prompt.event_count) metaItems.push('📊 ' + prompt.event_count + ' events');
 
   metaItems.forEach(text => {
@@ -292,7 +299,7 @@ async function renderList(el, period) {
       renderSummaryCards(summaryEl, {
         total,
         totalEvents: data.total_events,
-        totalCost: data.total_cost,
+        totalTokens: data.total_tokens,
       });
 
       if (prompts.length === 0) {
@@ -533,10 +540,10 @@ async function renderDetail(el, promptId) {
       meta.appendChild(durSpan);
     }
 
-    if (prompt.total_cost_usd) {
-      const costSpan = document.createElement('span');
-      costSpan.textContent = '💰 ' + formatCost(prompt.total_cost_usd);
-      meta.appendChild(costSpan);
+    if (prompt.total_tokens) {
+      const tokSpan = document.createElement('span');
+      tokSpan.textContent = '🔤 ' + formatTokens(prompt.total_tokens) + ' tokens';
+      meta.appendChild(tokSpan);
     }
 
     const evtCount = events.length || prompt.event_count || 0;

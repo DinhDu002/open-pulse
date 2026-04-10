@@ -524,12 +524,18 @@ function renderScan(el) {
         scanBtn.appendChild(btnSp);
         scanBtn.appendChild(document.createTextNode('Scanning\u2026'));
 
-        post('/knowledge/scan', { project_id: projectId }).then(() => {
-          scanBtn.textContent = 'Done';
+        post('/knowledge/scan', { project_id: projectId }).then(result => {
+          const count = result.extracted || 0;
+          scanBtn.textContent = count > 0 ? count + ' entries extracted' : 'No new entries';
+          // Update entry count in table
+          if (count > 0) {
+            const current = parseInt(tdEntries.textContent) || 0;
+            tdEntries.textContent = String(current + (result.inserted || 0));
+          }
           setTimeout(() => {
             scanBtn.disabled = false;
             scanBtn.textContent = 'Scan';
-          }, 2000);
+          }, 3000);
         }).catch(err => {
           scanBtn.disabled = false;
           scanBtn.textContent = 'Scan';

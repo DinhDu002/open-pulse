@@ -8,6 +8,11 @@ function fmtTime(ts) {
 function confidenceBar(score) {
   const pct = Math.round((score || 0) * 100);
   const color = pct >= 80 ? 'var(--success)' : pct >= 50 ? 'var(--warning)' : 'var(--danger)';
+  const wrap = document.createElement('span');
+  wrap.style.cssText = 'display:inline-flex;align-items:center;gap:6px';
+  const label = document.createElement('span');
+  label.textContent = pct + '%';
+  label.style.color = color;
   const bar = document.createElement('span');
   bar.className = 'confidence-bar';
   const fill = document.createElement('span');
@@ -15,7 +20,9 @@ function confidenceBar(score) {
   fill.style.width = pct + '%';
   fill.style.background = color;
   bar.appendChild(fill);
-  return bar;
+  wrap.appendChild(label);
+  wrap.appendChild(bar);
+  return wrap;
 }
 
 function statusBadge(status) {
@@ -68,7 +75,21 @@ async function renderList(container, filterStatus) {
     const tr = document.createElement('tr');
 
     const tdTitle = document.createElement('td');
-    tdTitle.textContent = row.title;
+    if (row.description) {
+      const details = document.createElement('details');
+      details.className = 'inline-details';
+      const summary = document.createElement('summary');
+      summary.textContent = row.title;
+      summary.style.cursor = 'pointer';
+      details.appendChild(summary);
+      const body = document.createElement('pre');
+      body.className = 'evolve-body';
+      body.textContent = row.description;
+      details.appendChild(body);
+      tdTitle.appendChild(details);
+    } else {
+      tdTitle.textContent = row.title;
+    }
     tr.appendChild(tdTitle);
 
     const tdType = document.createElement('td');
