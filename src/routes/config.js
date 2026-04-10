@@ -2,11 +2,11 @@
 
 const path = require('path');
 const fs = require('fs');
-const { ingestAll } = require('../op-ingest');
+const { ingestAll } = require('../ingest/pipeline');
 const {
   queryLearningActivity,
   queryLearningRecent,
-} = require('../op-db');
+} = require('../db/projects');
 
 module.exports = async function configRoutes(app, opts) {
   const { db, helpers, repoDir } = opts;

@@ -28,7 +28,7 @@ describe('op-server', () => {
     await app.ready();
 
     // Seed prompts test data
-    const dbMod = require('../../src/op-db');
+    const dbMod = { ...require('../../src/db/schema'), ...require('../../src/db/events'), ...require('../../src/db/sessions'), ...require('../../src/db/components'), ...require('../../src/db/scan'), ...require('../../src/db/prompts'), ...require('../../src/db/projects'), ...require('../../src/db/knowledge-entries'), ...require('../../src/db/knowledge-sync') };
     const testDb = require('better-sqlite3')(process.env.OPEN_PULSE_DB);
 
     dbMod.upsertSession(testDb, {
@@ -127,7 +127,7 @@ describe('op-server', () => {
   });
 
   it('GET /api/inventory/agents includes agent_class', async () => {
-    const dbMod = require('../../src/op-db');
+    const dbMod = { ...require('../../src/db/schema'), ...require('../../src/db/events'), ...require('../../src/db/sessions'), ...require('../../src/db/components'), ...require('../../src/db/scan'), ...require('../../src/db/prompts'), ...require('../../src/db/projects'), ...require('../../src/db/knowledge-entries'), ...require('../../src/db/knowledge-sync') };
     const db = dbMod.createDb(process.env.OPEN_PULSE_DB);
 
     // Create a configured agent file
@@ -173,7 +173,7 @@ describe('op-server', () => {
   });
 
   it('GET /api/sessions/:id includes agent_class on agent_spawn events', async () => {
-    const dbMod = require('../../src/op-db');
+    const dbMod = { ...require('../../src/db/schema'), ...require('../../src/db/events'), ...require('../../src/db/sessions'), ...require('../../src/db/components'), ...require('../../src/db/scan'), ...require('../../src/db/prompts'), ...require('../../src/db/projects'), ...require('../../src/db/knowledge-entries'), ...require('../../src/db/knowledge-sync') };
     const db = dbMod.createDb(process.env.OPEN_PULSE_DB);
 
     dbMod.upsertSession(db, {
@@ -332,7 +332,7 @@ describe('op-server', () => {
   });
 
   it('GET /api/inventory/agents/:name includes triggered_by and triggers', async () => {
-    const dbMod = require('../../src/op-db');
+    const dbMod = { ...require('../../src/db/schema'), ...require('../../src/db/events'), ...require('../../src/db/sessions'), ...require('../../src/db/components'), ...require('../../src/db/scan'), ...require('../../src/db/prompts'), ...require('../../src/db/projects'), ...require('../../src/db/knowledge-entries'), ...require('../../src/db/knowledge-sync') };
     const db = dbMod.createDb(process.env.OPEN_PULSE_DB);
 
     // Insert a skill_invoke followed by an agent_spawn in the same session
@@ -386,7 +386,7 @@ describe('op-server', () => {
   });
 
   it('GET /api/inventory/:type/:name returns trigger data from batch queries', async () => {
-    const dbMod = require('../../src/op-db');
+    const dbMod = { ...require('../../src/db/schema'), ...require('../../src/db/events'), ...require('../../src/db/sessions'), ...require('../../src/db/components'), ...require('../../src/db/scan'), ...require('../../src/db/prompts'), ...require('../../src/db/projects'), ...require('../../src/db/knowledge-entries'), ...require('../../src/db/knowledge-sync') };
     const testDb = require('better-sqlite3')(process.env.OPEN_PULSE_DB);
     const sess = 'sess-trigger-batch-' + Date.now();
     dbMod.upsertSession(testDb, { session_id: sess, started_at: '2026-04-08T12:00:00Z', model: 'sonnet', working_directory: '/tmp' });
@@ -424,7 +424,7 @@ describe('op-server', () => {
   });
 
   it('GET /api/inventory/skills/:name includes by_project breakdown', async () => {
-    const dbMod = require('../../src/op-db');
+    const dbMod = { ...require('../../src/db/schema'), ...require('../../src/db/events'), ...require('../../src/db/sessions'), ...require('../../src/db/components'), ...require('../../src/db/scan'), ...require('../../src/db/prompts'), ...require('../../src/db/projects'), ...require('../../src/db/knowledge-entries'), ...require('../../src/db/knowledge-sync') };
     const testDb = require('better-sqlite3')(process.env.OPEN_PULSE_DB);
 
     dbMod.upsertComponent(testDb, {
@@ -479,7 +479,7 @@ describe('op-server', () => {
 
   describe('GET /api/projects', () => {
     it('includes event-only projects', async () => {
-      const dbMod = require('../../src/op-db');
+      const dbMod = { ...require('../../src/db/schema'), ...require('../../src/db/events'), ...require('../../src/db/sessions'), ...require('../../src/db/components'), ...require('../../src/db/scan'), ...require('../../src/db/prompts'), ...require('../../src/db/projects'), ...require('../../src/db/knowledge-entries'), ...require('../../src/db/knowledge-sync') };
       const testDb = require('better-sqlite3')(process.env.OPEN_PULSE_DB);
 
       dbMod.insertEvent(testDb, {
@@ -507,7 +507,7 @@ describe('op-server', () => {
     it('deletes a project and returns success', async () => {
       // Seed project via internal DB
       const dbPath = process.env.OPEN_PULSE_DB;
-      const { createDb, upsertClProject, upsertKgVaultHash } = require('../../src/op-db');
+      const { createDb, upsertClProject, upsertKgVaultHash } = { ...require('../../src/db/schema'), ...require('../../src/db/events'), ...require('../../src/db/sessions'), ...require('../../src/db/components'), ...require('../../src/db/scan'), ...require('../../src/db/prompts'), ...require('../../src/db/projects'), ...require('../../src/db/knowledge-entries'), ...require('../../src/db/knowledge-sync') };
       const db = createDb(dbPath);
       const pid = 'test-del-proj';
 
@@ -735,7 +735,7 @@ describe('op-server', () => {
 
   describe('inventory deduplication and project filter', () => {
     it('GET /api/inventory/agents deduplicates same-name components', async () => {
-      const dbMod = require('../../src/op-db');
+      const dbMod = { ...require('../../src/db/schema'), ...require('../../src/db/events'), ...require('../../src/db/sessions'), ...require('../../src/db/components'), ...require('../../src/db/scan'), ...require('../../src/db/prompts'), ...require('../../src/db/projects'), ...require('../../src/db/knowledge-entries'), ...require('../../src/db/knowledge-sync') };
       const testDb = require('better-sqlite3')(process.env.OPEN_PULSE_DB);
 
       dbMod.upsertComponent(testDb, {
@@ -771,7 +771,7 @@ describe('op-server', () => {
     });
 
     it('GET /api/inventory/skills?project= filters by project_name', async () => {
-      const dbMod = require('../../src/op-db');
+      const dbMod = { ...require('../../src/db/schema'), ...require('../../src/db/events'), ...require('../../src/db/sessions'), ...require('../../src/db/components'), ...require('../../src/db/scan'), ...require('../../src/db/prompts'), ...require('../../src/db/projects'), ...require('../../src/db/knowledge-entries'), ...require('../../src/db/knowledge-sync') };
       const testDb = require('better-sqlite3')(process.env.OPEN_PULSE_DB);
 
       dbMod.upsertComponent(testDb, {

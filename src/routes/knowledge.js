@@ -9,7 +9,7 @@ const {
   updateKnowledgeEntry,
 } = require('../db/knowledge-entries');
 
-const { scanProject } = require('../op-knowledge');
+const { scanProject } = require('../knowledge/scan');
 
 module.exports = async function knowledgeRoutes(app, opts) {
   const { db, helpers, config } = opts;

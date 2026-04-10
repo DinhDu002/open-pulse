@@ -14,7 +14,7 @@ describe('op-retention', () => {
 
   before(() => {
     fs.mkdirSync(TEST_DIR, { recursive: true });
-    dbMod = require('../src/op-db');
+    dbMod = require('../src/db/schema');
     retention = require('../src/retention');
     db = dbMod.createDb(TEST_DB);
   });

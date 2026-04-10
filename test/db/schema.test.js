@@ -13,7 +13,17 @@ const TEST_DB = path.join(os.tmpdir(), `op-db-test-${Date.now()}.db`);
 
 describe('op-db', () => {
   before(() => {
-    mod = require('../../src/op-db');
+    mod = {
+      ...require('../../src/db/schema'),
+      ...require('../../src/db/events'),
+      ...require('../../src/db/sessions'),
+      ...require('../../src/db/components'),
+      ...require('../../src/db/scan'),
+      ...require('../../src/db/prompts'),
+      ...require('../../src/db/projects'),
+      ...require('../../src/db/knowledge-entries'),
+      ...require('../../src/db/knowledge-sync'),
+    };
     db = mod.createDb(TEST_DB);
   });
 
@@ -416,7 +426,7 @@ describe('op-db', () => {
       tmpDb.close();
 
       // createDb triggers migration + backfill on a DB where column is absent
-      const { createDb: createDbFresh } = require('../../src/op-db');
+      const { createDb: createDbFresh } = require('../../src/db/schema');
       const migratedDb = createDbFresh(tmpPath);
       const row = migratedDb.prepare("SELECT project_name FROM events WHERE session_id = 'bp-sess'").get();
       migratedDb.close();
@@ -487,7 +497,7 @@ describe('op-db', () => {
       tmpDb.close();
 
       // createDb triggers migration + basename backfill on a DB where column is absent
-      const { createDb: createDbFresh } = require('../../src/op-db');
+      const { createDb: createDbFresh } = require('../../src/db/schema');
       const migratedDb = createDbFresh(tmpPath);
       const row = migratedDb.prepare("SELECT project_name FROM events WHERE session_id = 'bp-sess-2'").get();
       migratedDb.close();

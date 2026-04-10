@@ -6,7 +6,7 @@ const {
   getProjectSummary,
   getProjectTimeline,
   deleteProject,
-} = require('../op-db');
+} = require('../db/projects');
 
 module.exports = async function projectsRoutes(app, opts) {
   const { db, repoDir } = opts;

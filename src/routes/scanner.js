@@ -1,11 +1,11 @@
 'use strict';
 
-const { runScan } = require('../op-sync');
+const { runScan } = require('../ingest/sync');
 const {
   insertScanResult,
   getLatestScan,
   getScanHistory,
-} = require('../op-db');
+} = require('../db/scan');
 
 module.exports = async function scannerRoutes(app, opts) {
   const { db } = opts;

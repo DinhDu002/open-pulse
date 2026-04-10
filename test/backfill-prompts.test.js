@@ -12,7 +12,10 @@ describe('op-backfill-prompts', () => {
 
   before(() => {
     fs.mkdirSync(TEST_DIR, { recursive: true });
-    dbMod = require('../src/op-db');
+    const { createDb } = require('../src/db/schema');
+    const { upsertSession } = require('../src/db/sessions');
+    const { insertEvent } = require('../src/db/events');
+    dbMod = { createDb, upsertSession, insertEvent };
     db = dbMod.createDb(TEST_DB);
 
     // Insert sessions first (required by FK constraint on prompts)
@@ -36,7 +39,7 @@ describe('op-backfill-prompts', () => {
       dbMod.insertEvent(db, evt);
     }
 
-    backfill = require('../scripts/op-backfill-prompts');
+    backfill = require('../scripts/backfill-prompts');
   });
 
   after(() => {

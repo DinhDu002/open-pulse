@@ -14,7 +14,10 @@ describe('knowledge_entries', () => {
 
   before(() => {
     fs.mkdirSync(TEST_DIR, { recursive: true });
-    dbMod = require('../../src/op-db');
+    const { createDb } = require('../../src/db/schema');
+    const { upsertClProject } = require('../../src/db/projects');
+    const keModule = require('../../src/db/knowledge-entries');
+    dbMod = { createDb, upsertClProject, ...keModule };
     db = dbMod.createDb(TEST_DB);
 
     // Seed a project so entries have a valid project_id
@@ -389,17 +392,9 @@ describe('knowledge_entries', () => {
 // =============================================================================
 
 describe('op-knowledge', () => {
-  const {
-    buildExtractPrompt,
-    buildScanPrompt,
-    mergeOrUpdate,
-    renderKnowledgeVault,
-    renderCategoryPage,
-    renderIndexPage,
-    parseJsonResponse,
-    CATEGORY_FILES,
-    CATEGORY_TITLES,
-  } = require('../../src/op-knowledge');
+  const { buildExtractPrompt, mergeOrUpdate, parseJsonResponse } = require('../../src/knowledge/extract');
+  const { buildScanPrompt } = require('../../src/knowledge/scan');
+  const { renderKnowledgeVault, renderCategoryPage, renderIndexPage, CATEGORY_FILES, CATEGORY_TITLES } = require('../../src/knowledge/vault');
 
   // ---------------------------------------------------------------------------
   // Shared test DB (separate from the knowledge_entries describe above)
@@ -409,7 +404,10 @@ describe('op-knowledge', () => {
   let TEST_REPO_DIR;
 
   before(() => {
-    dbMod2 = require('../../src/op-db');
+    const { createDb } = require('../../src/db/schema');
+    const { upsertClProject } = require('../../src/db/projects');
+    const { insertKnowledgeEntry } = require('../../src/db/knowledge-entries');
+    dbMod2 = { createDb, upsertClProject, insertKnowledgeEntry };
 
     // A second temp dir for this describe block's DB
     const dir2 = path.join(os.tmpdir(), `op-knowledge-mod-test-${Date.now()}`);
@@ -831,7 +829,9 @@ describe('knowledge entry API routes', () => {
     app = buildApp({ disableTimers: true });
     await app.ready();
 
-    const dbMod = require('../../src/op-db');
+    const { upsertClProject: upsertClProjectApi } = require('../../src/db/projects');
+    const { insertKnowledgeEntry: insertKnowledgeEntryApi } = require('../../src/db/knowledge-entries');
+    const dbMod = { upsertClProject: upsertClProjectApi, insertKnowledgeEntry: insertKnowledgeEntryApi };
     db = require('better-sqlite3')(API_TEST_DB);
 
     // Seed project
@@ -916,8 +916,8 @@ describe('knowledge entry API routes', () => {
 
   it('PUT /api/knowledge/entries/:id updates fields', async () => {
     // Seed a fresh entry to update
-    const dbMod = require('../../src/op-db');
-    const fresh = dbMod.insertKnowledgeEntry(db, {
+    const { insertKnowledgeEntry } = require('../../src/db/knowledge-entries');
+    const fresh = insertKnowledgeEntry(db, {
       project_id: 'proj-api-test',
       category:   'stack',
       title:      'Entry To Update Via API',
@@ -937,8 +937,8 @@ describe('knowledge entry API routes', () => {
   });
 
   it('DELETE /api/knowledge/entries/:id removes entry', async () => {
-    const dbMod = require('../../src/op-db');
-    const toDelete = dbMod.insertKnowledgeEntry(db, {
+    const { insertKnowledgeEntry: insertKE } = require('../../src/db/knowledge-entries');
+    const toDelete = insertKE(db, {
       project_id: 'proj-api-test',
       category:   'domain',
       title:      'Entry To Delete Via API',

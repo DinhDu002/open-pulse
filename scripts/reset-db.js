@@ -24,7 +24,7 @@ if (fs.existsSync(DB_PATH)) {
 }
 
 // 2. Recreate DB with fresh schema
-const { createDb } = require('../src/op-db');
+const { createDb } = require('../src/db/schema');
 const db = createDb(DB_PATH);
 db.close();
 console.log(`Created: ${DB_PATH}`);

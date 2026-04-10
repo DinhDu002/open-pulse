@@ -21,7 +21,9 @@ function getComponentPath(targetType, name) {
 
   switch (targetType) {
     case 'rule':      return path.join(claudeDir, 'rules', `${slug}.md`);
+    case 'hook':      return path.join(claudeDir, 'hooks', `${slug}.sh`);
     case 'skill':     return path.join(claudeDir, 'skills', slug, 'SKILL.md');
+    case 'agent':     return path.join(claudeDir, 'agents', `${slug}.md`);
     case 'knowledge': return path.join(claudeDir, 'knowledge', `${slug}.md`);
     default:          return path.join(claudeDir, 'rules', `${slug}.md`);
   }

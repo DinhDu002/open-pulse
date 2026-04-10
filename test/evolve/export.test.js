@@ -50,7 +50,7 @@ describe('cl-export-events', () => {
   before(() => {
     fs.mkdirSync(TEST_DIR, { recursive: true });
     dbPath = path.join(TEST_DIR, 'test.db');
-    const { createDb } = require('../../src/op-db');
+    const { createDb } = require('../../src/db/schema');
     const freshDb = createDb(dbPath);
     freshDb.close();
   });

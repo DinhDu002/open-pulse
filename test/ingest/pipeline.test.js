@@ -14,7 +14,7 @@ describe('op-ingest', () => {
 
   before(() => {
     fs.mkdirSync(path.join(TEST_DIR, 'data'), { recursive: true });
-    dbMod = require('../../src/op-db');
+    dbMod = require('../../src/db/schema');
     ingest = require('../../src/ingest/pipeline');
     db = dbMod.createDb(TEST_DB);
   });

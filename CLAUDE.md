@@ -1,5 +1,7 @@
 # Open Pulse — Project Guide
 
+@.claude/knowledge/index.md
+
 Local analytics dashboard and expert system for Claude Code. Tracks usage via hooks, extracts project knowledge via LLM post-ingest, and surfaces learning through auto-evolve patterns and daily reviews.
 
 ## Architecture Overview

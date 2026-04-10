@@ -5,16 +5,17 @@ const fs = require('fs');
 const Fastify = require('fastify');
 const fastifyStatic = require('@fastify/static');
 
-const { createDb } = require('./op-db');
-const { extractKnowledgeFromPrompt } = require('./op-knowledge');
-const { ingestAll, setKnowledgeHook } = require('./op-ingest');
+const { createDb } = require('./db/schema');
+const { extractKnowledgeFromPrompt } = require('./knowledge/extract');
+const { ingestAll, setKnowledgeHook } = require('./ingest/pipeline');
 const { runRetention } = require('./retention');
-const { parseQualifiedName } = require('./op-helpers');
-const { syncInstincts, runAutoEvolve } = require('./op-auto-evolve');
+const { parseQualifiedName } = require('./lib/format');
+const { syncInstincts } = require('./evolve/sync');
+const { runAutoEvolve } = require('./evolve/promote');
 const {
   syncAll,
   syncComponentsWithDb,
-} = require('./op-sync');
+} = require('./ingest/sync');
 
 // ---------------------------------------------------------------------------
 // Paths (environment-configurable with sensible defaults)
@@ -132,7 +133,7 @@ function buildApp(opts = {}) {
   // Create opts object to pass to all route plugins
   const routeOpts = {
     db,
-    helpers: require('./op-helpers'),
+    helpers: require('./lib/format'),
     dbPath: DB_PATH,
     repoDir: REPO_DIR,
     config,

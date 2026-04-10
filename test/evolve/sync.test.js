@@ -22,8 +22,14 @@ describe('op-auto-evolve', () => {
     fs.mkdirSync(TEST_LOG_DIR, { recursive: true });
     fs.mkdirSync(TEST_INHERITED_DIR, { recursive: true });
     fs.mkdirSync(TEST_PERSONAL_DIR, { recursive: true });
-    db = require('../../src/op-db').createDb(TEST_DB);
-    autoEvolve = require('../../src/op-auto-evolve');
+    db = require('../../src/db/schema').createDb(TEST_DB);
+    const { syncInstincts } = require('../../src/evolve/sync');
+    const { generateComponent, runAutoEvolve } = require('../../src/evolve/promote');
+    const { revertAutoEvolve } = require('../../src/evolve/revert');
+    const { slugify } = require('../../src/lib/slugify');
+    const { extractBody } = require('../../src/lib/frontmatter');
+    const { getComponentPath } = require('../../src/lib/paths');
+    autoEvolve = { syncInstincts, generateComponent, runAutoEvolve, revertAutoEvolve, slugify, extractBody, getComponentPath };
   });
 
   after(() => {

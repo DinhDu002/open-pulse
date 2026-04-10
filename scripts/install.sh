@@ -9,6 +9,7 @@ PLIST_PATH="$HOME/Library/LaunchAgents/${PLIST_NAME}.plist"
 AGENT_PLIST_NAME="com.open-pulse.suggestion-agent"
 AGENT_PLIST_PATH="$HOME/Library/LaunchAgents/${AGENT_PLIST_NAME}.plist"
 NODE_PATH=$(which node)
+CLAUDE_BIN_DIR=$(dirname "$(which claude 2>/dev/null)" 2>/dev/null || echo "")
 
 echo "=== Open Pulse Installer ==="
 echo "Repo: $REPO_DIR"
@@ -107,7 +108,7 @@ cat > "$PLIST_PATH" << PLIST
   <key>EnvironmentVariables</key>
   <dict>
     <key>PATH</key>
-    <string>/usr/local/bin:/usr/bin:/bin:$(dirname "${NODE_PATH}")</string>
+    <string>/usr/local/bin:/usr/bin:/bin:$(dirname "${NODE_PATH}")${CLAUDE_BIN_DIR:+:${CLAUDE_BIN_DIR}}</string>
     <key>OPEN_PULSE_DIR</key>
     <string>${REPO_DIR}</string>
   </dict>
@@ -150,7 +151,7 @@ cat > "$AGENT_PLIST_PATH" << PLIST
   <key>EnvironmentVariables</key>
   <dict>
     <key>PATH</key>
-    <string>/usr/local/bin:/usr/bin:/bin:$(dirname "${NODE_PATH}")</string>
+    <string>/usr/local/bin:/usr/bin:/bin:$(dirname "${NODE_PATH}")${CLAUDE_BIN_DIR:+:${CLAUDE_BIN_DIR}}</string>
     <key>OPEN_PULSE_DIR</key>
     <string>${REPO_DIR}</string>
   </dict>

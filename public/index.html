@@ -666,9 +666,12 @@
     .form-group textarea { min-height: 120px; font-family: 'SF Mono', monospace; font-size: 12px; resize: vertical; }
     .form-group input:focus, .form-group select:focus, .form-group textarea:focus { outline: none; border-color: var(--accent); }
 
+    /* ── Auto-evolve detail ── */
+    .evolve-body { margin: 0.5rem 0 0; padding: 0.75rem; background: var(--card); border: 1px solid var(--border); border-radius: 6px; font-size: 0.8rem; line-height: 1.5; white-space: pre-wrap; word-break: break-word; color: var(--text-muted); max-height: 300px; overflow-y: auto; }
+
     /* ── Confidence bar ── */
     .confidence-bar { display: inline-block; width: 60px; height: 6px; background: var(--border); border-radius: 3px; overflow: hidden; vertical-align: middle; margin-left: 6px; }
-    .confidence-fill { height: 100%; border-radius: 3px; }
+    .confidence-fill { display: block; height: 100%; border-radius: 3px; }
 
     /* ── Timeline (extended) ── */
     .timeline-event::before { content: ''; position: absolute; left: -23px; top: 16px; width: 10px; height: 10px; border-radius: 50%; background: var(--accent); border: 2px solid var(--bg); }

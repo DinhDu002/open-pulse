@@ -1,7 +1,7 @@
 'use strict';
 
-const { getComponentsByType } = require('../op-db');
-const { parseQualifiedName } = require('../op-helpers');
+const { getComponentsByType } = require('../db/components');
+const { parseQualifiedName } = require('../lib/format');
 
 const VALID_TYPES = new Set(['skills', 'agents']);
 

@@ -3,7 +3,7 @@
 const { describe, it } = require('node:test');
 const assert = require('node:assert/strict');
 
-const helpers = require('../src/op-helpers');
+const helpers = { ...require('../src/lib/format'), ...require('../src/lib/frontmatter') };
 
 describe('op-helpers', () => {
   describe('periodToDate', () => {

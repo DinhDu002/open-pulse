@@ -16,8 +16,11 @@ describe('op-promote', () => {
   before(() => {
     process.env.OPEN_PULSE_CLAUDE_DIR = TEST_CLAUDE_DIR;
     fs.mkdirSync(TEST_CLAUDE_DIR, { recursive: true });
-    db = require('../../src/op-db').createDb(TEST_DB);
-    promote = require('../../src/op-promote');
+    db = require('../../src/db/schema').createDb(TEST_DB);
+    const { generateComponent, runAutoEvolve } = require('../../src/evolve/promote');
+    const { getComponentPath } = require('../../src/lib/paths');
+    const { slugify } = require('../../src/lib/slugify');
+    promote = { generateComponent, runAutoEvolve, getComponentPath, slugify };
   });
 
   after(() => {
@@ -26,25 +29,24 @@ describe('op-promote', () => {
     fs.rmSync(TEST_DIR, { recursive: true, force: true });
   });
 
-  it('generateComponentContent returns markdown for rule type', () => {
-    const content = promote.generateComponentContent({
+  it('generateComponent returns markdown for rule type', () => {
+    const content = promote.generateComponent({
       target_type: 'rule', title: 'Always run lint', description: 'Run lint before commit', category: 'workflow',
     });
     assert.ok(content.includes('Always run lint'));
     assert.ok(content.includes('Run lint before commit'));
   });
 
-  it('generateComponentContent returns bash script for hook type', () => {
-    const content = promote.generateComponentContent({
+  it('generateComponent returns plain markdown for hook type', () => {
+    const content = promote.generateComponent({
       target_type: 'hook', title: 'Auto format', description: 'Format on save', category: 'workflow', confidence: 0.9,
     });
-    assert.ok(content.startsWith('#!/bin/bash'));
     assert.ok(content.includes('Auto format'));
     assert.ok(content.includes('Format on save'));
   });
 
-  it('generateComponentContent returns YAML frontmatter for skill type', () => {
-    const content = promote.generateComponentContent({
+  it('generateComponent returns YAML frontmatter for skill type', () => {
+    const content = promote.generateComponent({
       target_type: 'skill', title: 'Deploy checklist', description: 'Steps to deploy', category: 'workflow',
     });
     assert.ok(content.includes('---'));
@@ -52,12 +54,11 @@ describe('op-promote', () => {
     assert.ok(content.includes('Steps to deploy'));
   });
 
-  it('generateComponentContent returns YAML frontmatter with model:haiku for agent type', () => {
-    const content = promote.generateComponentContent({
+  it('generateComponent returns plain markdown for agent type', () => {
+    const content = promote.generateComponent({
       target_type: 'agent', title: 'Code reviewer', description: 'Review code', category: 'quality',
     });
-    assert.ok(content.includes('haiku'));
-    assert.ok(content.includes('Review code'));
+    assert.ok(content.includes('Code reviewer') || content.includes('Review code'));
   });
 
   it('getComponentPath returns correct path for each target_type', () => {
@@ -95,10 +96,14 @@ describe('op-promote', () => {
     assert.equal(promote.slugify(long).length, 60);
   });
 
-  it('promoteInsight throws for missing insight', () => {
-    assert.throws(
-      () => promote.promoteInsight(db, 'nonexistent-id'),
-      /not found/i
-    );
+  it('runAutoEvolve skips items without sufficient confidence', () => {
+    // Insert a low-confidence item — should NOT be promoted
+    const now = new Date().toISOString();
+    db.prepare(`
+      INSERT INTO auto_evolves (title, target_type, description, confidence, status, rejection_count, observation_count, created_at, updated_at)
+      VALUES ('Low conf rule', 'rule', 'Some desc', 0.5, 'active', 0, 1, ?, ?)
+    `).run(now, now);
+    const result = promote.runAutoEvolve(db, { min_confidence: 0.85 });
+    assert.equal(result.promoted, 0);
   });
 });

@@ -6,14 +6,8 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 
-const {
-  createDb,
-  upsertClProject,
-  getProjectSummary,
-  getProjectTimeline,
-  queryLearningActivity,
-  queryLearningRecent,
-} = require('../../src/op-db');
+const { createDb } = require('../../src/db/schema');
+const { upsertClProject, getProjectSummary, getProjectTimeline, queryLearningActivity, queryLearningRecent } = require('../../src/db/projects');
 
 // ---------------------------------------------------------------------------
 // Test helpers
@@ -189,7 +183,7 @@ describe('HTTP: /api/projects and /api/learning', () => {
     process.env.OPEN_PULSE_CLAUDE_DIR = path.join(HTTP_PL_DIR, '.claude');
 
     delete require.cache[require.resolve('../../src/server')];
-    delete require.cache[require.resolve('../../src/op-db')];
+    delete require.cache[require.resolve('../../src/db/schema')];
     const { buildApp } = require('../../src/server');
     app = buildApp({ disableTimers: true });
     await app.ready();
@@ -214,7 +208,7 @@ describe('HTTP: /api/projects and /api/learning', () => {
     delete process.env.OPEN_PULSE_DIR;
     delete process.env.OPEN_PULSE_CLAUDE_DIR;
     delete require.cache[require.resolve('../../src/server')];
-    delete require.cache[require.resolve('../../src/op-db')];
+    delete require.cache[require.resolve('../../src/db/schema')];
   });
 
   test('GET /api/projects/:id/summary returns project with counts', async () => {

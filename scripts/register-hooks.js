@@ -55,7 +55,7 @@ function main() {
   }
 
   // Add new hooks
-  const collectorPath = path.join(repoDir, 'collector', 'op-collector.js');
+  const collectorPath = path.join(repoDir, 'src', 'ingest', 'collector.js');
 
   // PostToolUse: collector
   if (!settings.hooks.PostToolUse) settings.hooks.PostToolUse = [];

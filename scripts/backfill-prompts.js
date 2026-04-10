@@ -66,7 +66,7 @@ if (require.main === module) {
     : path.resolve(__dirname, '..');
   const dbPath = process.env.OPEN_PULSE_DB
     || path.join(repoDir, 'open-pulse.db');
-  const { createDb } = require(path.join(repoDir, 'src', 'op-db'));
+  const { createDb } = require(path.join(repoDir, 'src', 'db', 'schema'));
   const db = createDb(dbPath);
   const result = run(db);
   console.log(

@@ -1,6 +1,6 @@
 'use strict';
 
-const { parseQualifiedName, getKnownAgents } = require('../op-helpers');
+const { parseQualifiedName, getKnownAgents } = require('../lib/format');
 
 module.exports = async function eventsRoutes(app, opts) {
   const { db, helpers } = opts;

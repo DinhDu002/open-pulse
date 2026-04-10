@@ -1,8 +1,7 @@
 'use strict';
 
-const {
-  queryAutoEvolves, getAutoEvolve, getAutoEvolveStats, revertAutoEvolve,
-} = require('../op-auto-evolve');
+const { queryAutoEvolves, getAutoEvolve, getAutoEvolveStats } = require('../evolve/queries');
+const { revertAutoEvolve } = require('../evolve/revert');
 
 module.exports = async function autoEvolveRoutes(app, opts) {
   const { db, helpers } = opts;
