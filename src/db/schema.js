@@ -310,29 +310,30 @@ function createDb(dbPath) {
   ).get();
 
   if (hasNocaseIndex && !hasNocaseIndex.sql.includes('COLLATE NOCASE')) {
-    const dupEntries = db.prepare(`
-      SELECT LOWER(title) AS ltitle, project_id, GROUP_CONCAT(id) AS ids
-      FROM knowledge_entries
-      WHERE status = 'active'
-      GROUP BY project_id, LOWER(title)
-      HAVING COUNT(*) > 1
-    `).all();
+    db.transaction(() => {
+      const dupEntries = db.prepare(
+        'SELECT LOWER(title) AS ltitle, project_id, GROUP_CONCAT(id) AS ids ' +
+        'FROM knowledge_entries ' +
+        'GROUP BY project_id, LOWER(title) ' +
+        'HAVING COUNT(*) > 1'
+      ).all();
 
-    for (const group of dupEntries) {
-      const ids = group.ids.split(',');
-      const rows = db.prepare(
-        'SELECT id FROM knowledge_entries WHERE id IN (' + ids.map(() => '?').join(',') + ') ORDER BY updated_at DESC'
-      ).all(...ids);
-      const toDelete = rows.slice(1).map(r => r.id);
-      if (toDelete.length > 0) {
-        db.prepare(
-          'DELETE FROM knowledge_entries WHERE id IN (' + toDelete.map(() => '?').join(',') + ')'
-        ).run(...toDelete);
+      for (const group of dupEntries) {
+        const ids = group.ids.split(',');
+        const rows = db.prepare(
+          'SELECT id FROM knowledge_entries WHERE id IN (' + ids.map(() => '?').join(',') + ') ORDER BY updated_at DESC'
+        ).all(...ids);
+        const toDelete = rows.slice(1).map(r => r.id);
+        if (toDelete.length > 0) {
+          db.prepare(
+            'DELETE FROM knowledge_entries WHERE id IN (' + toDelete.map(() => '?').join(',') + ')'
+          ).run(...toDelete);
+        }
       }
-    }
 
-    db.exec('DROP INDEX IF EXISTS idx_ke_project_title');
-    db.exec('CREATE UNIQUE INDEX idx_ke_project_title ON knowledge_entries(project_id, title COLLATE NOCASE)');
+      db.exec('DROP INDEX IF EXISTS idx_ke_project_title');
+      db.exec('CREATE UNIQUE INDEX idx_ke_project_title ON knowledge_entries(project_id, title COLLATE NOCASE)');
+    })();
   }
 
   // Migrate: add summary_vi column to daily_reviews
