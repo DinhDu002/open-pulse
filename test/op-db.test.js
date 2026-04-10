@@ -428,6 +428,24 @@ describe('op-db', () => {
     }
   });
 
+  it('knowledge_entries unique index is case-insensitive', () => {
+    mod.insertKnowledgeEntry(db, {
+      project_id: 'proj-nocase',
+      category: 'domain',
+      title: 'Case Test Entry',
+      body: 'body',
+    });
+
+    assert.throws(() => {
+      mod.insertKnowledgeEntry(db, {
+        project_id: 'proj-nocase',
+        category: 'domain',
+        title: 'case test entry',
+        body: 'body2',
+      });
+    }, /UNIQUE constraint/);
+  });
+
   it('migration backfills project_name with basename fallback', () => {
     const Database = require('better-sqlite3');
     const tmpPath = path.join(os.tmpdir(), `op-db-backfill-basename-${Date.now()}.db`);

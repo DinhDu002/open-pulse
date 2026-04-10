@@ -146,7 +146,7 @@ CREATE TABLE IF NOT EXISTS knowledge_entries (
 CREATE INDEX IF NOT EXISTS idx_ke_project  ON knowledge_entries(project_id);
 CREATE INDEX IF NOT EXISTS idx_ke_category ON knowledge_entries(category);
 CREATE INDEX IF NOT EXISTS idx_ke_status   ON knowledge_entries(status);
-CREATE UNIQUE INDEX IF NOT EXISTS idx_ke_project_title ON knowledge_entries(project_id, title);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_ke_project_title ON knowledge_entries(project_id, title COLLATE NOCASE);
 
 CREATE TABLE IF NOT EXISTS auto_evolves (
   id                TEXT PRIMARY KEY,
@@ -302,6 +302,37 @@ function createDb(dbPath) {
     db.exec('DELETE FROM kg_nodes');
     db.exec('DROP TABLE IF EXISTS kg_edges');
     db.exec('DROP TABLE IF EXISTS kg_nodes');
+  }
+
+  // Migration: case-insensitive unique index on knowledge_entries
+  const hasNocaseIndex = db.prepare(
+    "SELECT sql FROM sqlite_master WHERE type='index' AND name='idx_ke_project_title'"
+  ).get();
+
+  if (hasNocaseIndex && !hasNocaseIndex.sql.includes('COLLATE NOCASE')) {
+    const dupEntries = db.prepare(`
+      SELECT LOWER(title) AS ltitle, project_id, GROUP_CONCAT(id) AS ids
+      FROM knowledge_entries
+      WHERE status = 'active'
+      GROUP BY project_id, LOWER(title)
+      HAVING COUNT(*) > 1
+    `).all();
+
+    for (const group of dupEntries) {
+      const ids = group.ids.split(',');
+      const rows = db.prepare(
+        `SELECT id FROM knowledge_entries WHERE id IN (${ids.map(() => '?').join(',')}) ORDER BY updated_at DESC`
+      ).all(...ids);
+      const toDelete = rows.slice(1).map(r => r.id);
+      if (toDelete.length > 0) {
+        db.prepare(
+          `DELETE FROM knowledge_entries WHERE id IN (${toDelete.map(() => '?').join(',')})`
+        ).run(...toDelete);
+      }
+    }
+
+    db.exec('DROP INDEX IF EXISTS idx_ke_project_title');
+    db.exec('CREATE UNIQUE INDEX idx_ke_project_title ON knowledge_entries(project_id, title COLLATE NOCASE)');
   }
 
   return db;
