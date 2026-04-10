@@ -1,21 +1,28 @@
 'use strict';
 
-const path = require('path');
-const fs = require('fs');
+const crypto = require('crypto');
+
 const {
-  getKgStatus,
-  getKgGraph,
-  getKgNodeDetail,
+  getKnowledgeEntry,
+  queryKnowledgeEntries,
+  getKnowledgeStats,
+  markKnowledgeEntryOutdated,
+  deleteKnowledgeEntry,
+  updateKnowledgeEntry,
+} = require('../db/knowledge-entries');
+
+const { scanProject } = require('../op-knowledge');
+
+const {
+  getAllKbNoteSlugs,
   insertKbNote,
   updateKbNote,
   deleteKbNote,
   getKbNote,
-  getKbNoteBySlug,
   queryKbNotes,
   getKbNoteBacklinks,
-  getAllKbNoteSlugs,
 } = require('../op-db');
-const { syncGraph } = require('../op-knowledge-graph');
+
 const {
   slugify,
   slugifyUnique,
@@ -24,49 +31,100 @@ const {
   deleteNoteFromDisk,
   discoverRelevantContent,
 } = require('../op-notes');
-const { generateAllVaults } = require('../op-vault-generator');
 
 module.exports = async function knowledgeRoutes(app, opts) {
-  const { db, config, helpers } = opts;
-  const { errorReply } = helpers;
+  const { db, helpers } = opts;
+  const { errorReply, parsePagination } = helpers;
 
-  // ── Knowledge Graph ─────────────────────────────────────────────────────
+  // ── Knowledge Entries ────────────────────────────────────────────────────
 
-  app.get('/api/knowledge/status', async () => {
-    return getKgStatus(db);
+  // IMPORTANT: register /stats before /:id to avoid treating "stats" as :id
+  app.get('/api/knowledge/entries/stats', async (req) => {
+    const { project } = req.query;
+    return getKnowledgeStats(db, project || undefined);
   });
+
+  app.get('/api/knowledge/entries', async (req) => {
+    const { project, category, status, search } = req.query;
+    const { page, perPage } = parsePagination(req.query);
+    return queryKnowledgeEntries(db, {
+      projectId: project || undefined,
+      category:  category || undefined,
+      status:    status || undefined,
+      search:    search || undefined,
+      page,
+      perPage,
+    });
+  });
+
+  app.get('/api/knowledge/entries/:id', async (req, reply) => {
+    const entry = getKnowledgeEntry(db, req.params.id);
+    if (!entry) return errorReply(reply, 404, 'Entry not found');
+    return entry;
+  });
+
+  app.put('/api/knowledge/entries/:id', async (req, reply) => {
+    const existing = getKnowledgeEntry(db, req.params.id);
+    if (!existing) return errorReply(reply, 404, 'Entry not found');
+    const { title, body, tags, category } = req.body || {};
+    const fields = {};
+    if (title !== undefined)    fields.title    = title;
+    if (body !== undefined)     fields.body     = body;
+    if (tags !== undefined)     fields.tags     = tags;
+    if (category !== undefined) fields.category = category;
+    updateKnowledgeEntry(db, req.params.id, fields);
+    return getKnowledgeEntry(db, req.params.id);
+  });
+
+  app.put('/api/knowledge/entries/:id/outdated', async (req, reply) => {
+    const existing = getKnowledgeEntry(db, req.params.id);
+    if (!existing) return errorReply(reply, 404, 'Entry not found');
+    markKnowledgeEntryOutdated(db, req.params.id);
+    return getKnowledgeEntry(db, req.params.id);
+  });
+
+  app.delete('/api/knowledge/entries/:id', async (req, reply) => {
+    const existing = getKnowledgeEntry(db, req.params.id);
+    if (!existing) return errorReply(reply, 404, 'Entry not found');
+    deleteKnowledgeEntry(db, req.params.id);
+    return { deleted: true };
+  });
+
+  // ── Scan ────────────────────────────────────────────────────────────────
+
+  app.post('/api/knowledge/scan', async (req, reply) => {
+    const { project_id, scan_files, patterns } = req.body || {};
+    if (!project_id) return errorReply(reply, 400, 'project_id required');
+    const result = await scanProject(db, project_id, {
+      scanFiles: scan_files || [],
+      patterns:  patterns  || [],
+    });
+    return result;
+  });
+
+  // ── Projects ────────────────────────────────────────────────────────────
 
   app.get('/api/knowledge/projects', async () => {
     const projects = db.prepare('SELECT * FROM cl_projects').all();
     return projects.map(p => {
+      const entryCount = db.prepare(
+        'SELECT COUNT(*) AS c FROM knowledge_entries WHERE project_id = ?'
+      ).get(p.project_id).c;
       const vaultCount = db.prepare(
         'SELECT COUNT(*) AS c FROM kg_vault_hashes WHERE project_id = ?'
       ).get(p.project_id).c;
-      return { ...p, vault_file_count: vaultCount };
+      return { ...p, entry_count: entryCount, vault_file_count: vaultCount };
     });
   });
 
-  app.get('/api/knowledge/graph', async (request) => {
-    const { type } = request.query;
-    return getKgGraph(db, { type });
-  });
-
-  app.get('/api/knowledge/config', async () => {
-    return {
-      knowledge_graph_interval_ms: config.knowledge_graph_interval_ms ?? 300000,
-      knowledge_vault_interval_ms: config.knowledge_vault_interval_ms ?? 900000,
-      knowledge_enrich_enabled: config.knowledge_enrich_enabled ?? false,
-      knowledge_pattern_min_occurrences: config.knowledge_pattern_min_occurrences ?? 5,
-      knowledge_session_lookback_days: config.knowledge_session_lookback_days ?? 30,
-      knowledge_instinct_min_confidence: config.knowledge_instinct_min_confidence ?? 0.3,
-    };
-  });
+  // ── Autocomplete ────────────────────────────────────────────────────────
 
   app.get('/api/knowledge/autocomplete', async (req) => {
     const { project, q } = req.query;
     const limit = Math.min(50, Math.max(1, parseInt(req.query.limit) || 20));
     const results = [];
-    // Note slugs
+
+    // KB note slugs
     if (project) {
       const slugs = getAllKbNoteSlugs(db, project);
       for (const s of slugs) {
@@ -75,57 +133,27 @@ module.exports = async function knowledgeRoutes(app, opts) {
         }
       }
     }
-    // Auto-node names from kg_nodes
-    const { nodes } = getKgGraph(db);
-    for (const n of nodes) {
-      if (!q || n.name.toLowerCase().includes(q.toLowerCase()) || n.id.toLowerCase().includes(q.toLowerCase())) {
-        const vaultPath = `${n.type}s/${n.name}`;
-        results.push({ type: n.type, value: vaultPath, label: n.name });
-      }
+
+    // Active knowledge entry titles
+    const { items } = queryKnowledgeEntries(db, {
+      projectId: project || undefined,
+      search:    q || undefined,
+      status:    'active',
+      perPage:   limit,
+    });
+    for (const entry of items) {
+      results.push({ type: 'entry', value: `entries/${entry.id}`, label: entry.title });
     }
+
     return results.slice(0, limit);
   });
+
+  // ── Discover ────────────────────────────────────────────────────────────
 
   app.get('/api/knowledge/discover', async (req, reply) => {
     const { project, context } = req.query;
     if (!project || !context) return errorReply(reply, 400, 'project and context required');
     return discoverRelevantContent(db, project, context);
-  });
-
-  app.get('/api/knowledge/node/:id', async (request, reply) => {
-    const { id } = request.params;
-    const decoded = decodeURIComponent(id);
-    const detail = getKgNodeDetail(db, decoded);
-    if (!detail) return errorReply(reply, 404, 'Node not found');
-    return detail;
-  });
-
-  app.post('/api/knowledge/sync', async () => {
-    const result = syncGraph(db, {
-      sessionLookbackDays: config.knowledge_session_lookback_days ?? 30,
-      instinctMinConfidence: config.knowledge_instinct_min_confidence ?? 0.3,
-      minTriggerCount: config.knowledge_pattern_min_occurrences ?? 5,
-    });
-    return result;
-  });
-
-  app.post('/api/knowledge/generate', async (request) => {
-    const { project } = request.query || {};
-    if (project) {
-      const { generateVault } = require('../op-vault-generator');
-      return generateVault(db, project);
-    }
-    return generateAllVaults(db);
-  });
-
-  app.post('/api/knowledge/enrich', async () => {
-    try {
-      const { enrichNodes } = require('../op-knowledge-enricher');
-      const result = await enrichNodes(db, {});
-      return result;
-    } catch (err) {
-      return { error: err.message };
-    }
   });
 
   // ── Knowledge Base Notes ────────────────────────────────────────────────
@@ -134,10 +162,10 @@ module.exports = async function knowledgeRoutes(app, opts) {
     const { project, search, tag, page, per_page } = req.query;
     return queryKbNotes(db, {
       projectId: project || undefined,
-      search: search || undefined,
-      tag: tag || undefined,
-      page: parseInt(page) || 1,
-      perPage: parseInt(per_page) || 20,
+      search:    search  || undefined,
+      tag:       tag     || undefined,
+      page:      parseInt(page) || 1,
+      perPage:   parseInt(per_page) || 20,
     });
   });
 
@@ -150,7 +178,6 @@ module.exports = async function knowledgeRoutes(app, opts) {
     const tagsJson = typeof tags === 'string' ? tags : JSON.stringify(tags || []);
     insertKbNote(db, { id, project_id, slug, title, body: body || '', tags: tagsJson });
     const note = getKbNote(db, id);
-    // Sync to disk
     const project = db.prepare('SELECT directory FROM cl_projects WHERE project_id = ?').get(project_id);
     if (project?.directory) syncNoteToDisk(project.directory, note);
     return note;
@@ -176,12 +203,11 @@ module.exports = async function knowledgeRoutes(app, opts) {
     const { title, body, tags } = req.body;
     const fields = {};
     if (title !== undefined) fields.title = title;
-    if (body !== undefined) fields.body = body;
-    if (tags !== undefined) fields.tags = typeof tags === 'string' ? tags : JSON.stringify(tags);
+    if (body !== undefined)  fields.body  = body;
+    if (tags !== undefined)  fields.tags  = typeof tags === 'string' ? tags : JSON.stringify(tags);
     if (title !== undefined && title !== existing.title) {
       const existingSlugs = getAllKbNoteSlugs(db, existing.project_id).filter(s => s !== existing.slug);
       fields.slug = slugifyUnique(title, existingSlugs);
-      // Remove old disk file
       const project = db.prepare('SELECT directory FROM cl_projects WHERE project_id = ?').get(existing.project_id);
       if (project?.directory) deleteNoteFromDisk(project.directory, existing.slug);
     }

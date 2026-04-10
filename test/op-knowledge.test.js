@@ -741,3 +741,178 @@ describe('op-knowledge', () => {
     });
   });
 });
+
+// =============================================================================
+// knowledge entry API routes
+// =============================================================================
+
+describe('knowledge entry API routes', () => {
+  let app, db;
+  const API_TEST_DIR = path.join(os.tmpdir(), `op-knowledge-api-test-${Date.now()}`);
+  const API_TEST_DB  = path.join(API_TEST_DIR, 'api-test.db');
+
+  let seededEntryId;
+
+  before(async () => {
+    fs.mkdirSync(path.join(API_TEST_DIR, 'data'),        { recursive: true });
+    fs.mkdirSync(path.join(API_TEST_DIR, 'cl', 'instincts', 'personal'), { recursive: true });
+    fs.mkdirSync(path.join(API_TEST_DIR, '.claude', 'skills'), { recursive: true });
+    fs.mkdirSync(path.join(API_TEST_DIR, '.claude', 'agents'), { recursive: true });
+
+    process.env.OPEN_PULSE_DB         = API_TEST_DB;
+    process.env.OPEN_PULSE_DIR        = API_TEST_DIR;
+    process.env.OPEN_PULSE_CLAUDE_DIR = path.join(API_TEST_DIR, '.claude');
+
+    const { buildApp } = require('../src/op-server');
+    app = buildApp({ disableTimers: true });
+    await app.ready();
+
+    const dbMod = require('../src/op-db');
+    db = require('better-sqlite3')(API_TEST_DB);
+
+    // Seed project
+    dbMod.upsertClProject(db, {
+      project_id:    'proj-api-test',
+      name:          'API Test Project',
+      directory:     API_TEST_DIR,
+      first_seen_at: '2026-04-10T00:00:00Z',
+      last_seen_at:  '2026-04-10T00:00:00Z',
+      session_count: 1,
+    });
+
+    // Seed some entries
+    const e1 = dbMod.insertKnowledgeEntry(db, {
+      project_id: 'proj-api-test',
+      category:   'domain',
+      title:      'API Route Domain Entry',
+      body:       'Domain knowledge for API tests.',
+    });
+    dbMod.insertKnowledgeEntry(db, {
+      project_id: 'proj-api-test',
+      category:   'stack',
+      title:      'API Route Stack Entry',
+      body:       'Stack knowledge for API tests.',
+    });
+
+    seededEntryId = e1.id;
+  });
+
+  after(async () => {
+    if (db)  db.close();
+    if (app) await app.close();
+    fs.rmSync(API_TEST_DIR, { recursive: true, force: true });
+    delete process.env.OPEN_PULSE_DB;
+    delete process.env.OPEN_PULSE_DIR;
+    delete process.env.OPEN_PULSE_CLAUDE_DIR;
+  });
+
+  it('GET /api/knowledge/entries returns paginated list', async () => {
+    const res = await app.inject({ method: 'GET', url: '/api/knowledge/entries?project=proj-api-test' });
+    assert.equal(res.statusCode, 200);
+    const body = JSON.parse(res.body);
+    assert.ok(Array.isArray(body.items), 'items should be an array');
+    assert.ok(body.total >= 2, `total should be >= 2, got ${body.total}`);
+    assert.ok(typeof body.page === 'number', 'page should be a number');
+    assert.ok(typeof body.perPage === 'number', 'perPage should be a number');
+  });
+
+  it('GET /api/knowledge/entries/stats returns stats', async () => {
+    const res = await app.inject({ method: 'GET', url: '/api/knowledge/entries/stats?project=proj-api-test' });
+    assert.equal(res.statusCode, 200);
+    const body = JSON.parse(res.body);
+    assert.ok(Array.isArray(body.byCategory), 'byCategory should be an array');
+    assert.ok(Array.isArray(body.byStatus),   'byStatus should be an array');
+    assert.ok(Array.isArray(body.byProject),  'byProject should be an array');
+    const cats = body.byCategory.map(r => r.category);
+    assert.ok(cats.includes('domain'), 'should include domain category');
+  });
+
+  it('GET /api/knowledge/entries/:id returns single entry', async () => {
+    const res = await app.inject({ method: 'GET', url: `/api/knowledge/entries/${seededEntryId}` });
+    assert.equal(res.statusCode, 200);
+    const body = JSON.parse(res.body);
+    assert.equal(body.id, seededEntryId);
+    assert.equal(body.category, 'domain');
+  });
+
+  it('GET /api/knowledge/entries/:id returns 404 for unknown id', async () => {
+    const res = await app.inject({ method: 'GET', url: '/api/knowledge/entries/ke-doesnotexist' });
+    assert.equal(res.statusCode, 404);
+  });
+
+  it('PUT /api/knowledge/entries/:id/outdated marks entry outdated', async () => {
+    const res = await app.inject({
+      method: 'PUT',
+      url:    `/api/knowledge/entries/${seededEntryId}/outdated`,
+    });
+    assert.equal(res.statusCode, 200);
+    const body = JSON.parse(res.body);
+    assert.equal(body.status, 'outdated');
+  });
+
+  it('PUT /api/knowledge/entries/:id updates fields', async () => {
+    // Seed a fresh entry to update
+    const dbMod = require('../src/op-db');
+    const fresh = dbMod.insertKnowledgeEntry(db, {
+      project_id: 'proj-api-test',
+      category:   'stack',
+      title:      'Entry To Update Via API',
+      body:       'Original body.',
+    });
+
+    const res = await app.inject({
+      method:  'PUT',
+      url:     `/api/knowledge/entries/${fresh.id}`,
+      headers: { 'content-type': 'application/json' },
+      payload: JSON.stringify({ body: 'Updated body via API.' }),
+    });
+    assert.equal(res.statusCode, 200);
+    const body = JSON.parse(res.body);
+    assert.equal(body.body, 'Updated body via API.');
+    assert.equal(body.category, 'stack'); // unchanged
+  });
+
+  it('DELETE /api/knowledge/entries/:id removes entry', async () => {
+    const dbMod = require('../src/op-db');
+    const toDelete = dbMod.insertKnowledgeEntry(db, {
+      project_id: 'proj-api-test',
+      category:   'domain',
+      title:      'Entry To Delete Via API',
+      body:       'Will be deleted.',
+    });
+
+    const res = await app.inject({ method: 'DELETE', url: `/api/knowledge/entries/${toDelete.id}` });
+    assert.equal(res.statusCode, 200);
+    const body = JSON.parse(res.body);
+    assert.equal(body.deleted, true);
+
+    // Confirm it's gone
+    const check = await app.inject({ method: 'GET', url: `/api/knowledge/entries/${toDelete.id}` });
+    assert.equal(check.statusCode, 404);
+  });
+
+  it('GET /api/knowledge/autocomplete returns results', async () => {
+    const res = await app.inject({
+      method: 'GET',
+      url:    '/api/knowledge/autocomplete?project=proj-api-test&q=API',
+    });
+    assert.equal(res.statusCode, 200);
+    const body = JSON.parse(res.body);
+    assert.ok(Array.isArray(body), 'should return an array');
+    // Should find entries with "API" in title
+    const labels = body.map(r => r.label);
+    assert.ok(labels.some(l => l.includes('API')), 'should include entries matching query');
+  });
+
+  it('GET /api/knowledge/projects returns projects with entry_count', async () => {
+    const res = await app.inject({ method: 'GET', url: '/api/knowledge/projects' });
+    assert.equal(res.statusCode, 200);
+    const body = JSON.parse(res.body);
+    assert.ok(Array.isArray(body), 'should return an array');
+    const proj = body.find(p => p.project_id === 'proj-api-test');
+    assert.ok(proj, 'should include our test project');
+    assert.ok(typeof proj.entry_count === 'number', 'should have entry_count');
+    assert.ok(typeof proj.vault_file_count === 'number', 'should have vault_file_count');
+    assert.ok(proj.entry_count >= 1, `entry_count should be >= 1, got ${proj.entry_count}`);
+  });
+});
