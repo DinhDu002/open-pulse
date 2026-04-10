@@ -504,6 +504,7 @@ describe('op-knowledge', () => {
       assert.ok(prompt.includes('CANNOT be derived by reading the source code'), 'should require non-obvious knowledge');
       assert.ok(prompt.includes('Do NOT extract'), 'should have exclusion rules');
       assert.ok(prompt.includes('ACTIONABLE'), 'should require actionable entries');
+      assert.ok(prompt.includes('expected common case'), 'should indicate empty return is the common case');
     });
 
     it('instructs case-insensitive dedup in rules', () => {
@@ -557,6 +558,8 @@ describe('op-knowledge', () => {
       const prompt = buildScanPrompt('Proj', { 'README.md': '# Hello' });
       assert.ok(prompt.includes('CANNOT be derived by reading the source code'), 'should include quality rules');
       assert.ok(prompt.includes('ACTIONABLE'), 'should require actionable entries');
+      assert.ok(prompt.includes('case-insensitive'), 'should mention case-insensitive comparison');
+      assert.ok(prompt.includes('genuinely new'), 'should indicate empty return for non-new content');
     });
   });
 
