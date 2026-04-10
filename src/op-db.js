@@ -27,13 +27,15 @@ CREATE TABLE IF NOT EXISTS events (
   user_prompt         TEXT,
   tool_input          TEXT,
   tool_response       TEXT,
-  seq_num             INTEGER
+  seq_num             INTEGER,
+  project_name        TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_events_timestamp   ON events (timestamp);
 CREATE INDEX IF NOT EXISTS idx_events_type        ON events (event_type);
 CREATE INDEX IF NOT EXISTS idx_events_name        ON events (name);
 CREATE INDEX IF NOT EXISTS idx_events_session     ON events (session_id);
+CREATE INDEX IF NOT EXISTS idx_events_project     ON events (project_name);
 
 CREATE TABLE IF NOT EXISTS sessions (
   id                   INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -270,6 +272,34 @@ function createDb(dbPath) {
   if (hasTotalHooks.cnt > 0) {
     db.exec('ALTER TABLE scan_results DROP COLUMN total_hooks');
     db.exec('ALTER TABLE scan_results DROP COLUMN total_rules');
+  }
+
+  // Migrate: fix empty agent names (general-purpose agents without subagent_type)
+  db.exec("UPDATE events SET name = 'general-purpose' WHERE event_type = 'agent_spawn' AND name = ''");
+
+  // Migrate: add project_name column to events
+  const hasProjectName = db.prepare(
+    "SELECT COUNT(*) AS cnt FROM pragma_table_info('events') WHERE name = 'project_name'"
+  ).get();
+  if (hasProjectName.cnt === 0) {
+    db.exec('ALTER TABLE events ADD COLUMN project_name TEXT');
+    db.exec('CREATE INDEX IF NOT EXISTS idx_events_project ON events(project_name)');
+  }
+
+  // Backfill: exact match with cl_projects (safe to re-run; skips already-filled rows)
+  db.exec(
+    "UPDATE events SET project_name = (SELECT name FROM cl_projects WHERE directory = events.working_directory) WHERE working_directory IS NOT NULL AND project_name IS NULL"
+  );
+
+  // Backfill: basename fallback for unmatched
+  const unmatched = db.prepare(
+    "SELECT DISTINCT working_directory FROM events WHERE project_name IS NULL AND working_directory IS NOT NULL"
+  ).all();
+  const updateStmt = db.prepare(
+    "UPDATE events SET project_name = @name WHERE working_directory = @dir AND project_name IS NULL"
+  );
+  for (const row of unmatched) {
+    updateStmt.run({ name: path.basename(row.working_directory), dir: row.working_directory });
   }
 
   return db;

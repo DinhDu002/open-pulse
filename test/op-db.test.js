@@ -426,4 +426,48 @@ describe('op-db', () => {
       assert.ok(!tables.includes('insights'), 'insights table should be dropped');
     });
   });
+
+  // ─── project_name migration ─────────────────────────────────────────────────
+
+  it('migration adds project_name column to events', () => {
+    const cols = db.prepare("SELECT name FROM pragma_table_info('events')").all().map(c => c.name);
+    assert.ok(cols.includes('project_name'), 'events table should have project_name column');
+
+    const idx = db.prepare("SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'idx_events_project'").get();
+    assert.ok(idx, 'idx_events_project index should exist');
+  });
+
+  it('migration backfills project_name from cl_projects', () => {
+    // Insert a cl_project
+    db.prepare(`
+      INSERT OR IGNORE INTO cl_projects (project_id, name, directory, first_seen_at, last_seen_at, session_count)
+      VALUES ('bp-test', 'my-project', '/tmp/my-project', '2026-01-01', '2026-01-01', 1)
+    `).run();
+
+    // Insert an event with matching working_directory but no project_name
+    db.prepare(`
+      INSERT INTO events (timestamp, session_id, event_type, name, working_directory)
+      VALUES ('2026-04-10T01:00:00Z', 'bp-sess', 'tool_call', 'Read', '/tmp/my-project')
+    `).run();
+
+    // Re-run migration (backfill)
+    const { createDb } = require('../src/op-db');
+    createDb(process.env.OPEN_PULSE_DB || db.name);
+
+    const row = db.prepare("SELECT project_name FROM events WHERE session_id = 'bp-sess'").get();
+    assert.equal(row.project_name, 'my-project');
+  });
+
+  it('migration backfills project_name with basename fallback', () => {
+    db.prepare(`
+      INSERT INTO events (timestamp, session_id, event_type, name, working_directory)
+      VALUES ('2026-04-10T01:01:00Z', 'bp-sess-2', 'tool_call', 'Read', '/tmp/unknown-project')
+    `).run();
+
+    const { createDb } = require('../src/op-db');
+    createDb(process.env.OPEN_PULSE_DB || db.name);
+
+    const row = db.prepare("SELECT project_name FROM events WHERE session_id = 'bp-sess-2'").get();
+    assert.equal(row.project_name, 'unknown-project');
+  });
 });
