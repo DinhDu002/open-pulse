@@ -11,7 +11,7 @@ Hooks (Claude Code)          Server (Fastify)              Frontend (SPA)
 │   (3 hooks)  │   data/*.jsonl│  port 3827   │  /api/*    │  + 8 routes  │
 └──────────────┘              │  5 route mods │              └──────────────┘
                               │              │
-                              │  Ingest      │──→ open-pulse.db (SQLite, 13 tables)
+                              │  Ingest      │──→ open-pulse.db (SQLite, 12 tables)
                               │  (timer 10s) │    events + prompt linking
                               │              │
                               │  Filesystem  │──→ projects.json, instincts, components
@@ -49,21 +49,20 @@ Hooks (Claude Code)          Server (Fastify)              Frontend (SPA)
 5. **Auto-Evolve**: Observer patterns → instinct files → `auto_evolves` table → auto-promote when confidence >= 0.85 (no rejections, blacklists agent/hook) → component files written to `~/.claude/`
 6. **Knowledge Extraction**: After each prompt is ingested, `op-knowledge.js` invokes Haiku to extract project-specific understanding from recent events. Entries stored in `knowledge_entries` table. Cold-start scan bootstraps from key project files (`README.md`, `package.json`, `CLAUDE.md`)
 7. **Knowledge Vault**: Renders `knowledge_entries` as markdown files in `<project>/.claude/knowledge/` — one file per category. Uses content hashing (`kg_vault_hashes` table) to skip unchanged content
-8. **KB Notes**: User-authored notes in `kb_notes` table, synced to `<project>/.open-pulse/notes/<slug>.md`. Supports `[[wikilink]]` cross-references with backlink tracking
-9. **Daily Review**: 3 AM daily → `op-daily-review.js` reads all component files + work history + best practices → Opus analysis → `daily_reviews` table + report `.md` in `reports/`. Triggerable via API
-10. **Retention**: Daily timer compacts tool data after 7 days (NULL tool_input/response), deletes events after 90 days. Configurable via `retention_warm_days` / `retention_cold_days`
-11. **API + Frontend**: Fastify serves REST endpoints on `127.0.0.1:3827`. Vanilla JS SPA with hash-based routing, Chart.js + Cytoscape.js for visualization
+8. **Daily Review**: 3 AM daily → `op-daily-review.js` reads all component files + work history + best practices → Opus analysis → `daily_reviews` table + report `.md` in `reports/`. Triggerable via API
+9. **Retention**: Daily timer compacts tool data after 7 days (NULL tool_input/response), deletes events after 90 days. Configurable via `retention_warm_days` / `retention_cold_days`
+10. **API + Frontend**: Fastify serves REST endpoints on `127.0.0.1:3827`. Vanilla JS SPA with hash-based routing, Chart.js + Cytoscape.js for visualization
 
 ## Directory Structure
 
 ```
 open-pulse/
 ├── src/                        # Backend (Node.js, CommonJS)
-│   ├── op-db.js                # SQLite schema (13 tables), migrations, re-exports db/ modules
+│   ├── op-db.js                # SQLite schema (12 tables), migrations, re-exports db/ modules
 │   ├── db/                     # DB query modules
 │   │   ├── events.js           # Event insert/batch
 │   │   ├── sessions.js         # Session upsert/update
-│   │   ├── knowledge.js        # KB notes queries
+│   │   ├── knowledge.js        # Vault hash + KG sync state queries
 │   │   ├── knowledge-entries.js # knowledge_entries CRUD + category/status queries
 │   │   └── components.js       # Components, projects, prompts, scan queries
 │   ├── op-ingest.js            # Atomic JSONL → DB pipeline + prompt linking
@@ -71,7 +70,6 @@ open-pulse/
 │   ├── op-auto-evolve.js       # Auto-evolve engine (instinct sync + promote + revert)
 │   ├── op-instinct-updater.js  # YAML frontmatter parse/update for instinct feedback loop
 │   ├── op-knowledge.js         # Knowledge extraction (Haiku post-ingest + cold-start scan + vault render)
-│   ├── op-notes.js             # KB Notes: slug/backlink helpers, disk sync
 │   ├── op-promote.js           # Component file generation (write rule/skill/agent to ~/.claude/)
 │   ├── op-retention.js         # 3-tier storage retention (hot/warm/cold)
 │   ├── op-helpers.js           # Shared utilities (plugin detection, project discovery, etc.)
@@ -81,7 +79,7 @@ open-pulse/
 │       ├── core.js             # Health, overview, events, sessions, prompts, rankings,
 │       │                       #   cost, projects, scanner, config, errors, ingest
 │       ├── inventory.js        # /api/inventory/:type (skills/agents)
-│       ├── knowledge.js        # /api/knowledge/* (entries, notes, scan, autocomplete, discover)
+│       ├── knowledge.js        # /api/knowledge/* (entries, scan, autocomplete)
 │       ├── auto-evolves.js     # /api/auto-evolves/*
 │       └── daily-reviews.js    # /api/daily-reviews/*
 ├── collector/                  # Hook scripts (run by Claude Code)
@@ -126,7 +124,6 @@ open-pulse/
 │   ├── op-server.test.js       # All HTTP endpoints
 │   ├── op-ingest.test.js       # JSONL parsing, prompt linking, retries
 │   ├── op-collector.test.js    # Hook events, scrubbing, cost estimation
-│   ├── op-notes.test.js        # Slug, backlink, disk sync
 │   ├── op-helpers.test.js      # Plugin detection, path resolution
 │   ├── op-auto-evolve.test.js  # Instinct sync, auto-promote, revert
 │   ├── op-learning-api.test.js # Project endpoints, learning feed
@@ -150,7 +147,7 @@ open-pulse/
 
 ## Database Schema
 
-13 tables:
+12 tables:
 
 | Table | Purpose | Key fields |
 |---|---|---|
@@ -166,7 +163,6 @@ open-pulse/
 | `knowledge_entries` | LLM-extracted project knowledge | project_id, category, title, body, source_file, status |
 | `kg_vault_hashes` | Content hashes for vault files | project_id, file_path, content_hash, generated_at |
 | `kg_sync_state` | KV state for graph sync | key, value |
-| `kb_notes` | User-authored knowledge notes | id, project_id, slug, title, body, tags (JSON), created_at, updated_at |
 
 ## API Endpoints
 
@@ -222,19 +218,7 @@ open-pulse/
 | DELETE | `/api/knowledge/entries/:id` | Delete entry |
 | POST | `/api/knowledge/scan` | Cold start scan |
 | GET | `/api/knowledge/projects` | Projects with knowledge entry counts |
-| GET | `/api/knowledge/autocomplete?project=&q=` | Note slug + entry title suggestions |
-| GET | `/api/knowledge/discover?project=&context=` | Find relevant content by keywords |
-
-### KB Notes
-
-| Method | Path | Purpose |
-|---|---|---|
-| GET | `/api/knowledge/notes?project=&search=&tag=&page=&per_page=` | List notes |
-| POST | `/api/knowledge/notes` | Create note (body: project_id, title, body, tags) |
-| GET | `/api/knowledge/notes/:id` | Note detail + backlinks + references |
-| GET | `/api/knowledge/notes/:id/backlinks` | Notes that link to this note |
-| PUT | `/api/knowledge/notes/:id` | Update note |
-| DELETE | `/api/knowledge/notes/:id` | Delete note (DB + disk + graph) |
+| GET | `/api/knowledge/autocomplete?project=&q=` | Entry title suggestions |
 
 ### Auto-Evolve
 
@@ -309,7 +293,7 @@ open-pulse/
 - **Prompt linking**: During ingestion, contiguous events sharing the same `user_prompt` are grouped into a `prompts` record. Each event gets a `prompt_id` FK. Enables per-turn cost, token count, duration, and event breakdown without query-time aggregation.
 - **Split feedback loops**: Two independent flows replace the old unified insights system. Flow 1 (auto-evolve): Observer-detected patterns auto-promote to rule/knowledge/skill when confidence >= 0.85 (blacklists agent/hook). Flow 2 (daily review): Comprehensive 3AM analysis reads all component files + work history, invokes Opus for suggestions. Each flow has its own table, routes, and UI — zero shared code.
 - **Daily review agent**: `scripts/op-daily-review.js` reads full content of all component files (rules, skills, agents, hooks, memory, plugins) + best practices from `claude-code-knowledge` + day's work history. Invokes Opus for comprehensive analysis. Outputs: suggestions in `daily_reviews` table + markdown report in `reports/`.
-- **Knowledge entries architecture**: Replaces KG (`kg_nodes`/`kg_edges`). LLM (Haiku) extracts project understanding after each prompt. Entries stored in `knowledge_entries` table, rendered as markdown vault files per category in `<project>/.claude/knowledge/`. Cold-start scan bootstraps knowledge from key project files. No confidence scoring — entries are factual, not behavioral patterns. `op-notes.js` manages user-authored KB notes with `[[wikilink]]` backlink tracking.
+- **Knowledge entries architecture**: Replaces KG (`kg_nodes`/`kg_edges`). LLM (Haiku) extracts project understanding after each prompt. Entries stored in `knowledge_entries` table, rendered as markdown vault files per category in `<project>/.claude/knowledge/`. Cold-start scan bootstraps knowledge from key project files. No confidence scoring — entries are factual, not behavioral patterns.
 - **`cl/` prefix convention**: The `cl_` prefix on DB tables (`cl_projects`), the `cl/` runtime directory, and `cl-` script prefix stand for "Continuous Learning" — the instinct-based observer subsystem.
 - **3-tier retention**: hot (0-7d full data), warm (7-90d NULLs tool_input/response), cold (90d+ deleted). Configurable, runs daily. Sessions never deleted.
 - **Cold start seeding**: 10 universal starter instincts + CLAUDE.md rule parser. Idempotent — skips existing files on reinstall.

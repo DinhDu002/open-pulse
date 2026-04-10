@@ -317,19 +317,13 @@ describe('op-db', () => {
     const P2 = 'del-proj-2';
 
     before(() => {
-      // Seed two projects with kb_notes and vault_hashes
+      // Seed two projects with vault_hashes
       for (const pid of [P1, P2]) {
         mod.upsertClProject(db, {
           project_id: pid, name: pid, directory: '/tmp/' + pid,
           first_seen_at: '2026-01-01T00:00:00Z',
           last_seen_at: '2026-01-01T00:00:00Z',
           session_count: 0,
-        });
-        mod.insertKbNote(db, {
-          id: pid + '-note-1', project_id: pid, slug: 'note-1',
-          title: 'Test Note', body: 'content',
-          tags: '[]', created_at: '2026-01-01T00:00:00Z',
-          updated_at: '2026-01-01T00:00:00Z',
         });
         mod.upsertKgVaultHash(db, {
           project_id: pid, file_path: 'test.md', content_hash: 'hash-' + pid,
@@ -344,10 +338,6 @@ describe('op-db', () => {
       // Project row gone
       const proj = db.prepare('SELECT * FROM cl_projects WHERE project_id = ?').get(P1);
       assert.equal(proj, undefined);
-
-      // kb_notes gone
-      const notes = db.prepare('SELECT * FROM kb_notes WHERE project_id = ?').all(P1);
-      assert.equal(notes.length, 0);
 
       // vault_hashes gone
       const hashes = db.prepare('SELECT * FROM kg_vault_hashes WHERE project_id = ?').all(P1);
@@ -364,9 +354,6 @@ describe('op-db', () => {
       const proj = db.prepare('SELECT * FROM cl_projects WHERE project_id = ?').get(P2);
       assert.ok(proj);
       assert.equal(proj.name, P2);
-
-      const notes = db.prepare('SELECT * FROM kb_notes WHERE project_id = ?').all(P2);
-      assert.equal(notes.length, 1);
 
       const hashes = db.prepare('SELECT * FROM kg_vault_hashes WHERE project_id = ?').all(P2);
       assert.equal(hashes.length, 1);

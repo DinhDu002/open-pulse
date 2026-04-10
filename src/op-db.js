@@ -130,19 +130,6 @@ CREATE TABLE IF NOT EXISTS kg_sync_state (
   value TEXT NOT NULL
 );
 
-CREATE TABLE IF NOT EXISTS kb_notes (
-  id         TEXT PRIMARY KEY,
-  project_id TEXT NOT NULL,
-  slug       TEXT NOT NULL,
-  title      TEXT NOT NULL,
-  body       TEXT NOT NULL DEFAULT '',
-  tags       TEXT DEFAULT '[]',
-  created_at TEXT NOT NULL,
-  updated_at TEXT NOT NULL
-);
-CREATE UNIQUE INDEX IF NOT EXISTS idx_kb_notes_project_slug ON kb_notes(project_id, slug);
-CREATE INDEX IF NOT EXISTS idx_kb_notes_project ON kb_notes(project_id);
-
 CREATE TABLE IF NOT EXISTS knowledge_entries (
   id               TEXT PRIMARY KEY,
   project_id       TEXT NOT NULL,
@@ -207,6 +194,7 @@ function createDb(dbPath) {
   // Drop legacy tables no longer used
   db.exec('DROP TABLE IF EXISTS cl_instincts');
   db.exec('DROP TABLE IF EXISTS suggestions');
+  db.exec('DROP TABLE IF EXISTS kb_notes');
   // Migrate existing databases: add columns that may not exist yet
   const migrations = [
     'ALTER TABLE events ADD COLUMN tool_input TEXT',

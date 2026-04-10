@@ -507,7 +507,7 @@ describe('op-server', () => {
     it('deletes a project and returns success', async () => {
       // Seed project via internal DB
       const dbPath = process.env.OPEN_PULSE_DB;
-      const { createDb, upsertClProject, insertKbNote, upsertKgVaultHash } = require('../src/op-db');
+      const { createDb, upsertClProject, upsertKgVaultHash } = require('../src/op-db');
       const db = createDb(dbPath);
       const pid = 'test-del-proj';
 
@@ -515,12 +515,6 @@ describe('op-server', () => {
         project_id: pid, name: 'deleteme', directory: '/tmp/deleteme',
         first_seen_at: '2026-01-01T00:00:00Z',
         last_seen_at: '2026-01-01T00:00:00Z', session_count: 0,
-      });
-      insertKbNote(db, {
-        id: 'del-note-1', project_id: pid, slug: 'note-del',
-        title: 'Note', body: 'content',
-        tags: '[]', created_at: '2026-01-01T00:00:00Z',
-        updated_at: '2026-01-01T00:00:00Z',
       });
       upsertKgVaultHash(db, {
         project_id: pid, file_path: 'test.md', content_hash: 'hash1',
@@ -736,11 +730,6 @@ describe('op-server', () => {
       const res = await app.inject({ method: 'GET', url: '/api/sessions/nonexistent-session-id' });
       // May return 200 with empty data or 404
       assert.ok(res.statusCode === 200 || res.statusCode === 404);
-    });
-
-    it('GET /api/knowledge/discover without params returns 400', async () => {
-      const res = await app.inject({ method: 'GET', url: '/api/knowledge/discover' });
-      assert.equal(res.statusCode, 400);
     });
   });
 

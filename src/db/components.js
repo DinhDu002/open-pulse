@@ -32,7 +32,7 @@ function upsertClProject(db, proj) {
       name          = excluded.name,
       directory     = excluded.directory,
       last_seen_at  = excluded.last_seen_at,
-      session_count = session_count + 1
+      session_count = excluded.session_count
   `).run(proj);
 }
 
@@ -70,6 +70,11 @@ function updatePromptStats(db, promptId, { seq_end, cost, timestamp }) {
         )
     WHERE id = @id
   `).run({ id: promptId, seq_end, cost: cost || 0, timestamp });
+}
+
+function updatePromptTokens(db, promptId, tokens) {
+  db.prepare('UPDATE prompts SET total_tokens = @tokens WHERE id = @id')
+    .run({ id: promptId, tokens });
 }
 
 // ---------------------------------------------------------------------------
@@ -144,9 +149,6 @@ function getProjectTimeline(db, projectId, weeks) {
 
 function deleteProject(db, projectId) {
   const tx = db.transaction(() => {
-    // Delete kb_notes
-    db.prepare('DELETE FROM kb_notes WHERE project_id = ?').run(projectId);
-
     // Delete vault hashes
     db.prepare('DELETE FROM kg_vault_hashes WHERE project_id = ?').run(projectId);
 
@@ -178,6 +180,7 @@ module.exports = {
   insertPrompt,
   getLatestPromptForSession,
   updatePromptStats,
+  updatePromptTokens,
   upsertComponent,
   deleteComponentsNotSeenSince,
   getComponentsByType,
