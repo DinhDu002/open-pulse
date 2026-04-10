@@ -1,5 +1,7 @@
 'use strict';
 
+const fs = require('fs');
+const path = require('path');
 const { spawn } = require('child_process');
 
 const {
@@ -15,6 +17,27 @@ const VALID_CATEGORIES = new Set([
   'domain', 'stack', 'schema', 'api', 'feature', 'architecture',
   'convention', 'decision', 'footgun', 'contract', 'error_pattern',
 ]);
+
+// ---------------------------------------------------------------------------
+// loadSkillTemplate
+// ---------------------------------------------------------------------------
+
+/**
+ * Reads the knowledge-entry-format skill file as the source of truth for
+ * extraction rules. Returns the markdown content (without YAML frontmatter)
+ * or null if the file is missing.
+ */
+function loadSkillTemplate() {
+  const skillPath = path.join(__dirname, '..', '..', 'claude', 'skills', 'knowledge-entry-format', 'SKILL.md');
+  try {
+    const raw = fs.readFileSync(skillPath, 'utf8');
+    // Strip YAML frontmatter (between --- markers)
+    const stripped = raw.replace(/^---[\s\S]*?---\s*/, '');
+    return stripped.trim();
+  } catch {
+    return null;
+  }
+}
 
 // ---------------------------------------------------------------------------
 // buildExtractPrompt
@@ -58,6 +81,30 @@ function buildExtractPrompt(projectName, events, existingTitles = []) {
     ? `\nExisting knowledge titles (avoid duplicating these — compare case-insensitively):\n${existingTitles.map(t => `- ${t}`).join('\n')}\n`
     : '';
 
+  const skillTemplate = loadSkillTemplate();
+
+  if (skillTemplate) {
+    return [
+      `Project: ${projectName}`,
+      '',
+      'Analyze the following tool usage events from a Claude Code session and extract',
+      'reusable project knowledge that would help future sessions.',
+      existingBlock,
+      'Events:',
+      eventLines,
+      '',
+      '--- ENTRY FORMAT AND RULES ---',
+      '',
+      skillTemplate,
+      '',
+      '--- END FORMAT AND RULES ---',
+      '',
+      'Extract knowledge entries as a JSON array following the format above.',
+      'Respond with a JSON array only. No explanation.',
+    ].join('\n');
+  }
+
+  // Fallback if skill file is missing — minimal hardcoded rules
   return [
     `Project: ${projectName}`,
     '',
@@ -76,15 +123,8 @@ function buildExtractPrompt(projectName, events, existingTitles = []) {
     '',
     'Rules:',
     '- Only extract knowledge that CANNOT be derived by reading the source code directly',
-    '- Focus on: WHY decisions were made, gotchas/footguns encountered, non-obvious conventions,',
-    '  edge cases discovered during development, integration quirks',
-    '- Do NOT extract: file/module descriptions, API endpoint lists, tech stack enumerations,',
-    '  database schema descriptions, configuration key listings, generic programming best practices',
-    '- Skip anything already in the existing titles list (compare case-insensitively)',
-    '- Each entry must be ACTIONABLE — it should change how a developer approaches the code,',
-    '  not just describe what exists',
-    '- Prefer updating an existing entry over creating a near-duplicate',
-    '- Return [] if nothing genuinely new and reusable is found (this is the expected common case)',
+    '- Each entry must be ACTIONABLE',
+    '- Return [] if nothing genuinely new is found',
     '',
     'Respond with a JSON array only. No explanation.',
   ].join('\n');
@@ -261,6 +301,7 @@ async function extractKnowledgeFromPrompt(db, promptId, opts = {}) {
 // ---------------------------------------------------------------------------
 
 module.exports = {
+  loadSkillTemplate,
   buildExtractPrompt,
   callClaude,
   parseJsonResponse,

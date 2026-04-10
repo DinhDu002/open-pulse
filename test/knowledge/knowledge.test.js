@@ -497,12 +497,11 @@ describe('op-knowledge', () => {
       assert.ok(prompt.includes('npm test'), 'should include command from tool_input');
     });
 
-    it('includes quality rules that reject generic and descriptive entries', () => {
+    it('includes skill template content when skill file exists', () => {
       const prompt = buildExtractPrompt('Proj', [], []);
-      assert.ok(prompt.includes('CANNOT be derived by reading the source code'), 'should require non-obvious knowledge');
-      assert.ok(prompt.includes('Do NOT extract'), 'should have exclusion rules');
-      assert.ok(prompt.includes('ACTIONABLE'), 'should require actionable entries');
-      assert.ok(prompt.includes('expected common case'), 'should indicate empty return is the common case');
+      assert.ok(prompt.includes('Entry JSON Schema'), 'should include skill template schema section');
+      assert.ok(prompt.includes('Controlled Tag Vocabulary'), 'should include skill template tag section');
+      assert.ok(prompt.includes('ENTRY FORMAT AND RULES'), 'should have format delimiter');
     });
 
     it('instructs case-insensitive dedup in rules', () => {
@@ -552,12 +551,11 @@ describe('op-knowledge', () => {
       assert.ok(prompt.includes('Already documented'), 'should label as already documented');
     });
 
-    it('includes quality rules matching extract prompt', () => {
+    it('includes skill template content in scan prompt', () => {
       const prompt = buildScanPrompt('Proj', { 'README.md': '# Hello' });
-      assert.ok(prompt.includes('CANNOT be derived by reading the source code'), 'should include quality rules');
-      assert.ok(prompt.includes('ACTIONABLE'), 'should require actionable entries');
-      assert.ok(prompt.includes('case-insensitive'), 'should mention case-insensitive comparison');
-      assert.ok(prompt.includes('genuinely new'), 'should indicate empty return for non-new content');
+      assert.ok(prompt.includes('Entry JSON Schema'), 'should include skill template schema section');
+      assert.ok(prompt.includes('Controlled Tag Vocabulary'), 'should include skill template tag section');
+      assert.ok(prompt.includes('ENTRY FORMAT AND RULES'), 'should have format delimiter');
     });
   });
 

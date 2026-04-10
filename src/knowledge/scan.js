@@ -4,7 +4,7 @@ const fs = require('fs');
 const path = require('path');
 
 const { getExistingTitles } = require('./queries');
-const { callClaude, parseJsonResponse, mergeOrUpdate } = require('./extract');
+const { callClaude, parseJsonResponse, mergeOrUpdate, loadSkillTemplate } = require('./extract');
 const { renderKnowledgeVault } = require('./vault');
 
 // ---------------------------------------------------------------------------
@@ -40,12 +40,33 @@ function buildScanPrompt(projectName, files, existingTitles = [], claudeMdConten
     ? `\nExisting knowledge titles (avoid duplicating these — compare case-insensitively):\n${existingTitles.map(t => `- ${t}`).join('\n')}\n`
     : '';
 
+  const skillTemplate = loadSkillTemplate();
+
+  if (skillTemplate) {
+    return [
+      `Project: ${projectName}`,
+      '',
+      'Perform a comprehensive knowledge extraction from the following project files.',
+      claudeBlock,
+      existingBlock,
+      fileBlocks,
+      '',
+      '--- ENTRY FORMAT AND RULES ---',
+      '',
+      skillTemplate,
+      '',
+      '--- END FORMAT AND RULES ---',
+      '',
+      'Extract knowledge entries as a JSON array following the format above.',
+      'Respond with a JSON array only. No explanation.',
+    ].join('\n');
+  }
+
+  // Fallback if skill file missing
   return [
     `Project: ${projectName}`,
     '',
     'Perform a comprehensive knowledge extraction from the following project files.',
-    'Extract everything that helps understand the project: domain, stack, schema,',
-    'API contracts, architectural decisions, conventions, footguns, and error patterns.',
     claudeBlock,
     existingBlock,
     fileBlocks,
@@ -59,15 +80,8 @@ function buildScanPrompt(projectName, files, existingTitles = [], claudeMdConten
     '',
     'Rules:',
     '- Only extract knowledge that CANNOT be derived by reading the source code directly',
-    '- Focus on: WHY decisions were made, gotchas/footguns encountered, non-obvious conventions,',
-    '  edge cases discovered during development, integration quirks',
-    '- Do NOT extract: file/module descriptions, API endpoint lists, tech stack enumerations,',
-    '  database schema descriptions, configuration key listings, generic programming best practices',
-    '- Skip anything already in the existing titles list (compare case-insensitively)',
-    '- Each entry must be ACTIONABLE — it should change how a developer approaches the code,',
-    '  not just describe what exists',
-    '- Prefer updating an existing entry over creating a near-duplicate',
-    '- Return [] if nothing genuinely new and reusable is found',
+    '- Each entry must be ACTIONABLE',
+    '- Return [] if nothing genuinely new is found',
     '',
     'Respond with a JSON array only. No explanation.',
   ].join('\n');
