@@ -9,9 +9,9 @@ Local analytics dashboard and expert system for Claude Code. Tracks usage via ho
 ```
 Hooks (Claude Code)          Server (Fastify)              Frontend (SPA)
 ┌──────────────┐     JSONL    ┌──────────────┐    REST     ┌──────────────┐
-│ op-collector │ ──────────→  │  op-server   │  ←───────→  │  index.html  │
+│  collector   │ ──────────→  │   server.js  │  ←───────→  │  index.html  │
 │   (3 hooks)  │   data/*.jsonl│  port 3827   │  /api/*    │  + 8 routes  │
-└──────────────┘              │  5 route mods │              └──────────────┘
+└──────────────┘              │  11 route mods│              └──────────────┘
                               │              │
                               │  Ingest      │──→ open-pulse.db (SQLite, 12 tables)
                               │  (timer 10s) │    events + prompt linking
@@ -40,18 +40,18 @@ Hooks (Claude Code)          Server (Fastify)              Frontend (SPA)
 ## Data Flow
 
 1. **Collection**: Claude Code hooks write JSONL to `data/` directory
-   - `op-collector.js` handles: PostToolUse, UserPromptSubmit, Stop
+   - `src/ingest/collector.js` handles: PostToolUse, UserPromptSubmit, Stop
    - Captures full `tool_input` and `tool_response` (5KB, secrets scrubbed) for analysis
 2. **Ingestion**: Server timer (10s) atomically processes JSONL → SQLite
    - Pattern: rename `.jsonl` → `.jsonl.processing` → read → insert → delete
    - On failure: rename back to `.jsonl` for retry (max 3 retries → `.failed`)
    - Links events to `prompts` table — groups contiguous events per user turn with cost/token aggregation
-3. **Observer (external)**: CL observer agent runs outside op-server (not a timer). Reads events from SQLite via `cl-export-events.js`, invokes Haiku to detect patterns, updates instinct YAML files in `cl/instincts/`
-4. **Filesystem Sync**: Server timer (60s) syncs `projects.json`, instinct files, and components (skills/agents) from disk into DB via `op-sync.js`
+3. **Observer (optional timer)**: Background observer in `src/evolve/observer.js` reads events from SQLite via `src/evolve/export-events.js`, invokes Haiku to detect patterns, updates instinct YAML files in `cl/instincts/`
+4. **Filesystem Sync**: Server timer (60s) syncs `projects.json`, instinct files, and components (skills/agents) from disk into DB via `src/ingest/sync.js`
 5. **Auto-Evolve**: Observer patterns → instinct files → `auto_evolves` table → auto-promote when confidence >= 0.85 (no rejections, blacklists agent/hook) → component files written to `~/.claude/`
-6. **Knowledge Extraction**: After each prompt is ingested, `op-knowledge.js` invokes Haiku to extract project-specific understanding from recent events. Entries stored in `knowledge_entries` table. Cold-start scan bootstraps from key project files (`README.md`, `package.json`, `CLAUDE.md`)
-7. **Knowledge Vault**: Renders `knowledge_entries` as markdown files in `<project>/.claude/knowledge/` — one file per category. Uses content hashing (`kg_vault_hashes` table) to skip unchanged content
-8. **Daily Review**: 3 AM daily → `op-daily-review.js` reads all component files + work history + best practices → Opus analysis → `daily_reviews` table + report `.md` in `reports/`. Triggerable via API
+6. **Knowledge Extraction**: After each prompt is ingested, `src/knowledge/extract.js` invokes Haiku to extract project-specific understanding from recent events. Entries stored in `knowledge_entries` table. Cold-start scan bootstraps from key project files (`README.md`, `package.json`, `CLAUDE.md`)
+7. **Knowledge Vault**: `src/knowledge/vault.js` renders `knowledge_entries` as markdown files in `<project>/.claude/knowledge/` — one file per category. Uses content hashing (`kg_vault_hashes` table) to skip unchanged content
+8. **Daily Review**: 3 AM daily → `src/review/pipeline.js` reads all component files + work history + best practices → Opus analysis → `daily_reviews` table + report `.md` in `reports/`. Triggerable via API
 9. **Retention**: Daily timer compacts tool data after 7 days (NULL tool_input/response), deletes events after 90 days. Configurable via `retention_warm_days` / `retention_cold_days`
 10. **API + Frontend**: Fastify serves REST endpoints on `127.0.0.1:3827`. Vanilla JS SPA with hash-based routing, Chart.js + Cytoscape.js for visualization
 
@@ -60,35 +60,71 @@ Hooks (Claude Code)          Server (Fastify)              Frontend (SPA)
 ```
 open-pulse/
 ├── src/                        # Backend (Node.js, CommonJS)
-│   ├── op-db.js                # SQLite schema (12 tables), migrations, re-exports db/ modules
-│   ├── db/                     # DB query modules
+│   ├── server.js               # Fastify app factory, timers, route registration
+│   ├── retention.js            # 3-tier storage retention (hot/warm/cold)
+│   ├── lib/                    # Shared utilities (zero duplication)
+│   │   ├── frontmatter.js      # parseFrontmatter(), extractBody()
+│   │   ├── slugify.js          # slugify()
+│   │   ├── paths.js            # getClaudeDir(), getComponentPath()
+│   │   ├── plugins.js          # getInstalledPlugins(), getPluginComponents()
+│   │   ├── projects.js         # getKnownProjectPaths(), getProjectAgents()
+│   │   └── format.js           # parseQualifiedName(), errorReply(), parsePagination()
+│   ├── db/                     # Database layer
+│   │   ├── schema.js           # SQLite schema, migrations, createDb()
 │   │   ├── events.js           # Event insert/batch
 │   │   ├── sessions.js         # Session upsert/update
-│   │   ├── knowledge.js        # Vault hash + KG sync state queries
-│   │   ├── knowledge-entries.js # knowledge_entries CRUD + category/status queries
-│   │   └── components.js       # Components, projects, prompts, scan queries
-│   ├── op-ingest.js            # Atomic JSONL → DB pipeline + prompt linking
-│   ├── op-sync.js              # Filesystem → DB sync (projects, components, scanner)
-│   ├── op-auto-evolve.js       # Auto-evolve engine (instinct sync + promote + revert)
-│   ├── op-instinct-updater.js  # YAML frontmatter parse/update for instinct feedback loop
-│   ├── op-knowledge.js         # Knowledge extraction (Haiku post-ingest + cold-start scan + vault render)
-│   ├── op-promote.js           # Component file generation (write rule/skill/agent to ~/.claude/)
-│   ├── op-retention.js         # 3-tier storage retention (hot/warm/cold)
-│   ├── op-helpers.js           # Shared utilities (plugin detection, project discovery, etc.)
-│   ├── op-server.js            # Fastify app factory, timers, route registration
-│   ├── op-execute.js           # DEAD CODE — references removed insights system, not imported
-│   └── routes/                 # Fastify route plugins
-│       ├── core.js             # Health, overview, events, sessions, prompts, rankings,
-│       │                       #   cost, projects, scanner, config, errors, ingest
-│       ├── inventory.js        # /api/inventory/:type (skills/agents)
-│       ├── knowledge.js        # /api/knowledge/* (entries, scan, autocomplete)
+│   │   ├── prompts.js          # Prompt linking queries
+│   │   ├── components.js       # Component queries
+│   │   ├── projects.js         # cl_projects queries
+│   │   ├── scan.js             # Scanner result queries
+│   │   ├── knowledge-entries.js # knowledge_entries CRUD
+│   │   └── knowledge-sync.js   # Vault hash + sync state
+│   ├── ingest/                 # Data collection + ingestion
+│   │   ├── collector.js        # Hook script (PostToolUse, Stop, UserPromptSubmit)
+│   │   ├── pipeline.js         # Atomic JSONL → DB pipeline
+│   │   ├── prompt-linker.js    # Group events into prompt records
+│   │   └── sync.js             # Filesystem → DB sync (projects, components)
+│   ├── evolve/                 # Auto-evolve + instinct ecosystem
+│   │   ├── sync.js             # Instinct YAML files → auto_evolves table
+│   │   ├── promote.js          # Auto-promote + component file generation
+│   │   ├── revert.js           # Revert promoted components
+│   │   ├── queries.js          # auto_evolves table queries
+│   │   ├── observer.js         # Background observer (Haiku pattern detection)
+│   │   ├── observer-prompt.md  # Haiku prompt template
+│   │   ├── instinct-updater.js # YAML frontmatter feedback loop
+│   │   ├── seed.js             # Cold-start: 10 starter instincts + CLAUDE.md parser
+│   │   └── export-events.js    # SQLite → JSONL for observer
+│   ├── knowledge/              # Knowledge extraction + vault
+│   │   ├── extract.js          # Haiku post-ingest extraction
+│   │   ├── vault.js            # Entries → markdown files in .claude/knowledge/
+│   │   ├── scan.js             # Cold-start scan from project files
+│   │   └── queries.js          # knowledge_entries + vault hash queries
+│   ├── review/                 # Daily review pipeline
+│   │   ├── pipeline.js         # Orchestrate: context → Opus → save
+│   │   ├── context.js          # Read components + work history
+│   │   ├── prompt.md           # Opus prompt template
+│   │   └── queries.js          # daily_reviews CRUD
+│   └── routes/                 # Fastify route plugins (11 files)
+│       ├── health.js           # /api/health, /api/overview
+│       ├── events.js           # /api/events, /api/sessions
+│       ├── prompts.js          # /api/prompts
+│       ├── cost.js             # /api/cost, /api/rankings
+│       ├── projects.js         # /api/projects
+│       ├── scanner.js          # /api/scanner
+│       ├── config.js           # /api/config, /api/errors, /api/ingest
+│       ├── inventory.js        # /api/inventory/:type
+│       ├── knowledge.js        # /api/knowledge/*
 │       ├── auto-evolves.js     # /api/auto-evolves/*
 │       └── daily-reviews.js    # /api/daily-reviews/*
-├── collector/                  # Hook scripts (run by Claude Code)
-│   └── op-collector.js         # Main event collector (stdin → JSONL)
+├── scripts/                    # CLI utilities + installation
+│   ├── install.sh              # 8-step installer (npm, dirs, DB, seed, symlinks, hooks, launchd)
+│   ├── uninstall.sh            # 4-step uninstaller (symlinks, hooks, launchd)
+│   ├── register-hooks.js       # Merge hooks into ~/.claude/settings.json
+│   ├── reset-db.js             # Drop and recreate DB (clean break)
+│   └── backfill-prompts.js     # One-time migration: link existing events to prompt records
 ├── public/                     # Frontend (vanilla JS ES modules, no build)
 │   ├── index.html              # SPA shell, dark theme CSS, nav (8 items)
-│   └── modules/
+│   └── modules/                # 11 ES modules
 │       ├── router.js           # Hash-based SPA router (8 routes)
 │       ├── api.js              # Fetch wrapper (get/post/put/del + ETag support)
 │       ├── utils.js            # Shared utilities (escHtml, debounce, confColor, etc.)
@@ -100,51 +136,30 @@ open-pulse/
 │       ├── knowledge.js        # 2-tab: Notes editor (tab 1) + Projects & Sync (tab 2)
 │       ├── auto-evolves.js     # Auto-evolve patterns list + promote/revert UI
 │       ├── daily-reviews.js    # Daily review suggestions list + accept/dismiss UI
-│       ├── settings.js         # Config editor, health, manual triggers
-│       └── learning-insights.js # DEAD CODE — not routed, references removed insights system
-├── scripts/                    # Installation & management
-│   ├── op-install.sh           # 8-step installer (npm, dirs, DB, seed, symlinks, hooks, launchd)
-│   ├── op-uninstall.sh         # 4-step uninstaller (symlinks, hooks, launchd)
-│   ├── register-hooks.js       # Merge hooks into ~/.claude/settings.json
-│   ├── cl-export-events.js     # Export project events from SQLite for CL observer
-│   ├── cl-seed-instincts.js    # Cold start: 10 starter instincts + CLAUDE.md rule parser
-│   ├── op-daily-review.js      # Daily review pipeline (export + scan + prompt + report)
-│   ├── op-daily-review-prompt.md # Prompt template for daily review
-│   ├── op-backfill-prompts.js  # One-time migration: link existing events to prompt records
-│   └── reset-db.js             # Drop and recreate DB (clean break)
+│       └── settings.js         # Config editor, health, manual triggers
+├── test/                       # Tests mirror src/ structure
+│   ├── db/                     # schema.test.js
+│   ├── ingest/                 # pipeline.test.js, collector.test.js
+│   ├── evolve/                 # sync.test.js, promote.test.js, seed.test.js, etc.
+│   ├── knowledge/              # knowledge.test.js
+│   ├── review/                 # review.test.js
+│   ├── routes/                 # routes.test.js, learning.test.js
+│   └── *.test.js               # retention, helpers, backfill-prompts
 ├── claude/                     # Expert system (symlinked to ~/.claude/ on install)
-│   ├── skills/                 # 7 skills
-│   │   ├── op-continuous-learning/  # Instinct-based learning system (CL v2.1)
-│   │   ├── claude-code-knowledge/   # Knowledge base with 8 reference docs
-│   │   ├── claude-config-advisor/   # Decision tree for component recommendations
-│   │   ├── claude-setup-scanner/    # Setup inventory and gap analysis
-│   │   └── agent-creator/           # Agent scaffolding
-│   └── agents/
-│       └── claude-code-expert.md    # Orchestrator agent using all skills
-├── test/                       # Tests (node:test, 274 total)
-│   ├── op-db.test.js           # Schema, migrations, all domain queries
-│   ├── op-server.test.js       # All HTTP endpoints
-│   ├── op-ingest.test.js       # JSONL parsing, prompt linking, retries
-│   ├── op-collector.test.js    # Hook events, scrubbing, cost estimation
-│   ├── op-helpers.test.js      # Plugin detection, path resolution
-│   ├── op-auto-evolve.test.js  # Instinct sync, auto-promote, revert
-│   ├── op-learning-api.test.js # Project endpoints, learning feed
-│   ├── op-instinct-updater.test.js # YAML parse, confidence update
-│   ├── op-daily-review.test.js # Review pipeline, launchd script
-│   ├── op-knowledge.test.js    # Knowledge extraction, vault render, cold-start scan
-│   ├── op-promote.test.js      # Component file generation to ~/.claude/
-│   ├── cl-seed-instincts.test.js   # Seeding, CLAUDE.md parser, idempotency
-│   ├── cl-export-events.test.js    # SQLite event export for observer
-│   ├── op-retention.test.js    # Warm/cold tier compaction/deletion
-│   └── op-backfill-prompts.test.js # Migration: event → prompt record backfill
+│   ├── agents/
+│   │   └── claude-code-expert.md    # Orchestrator agent using all skills
+│   └── skills/                 # 6 skills (knowledge, config, scanner, creators)
+│       ├── claude-code-knowledge/   # Knowledge base with 8 reference docs
+│       ├── claude-config-advisor/   # Decision tree for component recommendations
+│       ├── claude-setup-scanner/    # Setup inventory and gap analysis
+│       └── agent-creator/           # Agent scaffolding
 ├── data/                       # Runtime: JSONL files (gitignored)
-├── cl/                         # Runtime: Continuous Learning data (gitignored)
-│                               #   "CL" = Continuous Learning — instinct-based observer subsystem
+├── cl/                         # Runtime: instinct YAML files (gitignored)
 ├── logs/                       # Runtime: stdout/stderr logs (gitignored)
 ├── reports/                    # Daily review reports (gitignored)
 ├── config.json                 # Server config (port, intervals, thresholds)
 ├── open-pulse.db               # SQLite database (gitignored)
-└── projects.json               # CL project registry (gitignored)
+└── projects.json               # Project registry (gitignored)
 ```
 
 ## Database Schema
@@ -276,6 +291,9 @@ open-pulse/
 | `auto_evolve_enabled` | true | Enable auto-evolve promotion timer |
 | `auto_evolve_blacklist` | ["agent","hook"] | Target types blocked from auto-promotion |
 | `auto_evolve_min_confidence` | 0.85 | Confidence threshold for auto-promotion |
+| `observer_enabled` | false | Enable background observer timer |
+| `observer_interval_ms` | 300000 | Observer cycle interval (5 min) |
+| `observer_min_events` | 20 | Minimum events before analysis |
 | `daily_review_enabled` | true | Enable daily review |
 | `daily_review_model` | "opus" | Model for daily review (opus/sonnet) |
 | `daily_review_timeout_ms` | 300000 | Timeout for daily review Claude invocation |
@@ -290,13 +308,12 @@ open-pulse/
 - **ES modules for frontend**: native browser modules, no bundler needed.
 - **Symlinks for Claude integration**: `claude/skills/*` → `~/.claude/skills/*` so the repo stays self-contained.
 - **Environment variables for testing**: `OPEN_PULSE_DB`, `OPEN_PULSE_DIR`, `OPEN_PULSE_CLAUDE_DIR` allow tests to use temp directories.
-- **`op-` prefix**: all main backend files use `op-` prefix to avoid naming conflicts. `cl-` prefix for Continuous Learning scripts.
-- **Route plugin refactor**: All API routes extracted from `op-server.js` into 5 Fastify plugins under `src/routes/`. Each receives `routeOpts` (db, helpers, dbPath, repoDir, config, componentETagFn). `op-server.js` is app factory + timer coordinator only.
+- **Route plugins**: All API routes are organized into 11 Fastify plugins under `src/routes/`. Each receives `routeOpts` (db, dbPath, repoDir, config, componentETagFn). `src/server.js` is app factory + timer coordinator only.
 - **Prompt linking**: During ingestion, contiguous events sharing the same `user_prompt` are grouped into a `prompts` record. Each event gets a `prompt_id` FK. Enables per-turn cost, token count, duration, and event breakdown without query-time aggregation.
 - **Split feedback loops**: Two independent flows replace the old unified insights system. Flow 1 (auto-evolve): Observer-detected patterns auto-promote to rule/knowledge/skill when confidence >= 0.85 (blacklists agent/hook). Flow 2 (daily review): Comprehensive 3AM analysis reads all component files + work history, invokes Opus for suggestions. Each flow has its own table, routes, and UI — zero shared code.
-- **Daily review agent**: `scripts/op-daily-review.js` reads full content of all component files (rules, skills, agents, hooks, memory, plugins) + best practices from `claude-code-knowledge` + day's work history. Invokes Opus for comprehensive analysis. Outputs: suggestions in `daily_reviews` table + markdown report in `reports/`.
+- **Daily review pipeline**: `src/review/pipeline.js` reads full content of all component files (rules, skills, agents, hooks, memory, plugins) + best practices from `claude-code-knowledge` + day's work history. Invokes Opus for comprehensive analysis. Outputs: suggestions in `daily_reviews` table + markdown report in `reports/`.
 - **Knowledge entries architecture**: Replaces KG (`kg_nodes`/`kg_edges`). LLM (Haiku) extracts project understanding after each prompt. Entries stored in `knowledge_entries` table, rendered as markdown vault files per category in `<project>/.claude/knowledge/`. Cold-start scan bootstraps knowledge from key project files. No confidence scoring — entries are factual, not behavioral patterns.
-- **`cl/` prefix convention**: The `cl_` prefix on DB tables (`cl_projects`), the `cl/` runtime directory, and `cl-` script prefix stand for "Continuous Learning" — the instinct-based observer subsystem.
+- **`cl_` DB prefix**: The `cl_` prefix on DB tables (e.g., `cl_projects`) and the `cl/` runtime directory stand for the instinct-based observer subsystem. The code itself lives in `src/evolve/`.
 - **3-tier retention**: hot (0-7d full data), warm (7-90d NULLs tool_input/response), cold (90d+ deleted). Configurable, runs daily. Sessions never deleted.
 - **Cold start seeding**: 10 universal starter instincts + CLAUDE.md rule parser. Idempotent — skips existing files on reinstall.
 
@@ -304,8 +321,8 @@ open-pulse/
 
 ```bash
 # Development
-npm start                    # Start server
-npm test                     # Run all tests (274)
+npm start                    # → node src/server.js
+npm test                     # → node --test test/*.test.js test/**/*.test.js
 
 # Installation
 npm run install-service      # Full 8-step install (npm, dirs, DB, seed, symlinks, hooks, launchd)
@@ -325,7 +342,7 @@ The collector classifies events into four types based on tool name:
 - `tool_call` — all other tools (Read, Write, Edit, Bash, Grep, Glob, etc.)
 - `session_end` — from Stop hook (includes token counts and cost)
 
-Each tool event includes: `tool_input` (full, 5KB, secrets scrubbed), `tool_response` (full, 5KB, scrubbed), `seq_num` (order within session), `success` (boolean). CL observer reads these from SQLite via `cl-export-events.js`.
+Each tool event includes: `tool_input` (full, 5KB, secrets scrubbed), `tool_response` (full, 5KB, scrubbed), `seq_num` (order within session), `success` (boolean). The observer reads these from SQLite via `src/evolve/export-events.js`.
 
 ## Inventory Enrichment
 
@@ -337,11 +354,11 @@ The inventory endpoints enrich items with metadata beyond raw event counts:
 - **Pagination**: detail endpoint supports `page` (default 1) and `per_page` (default 10, max 50). Response includes `total`, `page`, `per_page`. Trigger counts are always computed from ALL invocations regardless of page.
 - **Trigger analysis**: for each invocation, finds the nearest preceding skill/agent event (`triggered_by`, incoming) and the nearest subsequent skill/agent event (`triggers`, outgoing). Aggregated trigger counts are returned in the `triggers` array.
 
-Key backend helpers in `op-helpers.js`: `parseQualifiedName()`, `getInstalledPlugins()`, `getPluginComponents()`, `getProjectAgents()`, `getKnownProjectPaths()`, `readItemMetaFromFile()`.
+Key backend helpers in `src/lib/`: `parseQualifiedName()` and `parsePagination()` in `format.js`; `getInstalledPlugins()` and `getPluginComponents()` in `plugins.js`; `getProjectAgents()` and `getKnownProjectPaths()` in `projects.js`; `getClaudeDir()` and `getComponentPath()` in `paths.js`.
 
 ## Cost Estimation
 
-Token rates per million tokens (in `op-collector.js`):
+Token rates per million tokens (in `src/ingest/collector.js`):
 - Haiku: $0.80 input / $4.00 output
 - Sonnet: $3.00 input / $15.00 output
 - Opus: $15.00 input / $75.00 output
