@@ -8,6 +8,7 @@ const {
   purgeKnowledgeEntries,
   updateKnowledgeEntry,
   insertEntryHistory,
+  getEntryHistory,
 } = require('../db/knowledge-entries');
 
 const { scanProject } = require('../knowledge/scan');
@@ -41,6 +42,16 @@ module.exports = async function knowledgeRoutes(app, opts) {
     const entry = getKnowledgeEntry(db, req.params.id);
     if (!entry) return errorReply(reply, 404, 'Entry not found');
     return entry;
+  });
+
+  app.get('/api/knowledge/entries/:id/history', async (req, reply) => {
+    const entry = getKnowledgeEntry(db, req.params.id);
+    if (!entry) return errorReply(reply, 404, 'Entry not found');
+    const rows = getEntryHistory(db, req.params.id);
+    return rows.map(r => ({
+      ...r,
+      snapshot: JSON.parse(r.snapshot),
+    }));
   });
 
   app.put('/api/knowledge/entries/:id', async (req, reply) => {
