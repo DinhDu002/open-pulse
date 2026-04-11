@@ -145,6 +145,21 @@ Before accepting an entry, apply this test:
 
 If the answer is NO, reject the entry.
 
+## Updating Existing Entries
+
+When analyzing events, you may discover that an existing entry contains outdated or incorrect facts. In that case, you MUST re-emit the entry with the **same title** and a corrected body. The system uses title-based upsert — same title triggers an update, not a duplicate.
+
+**When to update:**
+- Events show a configuration, model, or behavior has changed (e.g., model changed from Haiku to Sonnet)
+- Events show a file was refactored and an entry's description no longer matches
+- Events show an API endpoint, function signature, or schema has changed
+
+**When NOT to update:**
+- The existing entry is still accurate based on the events you see
+- You're unsure whether the entry is outdated — leave it for human review
+
+**How to update:** Emit a JSON entry with the exact same title as the existing entry. The body should contain the corrected facts following the same 3-part template (Trigger, Detail, Consequence).
+
 ## Validation Rules (for code enforcement)
 
 After LLM extraction, validate each entry programmatically:
