@@ -216,6 +216,28 @@ function updateKnowledgeEntry(db, id, fields) {
 }
 
 // ---------------------------------------------------------------------------
+// Entry history (change tracking)
+// ---------------------------------------------------------------------------
+
+function insertEntryHistory(db, { entry_id, change_type, snapshot }) {
+  db.prepare(`
+    INSERT INTO knowledge_entry_history (entry_id, change_type, snapshot, changed_at)
+    VALUES (@entry_id, @change_type, @snapshot, @changed_at)
+  `).run({
+    entry_id,
+    change_type,
+    snapshot: JSON.stringify(snapshot),
+    changed_at: new Date().toISOString(),
+  });
+}
+
+function getEntryHistory(db, entryId) {
+  return db.prepare(
+    'SELECT * FROM knowledge_entry_history WHERE entry_id = ? ORDER BY changed_at ASC'
+  ).all(entryId);
+}
+
+// ---------------------------------------------------------------------------
 // Exports
 // ---------------------------------------------------------------------------
 
@@ -231,4 +253,6 @@ module.exports = {
   purgeKnowledgeEntries,
   getExistingTitles,
   updateKnowledgeEntry,
+  insertEntryHistory,
+  getEntryHistory,
 };

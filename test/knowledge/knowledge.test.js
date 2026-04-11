@@ -387,6 +387,67 @@ describe('knowledge_entries', () => {
     const fetched = dbMod.getKnowledgeEntry(db, entry.id);
     assert.equal(fetched.tags, JSON.stringify(['nodejs', 'sqlite']));
   });
+
+  // -------------------------------------------------------------------------
+  // knowledge_entry_history
+  // -------------------------------------------------------------------------
+
+  describe('knowledge_entry_history', () => {
+    it('insertEntryHistory records a snapshot and getEntryHistory retrieves it', () => {
+      const entry = dbMod.insertKnowledgeEntry(db, {
+        project_id: 'proj-ke-test',
+        category: 'footgun',
+        title: 'History Test Entry',
+        body: 'Original body',
+      });
+
+      dbMod.insertEntryHistory(db, {
+        entry_id: entry.id,
+        change_type: 'created',
+        snapshot: { title: entry.title, body: entry.body, category: entry.category, status: entry.status },
+      });
+
+      const history = dbMod.getEntryHistory(db, entry.id);
+      assert.equal(history.length, 1);
+      assert.equal(history[0].entry_id, entry.id);
+      assert.equal(history[0].change_type, 'created');
+      const snap = JSON.parse(history[0].snapshot);
+      assert.equal(snap.title, 'History Test Entry');
+      assert.equal(snap.body, 'Original body');
+      assert.ok(history[0].changed_at);
+    });
+
+    it('getEntryHistory returns multiple snapshots in chronological order', () => {
+      const entry = dbMod.insertKnowledgeEntry(db, {
+        project_id: 'proj-ke-test',
+        category: 'api',
+        title: 'Multi History Entry',
+        body: 'v1',
+      });
+
+      dbMod.insertEntryHistory(db, {
+        entry_id: entry.id,
+        change_type: 'created',
+        snapshot: { title: 'Multi History Entry', body: 'v1', category: 'api', status: 'active' },
+      });
+      dbMod.insertEntryHistory(db, {
+        entry_id: entry.id,
+        change_type: 'updated',
+        snapshot: { title: 'Multi History Entry', body: 'v2', category: 'api', status: 'active' },
+      });
+
+      const history = dbMod.getEntryHistory(db, entry.id);
+      assert.equal(history.length, 2);
+      assert.equal(history[0].change_type, 'created');
+      assert.equal(history[1].change_type, 'updated');
+      assert.ok(history[0].changed_at <= history[1].changed_at);
+    });
+
+    it('getEntryHistory returns empty array for entry with no history', () => {
+      const history = dbMod.getEntryHistory(db, 'nonexistent-id');
+      assert.deepEqual(history, []);
+    });
+  });
 });
 
 // =============================================================================
