@@ -198,6 +198,50 @@ function scanProjectConfigs(db, registryPath) {
 }
 
 // ---------------------------------------------------------------------------
+// Phase 6: Knowledge entry validation context
+// ---------------------------------------------------------------------------
+
+function getKnowledgeReviewContext(db) {
+  const entries = db.prepare(
+    "SELECT id, project_id, title, body, source_file FROM knowledge_entries WHERE status = 'active' AND source_file IS NOT NULL"
+  ).all();
+
+  const projects = db.prepare('SELECT project_id, directory FROM cl_projects WHERE directory IS NOT NULL').all();
+  const projectDirs = {};
+  for (const p of projects) {
+    projectDirs[p.project_id] = p.directory;
+  }
+
+  const results = [];
+
+  for (const entry of entries) {
+    const projectDir = projectDirs[entry.project_id];
+    if (!projectDir) continue;
+
+    const fullPath = path.join(projectDir, entry.source_file);
+    let sourceContent = '';
+    try {
+      sourceContent = fs.readFileSync(fullPath, 'utf8');
+    } catch {
+      sourceContent = '(file not found)';
+    }
+
+    results.push({
+      entry_id: entry.id,
+      project_id: entry.project_id,
+      title: entry.title,
+      body_excerpt: entry.body.slice(0, 300),
+      source_file: entry.source_file,
+      source_content_excerpt: sourceContent.slice(0, 500),
+    });
+
+    if (results.length >= 30) break;
+  }
+
+  return results;
+}
+
+// ---------------------------------------------------------------------------
 // Phase 4: Build prompt
 // ---------------------------------------------------------------------------
 
@@ -268,6 +312,7 @@ module.exports = {
   scanAllComponents,
   loadBestPractices,
   buildPrompt,
+  getKnowledgeReviewContext,
   // exposed for tests via pipeline re-export
   readDirFiles,
   discoverProjectPaths,

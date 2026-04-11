@@ -472,4 +472,58 @@ describe('op-daily-review', () => {
     assert.ok(prompt.includes('json suggestions'), 'Should have labeled suggestions block');
     assert.ok(prompt.includes('json insights'), 'Should have labeled insights block');
   });
+
+  // -- getKnowledgeReviewContext --
+
+  describe('getKnowledgeReviewContext', () => {
+    it('returns entries with source file content excerpts', () => {
+      const { getKnowledgeReviewContext } = require('../../src/review/context');
+      const { upsertClProject } = require('../../src/db/projects');
+      const { insertKnowledgeEntry } = require('../../src/db/knowledge-entries');
+
+      upsertClProject(db, {
+        project_id: 'review-kg-test',
+        name: 'KG Review Test',
+        directory: TEST_DIR,
+        first_seen_at: '2026-04-11T00:00:00Z',
+        last_seen_at: '2026-04-11T00:00:00Z',
+        session_count: 1,
+      });
+
+      const srcPath = path.join(TEST_DIR, 'test-source.js');
+      fs.writeFileSync(srcPath, "const model = 'sonnet';\nmodule.exports = { model };");
+
+      insertKnowledgeEntry(db, {
+        project_id: 'review-kg-test',
+        category: 'stack',
+        title: 'Model Uses Haiku',
+        body: 'The system uses Haiku model for extraction. Consequence: lower cost.',
+        source_file: 'test-source.js',
+      });
+
+      const result = getKnowledgeReviewContext(db);
+      assert.ok(result.length >= 1);
+      const item = result.find(r => r.title === 'Model Uses Haiku');
+      assert.ok(item);
+      assert.ok(item.body_excerpt.includes('Haiku'));
+      assert.ok(item.source_content_excerpt.includes('sonnet'));
+      assert.equal(item.source_file, 'test-source.js');
+    });
+
+    it('skips entries without source_file', () => {
+      const { getKnowledgeReviewContext } = require('../../src/review/context');
+      const { insertKnowledgeEntry } = require('../../src/db/knowledge-entries');
+
+      insertKnowledgeEntry(db, {
+        project_id: 'review-kg-test',
+        category: 'domain',
+        title: 'No Source File Entry',
+        body: 'This has no source. Consequence: cannot validate.',
+      });
+
+      const result = getKnowledgeReviewContext(db);
+      const item = result.find(r => r.title === 'No Source File Entry');
+      assert.equal(item, undefined);
+    });
+  });
 });
