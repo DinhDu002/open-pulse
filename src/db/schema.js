@@ -148,6 +148,15 @@ CREATE INDEX IF NOT EXISTS idx_ke_category ON knowledge_entries(category);
 CREATE INDEX IF NOT EXISTS idx_ke_status   ON knowledge_entries(status);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_ke_project_title ON knowledge_entries(project_id, title COLLATE NOCASE);
 
+CREATE TABLE IF NOT EXISTS knowledge_entry_history (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  entry_id    TEXT NOT NULL,
+  change_type TEXT NOT NULL,
+  snapshot    TEXT NOT NULL,
+  changed_at  TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_keh_entry ON knowledge_entry_history(entry_id);
+
 CREATE TABLE IF NOT EXISTS auto_evolves (
   id                TEXT PRIMARY KEY,
   title             TEXT NOT NULL,
