@@ -448,6 +448,43 @@ describe('knowledge_entries', () => {
       assert.deepEqual(history, []);
     });
   });
+
+  // -------------------------------------------------------------------------
+  // buildExistingEntriesBlock
+  // -------------------------------------------------------------------------
+
+  describe('buildExistingEntriesBlock', () => {
+    it('returns full body for entries matching affected files', () => {
+      dbMod.insertKnowledgeEntry(db, {
+        project_id: 'proj-ke-test',
+        category: 'stack',
+        title: 'Knowledge Extraction Uses Sonnet',
+        body: 'When running extraction, the pipeline uses Haiku model. Consequence: cheaper but less accurate.',
+        source_file: 'src/knowledge/extract.js',
+      });
+      dbMod.insertKnowledgeEntry(db, {
+        project_id: 'proj-ke-test',
+        category: 'architecture',
+        title: 'Frontend serves static files',
+        body: 'The frontend is served by Fastify static plugin from public/. Consequence: no CORS needed.',
+        source_file: 'src/server.js',
+      });
+
+      const { buildExistingEntriesBlock } = require('../../src/knowledge/extract');
+      const block = buildExistingEntriesBlock(db, 'proj-ke-test', ['src/knowledge/extract.js']);
+
+      assert.ok(block.includes('Knowledge Extraction Uses Sonnet'));
+      assert.ok(block.includes('Haiku model'));
+      assert.ok(block.includes('UPDATE'));
+      assert.ok(block.includes('Frontend serves static files'));
+    });
+
+    it('returns empty string when no entries exist', () => {
+      const { buildExistingEntriesBlock } = require('../../src/knowledge/extract');
+      const block = buildExistingEntriesBlock(db, 'nonexistent-project', []);
+      assert.equal(block, '');
+    });
+  });
 });
 
 // =============================================================================

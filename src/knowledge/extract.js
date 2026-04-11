@@ -40,6 +40,59 @@ function loadSkillTemplate() {
 }
 
 // ---------------------------------------------------------------------------
+// buildExistingEntriesBlock — context-aware entry block for extraction prompt
+// ---------------------------------------------------------------------------
+
+function buildExistingEntriesBlock(db, projectId, affectedFiles) {
+  const entries = db.prepare(
+    "SELECT title, body, source_file, category FROM knowledge_entries WHERE project_id = ? AND status = 'active'"
+  ).all(projectId);
+
+  if (entries.length === 0) return '';
+
+  const affectedSet = new Set(affectedFiles);
+
+  const related = [];
+  const other = [];
+
+  for (const e of entries) {
+    if (e.source_file && affectedSet.has(e.source_file)) {
+      related.push(e);
+    } else {
+      other.push(e);
+    }
+  }
+
+  const lines = [];
+
+  if (related.length > 0) {
+    lines.push(
+      '',
+      'Related entries (UPDATE these if the events above contradict their content —',
+      'emit the same title with corrected body to trigger an update):',
+    );
+    for (const e of related) {
+      lines.push(`- "${e.title}" [source: ${e.source_file}]`);
+      lines.push(`  Body: ${e.body}`);
+    }
+  }
+
+  if (other.length > 0) {
+    lines.push(
+      '',
+      'Other entries (update if clearly contradicted, otherwise skip):',
+    );
+    for (const e of other) {
+      const excerpt = e.body.length > 100 ? e.body.slice(0, 100) + '…' : e.body;
+      lines.push(`- "${e.title}" — ${excerpt}`);
+    }
+  }
+
+  lines.push('');
+  return lines.join('\n');
+}
+
+// ---------------------------------------------------------------------------
 // buildExtractPrompt
 // ---------------------------------------------------------------------------
 
@@ -302,6 +355,7 @@ async function extractKnowledgeFromPrompt(db, promptId, opts = {}) {
 
 module.exports = {
   loadSkillTemplate,
+  buildExistingEntriesBlock,
   buildExtractPrompt,
   callClaude,
   parseJsonResponse,
