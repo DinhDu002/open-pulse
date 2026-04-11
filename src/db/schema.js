@@ -207,6 +207,21 @@ CREATE TABLE IF NOT EXISTS daily_review_insights (
 CREATE INDEX IF NOT EXISTS idx_dri_date ON daily_review_insights(review_date);
 CREATE INDEX IF NOT EXISTS idx_dri_type ON daily_review_insights(insight_type);
 CREATE INDEX IF NOT EXISTS idx_dri_status ON daily_review_insights(status);
+
+CREATE TABLE IF NOT EXISTS pipeline_runs (
+  id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  pipeline      TEXT NOT NULL,
+  project_id    TEXT,
+  model         TEXT,
+  status        TEXT NOT NULL DEFAULT 'success',
+  error         TEXT,
+  input_tokens  INTEGER DEFAULT 0,
+  output_tokens INTEGER DEFAULT 0,
+  duration_ms   INTEGER DEFAULT 0,
+  created_at    TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_pr_project ON pipeline_runs(project_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_pr_pipeline ON pipeline_runs(pipeline, created_at);
 `;
 
 // ---------------------------------------------------------------------------

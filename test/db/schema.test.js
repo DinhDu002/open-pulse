@@ -464,6 +464,20 @@ describe('op-db', () => {
     assert.ok(idx.sql.includes('COLLATE NOCASE'), 'index should use COLLATE NOCASE');
   });
 
+  it('creates pipeline_runs table', () => {
+    const cols = db.prepare("PRAGMA table_info('pipeline_runs')").all().map(c => c.name);
+    assert.ok(cols.includes('id'), 'has id column');
+    assert.ok(cols.includes('pipeline'), 'has pipeline column');
+    assert.ok(cols.includes('project_id'), 'has project_id column');
+    assert.ok(cols.includes('model'), 'has model column');
+    assert.ok(cols.includes('status'), 'has status column');
+    assert.ok(cols.includes('error'), 'has error column');
+    assert.ok(cols.includes('input_tokens'), 'has input_tokens column');
+    assert.ok(cols.includes('output_tokens'), 'has output_tokens column');
+    assert.ok(cols.includes('duration_ms'), 'has duration_ms column');
+    assert.ok(cols.includes('created_at'), 'has created_at column');
+  });
+
   it('migration backfills project_name with basename fallback', () => {
     const Database = require('better-sqlite3');
     const tmpPath = path.join(os.tmpdir(), `op-db-backfill-basename-${Date.now()}.db`);
