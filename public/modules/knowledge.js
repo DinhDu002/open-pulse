@@ -447,7 +447,7 @@ async function renderDetail(el, entryId) {
   el.appendChild(headerCard);
 
   // Change History
-  renderHistory(el, history || []);
+  renderHistory(el, history || [], entry);
 
   // Edit mode toggle
   editBtn.addEventListener('click', () => {
@@ -512,7 +512,7 @@ async function renderDetail(el, entryId) {
 
 // ── Change History ────────────────────────────────────────────────────────────
 
-function renderHistory(el, history) {
+function renderHistory(el, history, currentEntry) {
   const card = document.createElement('div');
   card.className = 'card';
   card.style.marginBottom = '16px';
@@ -578,14 +578,15 @@ function renderHistory(el, history) {
       const originalIdx = history.length - 1 - idx;
       const afterSnapshot = originalIdx + 1 < history.length
         ? history[originalIdx + 1].snapshot
-        : null; // current state not available in history items; skip showing "after" for most recent
+        : currentEntry
+          ? { title: currentEntry.title, body: currentEntry.body, category: currentEntry.category, status: currentEntry.status }
+          : null;
 
       if (afterSnapshot) {
         const diffContainer = document.createElement('div');
         renderDiff(diffContainer, item.snapshot, afterSnapshot);
         itemEl.appendChild(diffContainer);
       } else {
-        // Most recent change — just show the snapshot fields
         const snap = item.snapshot;
         const msg = document.createElement('div');
         msg.style.cssText = 'font-size:13px; color:var(--text-muted);';
