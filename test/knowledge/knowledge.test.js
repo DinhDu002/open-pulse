@@ -544,8 +544,9 @@ describe('op-knowledge', () => {
       assert.ok(prompt.includes('MyProject'), 'should include project name');
     });
 
-    it('includes existing titles for dedup', () => {
-      const prompt = buildExtractPrompt('Proj', [], ['Existing Title A', 'Existing Title B']);
+    it('includes existingEntriesBlock string in the prompt', () => {
+      const block = '\n- "Existing Title A"\n- "Existing Title B"\n';
+      const prompt = buildExtractPrompt('Proj', [], block);
       assert.ok(prompt.includes('Existing Title A'), 'should include existing title A');
       assert.ok(prompt.includes('Existing Title B'), 'should include existing title B');
     });
@@ -604,9 +605,11 @@ describe('op-knowledge', () => {
       assert.ok(prompt.includes('ENTRY FORMAT AND RULES'), 'should have format delimiter');
     });
 
-    it('instructs case-insensitive dedup in rules', () => {
-      const prompt = buildExtractPrompt('Proj', [], ['Existing Title']);
-      assert.ok(prompt.includes('case-insensitive'), 'should mention case-insensitive comparison');
+    it('includes pre-built existingEntriesBlock verbatim in the prompt', () => {
+      const block = '\nRelated entries (compare case-insensitively):\n- "Existing Title"\n';
+      const prompt = buildExtractPrompt('Proj', [], block);
+      assert.ok(prompt.includes('Existing Title'), 'should include existing entry title from block');
+      assert.ok(prompt.includes('case-insensitively'), 'should include block content verbatim');
     });
   });
 

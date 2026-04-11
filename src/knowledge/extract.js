@@ -101,10 +101,10 @@ function buildExistingEntriesBlock(db, projectId, affectedFiles) {
  *
  * @param {string} projectName
  * @param {Array}  events  — [{name, event_type, tool_input, tool_response}]
- * @param {string[]} existingTitles
+ * @param {string} existingEntriesBlock
  * @returns {string}
  */
-function buildExtractPrompt(projectName, events, existingTitles = []) {
+function buildExtractPrompt(projectName, events, existingEntriesBlock = '') {
   const eventLines = events.map((ev, i) => {
     let detail = '';
 
@@ -130,9 +130,7 @@ function buildExtractPrompt(projectName, events, existingTitles = []) {
     return lines.join('\n');
   }).join('\n');
 
-  const existingBlock = existingTitles.length
-    ? `\nExisting knowledge titles (avoid duplicating these — compare case-insensitively):\n${existingTitles.map(t => `- ${t}`).join('\n')}\n`
-    : '';
+  const existingBlock = existingEntriesBlock || '';
 
   const skillTemplate = loadSkillTemplate();
 
@@ -329,11 +327,22 @@ async function extractKnowledgeFromPrompt(db, promptId, opts = {}) {
 
   if (events.length === 0) return { message: 'No events for this prompt' };
 
-  // Get existing titles for dedup
-  const existingTitles = getExistingTitles(db, project.project_id);
+  // Extract affected file paths from events
+  const affectedFiles = [];
+  for (const ev of events) {
+    if (!ev.tool_input) continue;
+    try {
+      const input = JSON.parse(ev.tool_input);
+      const filePath = input.file_path || input.path;
+      if (filePath) affectedFiles.push(filePath);
+    } catch { /* ignore */ }
+  }
+
+  // Build context-aware existing entries block
+  const existingEntriesBlock = buildExistingEntriesBlock(db, project.project_id, affectedFiles);
 
   // Build prompt and call Claude CLI
-  const llmPrompt = buildExtractPrompt(project.name || project.project_id, events, existingTitles);
+  const llmPrompt = buildExtractPrompt(project.name || project.project_id, events, existingEntriesBlock);
   const rawResponse = await callClaude(llmPrompt, model);
   const entries = parseJsonResponse(rawResponse);
 
