@@ -2,8 +2,8 @@
 type: pattern
 source: tool:Edit
 target: tool:Read
-occurrences: 17
-generated_at: 2026-04-10T09:20:59.067Z
+occurrences: 31
+generated_at: 2026-04-10T13:25:59.413Z
 ---
 
 # Edit → Read
@@ -12,7 +12,7 @@ generated_at: 2026-04-10T09:20:59.067Z
 
 This pattern describes: **Edit → Read**
 
-**Occurrence count:** 17
+**Occurrence count:** 31
 
 ## Nodes
 

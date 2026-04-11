@@ -2,8 +2,8 @@
 type: pattern
 source: tool:ToolSearch
 target: tool:ExitPlanMode
-occurrences: 28
-generated_at: 2026-04-09T06:54:44.327Z
+occurrences: 11
+generated_at: 2026-04-10T13:55:59.779Z
 ---
 
 # ToolSearch → ExitPlanMode
@@ -12,7 +12,7 @@ generated_at: 2026-04-09T06:54:44.327Z
 
 This pattern describes: **ToolSearch → ExitPlanMode**
 
-**Occurrence count:** 28
+**Occurrence count:** 11
 
 ## Nodes
 

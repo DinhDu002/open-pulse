@@ -2,8 +2,8 @@
 type: pattern
 source: tool:Grep
 target: tool:Glob
-occurrences: 25
-generated_at: 2026-04-09T06:54:44.324Z
+occurrences: 7
+generated_at: 2026-04-10T13:40:59.397Z
 ---
 
 # Grep → Glob
@@ -12,7 +12,7 @@ generated_at: 2026-04-09T06:54:44.324Z
 
 This pattern describes: **Grep → Glob**
 
-**Occurrence count:** 25
+**Occurrence count:** 7
 
 ## Nodes
 

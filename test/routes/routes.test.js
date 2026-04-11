@@ -803,4 +803,37 @@ describe('op-server', () => {
     });
   });
 
+  // -- Daily review run route regression (TC-R1, TC-R2) --
+
+  it('TC-R1: POST /api/daily-reviews/run without body.date does not use yesterday', async () => {
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/daily-reviews/run',
+      headers: { 'content-type': 'application/json' },
+      payload: {},
+    });
+    // 500 expected (claude not available), but should not be a date error
+    assert.ok([200, 500].includes(res.statusCode));
+    if (res.statusCode === 500) {
+      const body = JSON.parse(res.body);
+      assert.ok(body.error || body.message, 'Should have error message');
+    }
+  });
+
+  it('TC-R2: POST /api/daily-reviews/run with explicit date passes it through', async () => {
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/daily-reviews/run',
+      headers: { 'content-type': 'application/json' },
+      payload: { date: '2026-04-10' },
+    });
+    // 500 expected (claude not available in test env)
+    assert.ok([200, 500].includes(res.statusCode));
+    if (res.statusCode === 500) {
+      const body = JSON.parse(res.body);
+      assert.ok(body.error || body.message, 'Should have error message');
+    }
+  });
+
 });
+

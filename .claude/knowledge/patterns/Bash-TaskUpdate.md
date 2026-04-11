@@ -3,7 +3,7 @@ type: pattern
 source: tool:Bash
 target: tool:TaskUpdate
 occurrences: 9
-generated_at: 2026-04-09T08:58:04.376Z
+generated_at: 2026-04-10T14:40:59.753Z
 ---
 
 # Bash → TaskUpdate

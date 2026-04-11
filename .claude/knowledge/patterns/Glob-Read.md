@@ -2,8 +2,8 @@
 type: pattern
 source: tool:Glob
 target: tool:Read
-occurrences: 8
-generated_at: 2026-04-10T09:20:59.067Z
+occurrences: 26
+generated_at: 2026-04-10T13:55:59.778Z
 ---
 
 # Glob → Read
@@ -12,7 +12,7 @@ generated_at: 2026-04-10T09:20:59.067Z
 
 This pattern describes: **Glob → Read**
 
-**Occurrence count:** 8
+**Occurrence count:** 26
 
 ## Nodes
 

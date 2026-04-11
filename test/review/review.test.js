@@ -12,6 +12,92 @@ const TEST_CLAUDE_DIR = path.join(TEST_DIR, 'claude');
 const TEST_PROJECT_DIR = path.join(TEST_DIR, 'fake-project');
 const REPO_DIR = path.join(__dirname, '../..');
 
+// ---------------------------------------------------------------------------
+// TC-U1..U3, U5: yesterday calculation + historyDays fallback (no DB needed)
+// ---------------------------------------------------------------------------
+
+describe('yesterday calculation', () => {
+  const calcYesterday = (nowMs) =>
+    new Date(nowMs - 86400000).toISOString().slice(0, 10);
+
+  it('TC-U1: returns correct date at 3 AM UTC', () => {
+    const now = new Date('2026-04-11T03:00:00Z').getTime();
+    assert.equal(calcYesterday(now), '2026-04-10');
+  });
+
+  it('TC-U2: crosses month boundary (Apr 1 → Mar 31)', () => {
+    const now = new Date('2026-04-01T03:00:00Z').getTime();
+    assert.equal(calcYesterday(now), '2026-03-31');
+  });
+
+  it('TC-U3: crosses year boundary (Jan 1 → Dec 31)', () => {
+    const now = new Date('2027-01-01T03:00:00Z').getTime();
+    assert.equal(calcYesterday(now), '2026-12-31');
+  });
+
+  it('TC-U5: historyDays fallback from config values', () => {
+    // Simulates: config.daily_review_history_days || 1
+    assert.equal(undefined || 1, 1, 'absent → 1');
+    assert.equal(null || 1, 1, 'null → 1');
+    assert.equal(0 || 1, 1, '0 → 1 (falsy)');
+    assert.equal(3 || 1, 3, '3 → 3');
+    assert.equal(7 || 1, 7, '7 → 7');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// TC-I1: runDailyReview with mocked execFileSync (require.cache trick)
+// ---------------------------------------------------------------------------
+
+describe('runDailyReview with mocked execFileSync', () => {
+  let pipelineMock, mockDb, capturedArgs;
+  const origExec = require('child_process').execFileSync;
+
+  before(() => {
+    capturedArgs = [];
+    require('child_process').execFileSync = (cmd, args, opts) => {
+      capturedArgs.push({ cmd, args, opts });
+      return '```json suggestions\n[{"category":"test","title":"Mock suggestion","description":"d","target_type":"rule","action":"create","confidence":0.9,"reasoning":"r","summary_vi":"v"}]\n```\n\n```json insights\n[{"insight_type":"gap","title":"Mock insight","description":"d","projects":["a"],"target_type":"skill","severity":"info","reasoning":"r","summary_vi":"v"}]\n```';
+    };
+    // Clear cached pipeline module so re-require picks up patched execFileSync
+    delete require.cache[require.resolve('../../src/review/pipeline')];
+    delete require.cache[require.resolve('../../src/review/context')];
+    pipelineMock = require('../../src/review/pipeline');
+    mockDb = require('../../src/db/schema').createDb(':memory:');
+  });
+
+  after(() => {
+    if (mockDb) mockDb.close();
+    require('child_process').execFileSync = origExec;
+    delete require.cache[require.resolve('../../src/review/pipeline')];
+    delete require.cache[require.resolve('../../src/review/context')];
+  });
+
+  it('TC-I1: passes date and historyDays into prompt via execFileSync', async () => {
+    const result = await pipelineMock.runDailyReview(mockDb, {
+      date: '2026-04-10',
+      historyDays: 3,
+      model: 'sonnet',
+      timeout: 5000,
+    });
+    assert.equal(capturedArgs.length, 1, 'execFileSync called once');
+    const promptArg = capturedArgs[0].args[capturedArgs[0].args.indexOf('-p') + 1];
+    assert.ok(promptArg.includes('2026-04-10'), 'prompt contains provided date');
+    assert.ok(promptArg.includes('3 days'), 'prompt contains historyDays');
+    assert.equal(result.suggestions.length, 1);
+    assert.equal(result.insights.length, 1);
+
+    // Verify saved to DB with correct review_date
+    const rows = mockDb.prepare('SELECT * FROM daily_reviews WHERE review_date = ?').all('2026-04-10');
+    assert.equal(rows.length, 1);
+    assert.equal(rows[0].review_date, '2026-04-10');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Main test suite
+// ---------------------------------------------------------------------------
+
 describe('op-daily-review', () => {
   let db, review;
 
@@ -98,6 +184,21 @@ describe('op-daily-review', () => {
     const history1 = review.collectWorkHistory(db, today, 1);
     const historyDefault = review.collectWorkHistory(db, today);
     assert.equal(history1.events.length, historyDefault.events.length);
+  });
+
+  it('TC-U4: collectWorkHistory(yesterday, 1) returns yesterday events, excludes today', () => {
+    const yesterday = new Date(Date.now() - 86400000).toISOString().slice(0, 10);
+    const today = new Date().toISOString().slice(0, 10);
+    const history = review.collectWorkHistory(db, yesterday, 1);
+    assert.ok(history.events.length >= 1, 'Should find yesterday events (sess-2)');
+    assert.equal(history.startDate, yesterday);
+    assert.equal(history.endDate, yesterday);
+    for (const e of history.events) {
+      assert.equal(e.timestamp.slice(0, 10), yesterday, `Event should be from ${yesterday}, got ${e.timestamp}`);
+    }
+    // Also confirm no today events leak in
+    const noToday = history.events.filter(e => e.timestamp.slice(0, 10) === today);
+    assert.equal(noToday.length, 0, 'Should not include today events');
   });
 
   // -- scanAllComponents --

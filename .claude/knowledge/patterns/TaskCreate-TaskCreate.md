@@ -2,8 +2,8 @@
 type: pattern
 source: tool:TaskCreate
 target: tool:TaskCreate
-occurrences: 30
-generated_at: 2026-04-10T09:20:59.067Z
+occurrences: 54
+generated_at: 2026-04-10T14:40:59.752Z
 ---
 
 # TaskCreate → TaskCreate
@@ -12,7 +12,7 @@ generated_at: 2026-04-10T09:20:59.067Z
 
 This pattern describes: **TaskCreate → TaskCreate**
 
-**Occurrence count:** 30
+**Occurrence count:** 54
 
 ## Nodes
 

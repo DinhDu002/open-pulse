@@ -2,8 +2,8 @@
 type: pattern
 source: tool:TaskUpdate
 target: tool:Bash
-occurrences: 90
-generated_at: 2026-04-09T08:09:44.256Z
+occurrences: 10
+generated_at: 2026-04-10T14:25:59.758Z
 ---
 
 # TaskUpdate → Bash
@@ -12,7 +12,7 @@ generated_at: 2026-04-09T08:09:44.256Z
 
 This pattern describes: **TaskUpdate → Bash**
 
-**Occurrence count:** 90
+**Occurrence count:** 10
 
 ## Nodes
 

@@ -2,8 +2,8 @@
 type: pattern
 source: tool:Glob
 target: tool:Glob
-occurrences: 15
-generated_at: 2026-04-10T05:04:56.149Z
+occurrences: 40
+generated_at: 2026-04-10T13:40:59.395Z
 ---
 
 # Glob → Glob
@@ -12,7 +12,7 @@ generated_at: 2026-04-10T05:04:56.149Z
 
 This pattern describes: **Glob → Glob**
 
-**Occurrence count:** 15
+**Occurrence count:** 40
 
 ## Nodes
 

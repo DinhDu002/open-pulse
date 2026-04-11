@@ -2,8 +2,8 @@
 type: pattern
 source: tool:ToolSearch
 target: tool:EnterPlanMode
-occurrences: 31
-generated_at: 2026-04-09T06:54:44.325Z
+occurrences: 12
+generated_at: 2026-04-10T13:55:59.779Z
 ---
 
 # ToolSearch → EnterPlanMode
@@ -12,7 +12,7 @@ generated_at: 2026-04-09T06:54:44.325Z
 
 This pattern describes: **ToolSearch → EnterPlanMode**
 
-**Occurrence count:** 31
+**Occurrence count:** 12
 
 ## Nodes
 

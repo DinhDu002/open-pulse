@@ -2,8 +2,8 @@
 type: pattern
 source: tool:Bash
 target: tool:ToolSearch
-occurrences: 21
-generated_at: 2026-04-09T07:54:44.262Z
+occurrences: 6
+generated_at: 2026-04-10T14:40:59.754Z
 ---
 
 # Bash → ToolSearch
@@ -12,7 +12,7 @@ generated_at: 2026-04-09T07:54:44.262Z
 
 This pattern describes: **Bash → ToolSearch**
 
-**Occurrence count:** 21
+**Occurrence count:** 6
 
 ## Nodes
 

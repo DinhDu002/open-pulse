@@ -2,8 +2,8 @@
 type: pattern
 source: tool:Read
 target: tool:Bash
-occurrences: 49
-generated_at: 2026-04-10T09:20:59.065Z
+occurrences: 129
+generated_at: 2026-04-10T14:40:59.749Z
 ---
 
 # Read → Bash
@@ -12,7 +12,7 @@ generated_at: 2026-04-10T09:20:59.065Z
 
 This pattern describes: **Read → Bash**
 
-**Occurrence count:** 49
+**Occurrence count:** 129
 
 ## Nodes
 

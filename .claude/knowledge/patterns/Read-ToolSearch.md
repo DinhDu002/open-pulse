@@ -2,8 +2,8 @@
 type: pattern
 source: tool:Read
 target: tool:ToolSearch
-occurrences: 24
-generated_at: 2026-04-09T07:54:44.263Z
+occurrences: 5
+generated_at: 2026-04-10T11:01:32.442Z
 ---
 
 # Read → ToolSearch
@@ -12,7 +12,7 @@ generated_at: 2026-04-09T07:54:44.263Z
 
 This pattern describes: **Read → ToolSearch**
 
-**Occurrence count:** 24
+**Occurrence count:** 5
 
 ## Nodes
 

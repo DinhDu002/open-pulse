@@ -2,8 +2,8 @@
 type: pattern
 source: tool:Read
 target: tool:Write
-occurrences: 12
-generated_at: 2026-04-10T08:35:59.025Z
+occurrences: 21
+generated_at: 2026-04-10T13:55:59.778Z
 ---
 
 # Read → Write
@@ -12,7 +12,7 @@ generated_at: 2026-04-10T08:35:59.025Z
 
 This pattern describes: **Read → Write**
 
-**Occurrence count:** 12
+**Occurrence count:** 21
 
 ## Nodes
 

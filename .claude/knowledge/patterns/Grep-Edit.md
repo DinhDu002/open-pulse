@@ -2,8 +2,8 @@
 type: pattern
 source: tool:Grep
 target: tool:Edit
-occurrences: 33
-generated_at: 2026-04-09T03:42:30.722Z
+occurrences: 5
+generated_at: 2026-04-10T10:08:08.022Z
 ---
 
 # Grep → Edit
@@ -12,7 +12,7 @@ generated_at: 2026-04-09T03:42:30.722Z
 
 This pattern describes: **Grep → Edit**
 
-**Occurrence count:** 33
+**Occurrence count:** 5
 
 ## Nodes
 

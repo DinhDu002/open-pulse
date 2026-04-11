@@ -254,13 +254,16 @@ function renderEntryCard(container, entry, onRefresh) {
 
   titleRow.appendChild(categoryBadge(entry.category));
 
+  const statusBadge = document.createElement('span');
+  statusBadge.className = 'badge';
   if (entry.status === 'outdated') {
-    const outdatedBadge = document.createElement('span');
-    outdatedBadge.className = 'badge';
-    outdatedBadge.style.cssText = 'background:#d6303126; color:#d63031; font-size:10px; padding:2px 8px;';
-    outdatedBadge.textContent = 'outdated';
-    titleRow.appendChild(outdatedBadge);
+    statusBadge.style.cssText = 'background:#d6303126; color:#d63031; font-size:10px; padding:2px 8px; margin-left:auto;';
+    statusBadge.textContent = 'outdated';
+  } else {
+    statusBadge.style.cssText = 'background:#00b89426; color:#00b894; font-size:10px; padding:2px 8px; margin-left:auto;';
+    statusBadge.textContent = 'active';
   }
+  titleRow.appendChild(statusBadge);
 
   summary.appendChild(titleRow);
 

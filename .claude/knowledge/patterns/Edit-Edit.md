@@ -2,8 +2,8 @@
 type: pattern
 source: tool:Edit
 target: tool:Edit
-occurrences: 59
-generated_at: 2026-04-10T09:20:59.066Z
+occurrences: 91
+generated_at: 2026-04-10T14:10:59.759Z
 ---
 
 # Edit → Edit
@@ -12,7 +12,7 @@ generated_at: 2026-04-10T09:20:59.066Z
 
 This pattern describes: **Edit → Edit**
 
-**Occurrence count:** 59
+**Occurrence count:** 91
 
 ## Nodes
 

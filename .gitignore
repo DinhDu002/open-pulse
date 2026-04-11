@@ -13,3 +13,5 @@ evolved/
 projects/
 observations.jsonl
 reports/
+.idea/
+test-results/

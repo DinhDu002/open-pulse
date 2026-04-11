@@ -2,8 +2,8 @@
 type: pattern
 source: tool:Glob
 target: tool:Bash
-occurrences: 62
-generated_at: 2026-04-09T07:09:44.262Z
+occurrences: 6
+generated_at: 2026-04-10T13:25:59.417Z
 ---
 
 # Glob → Bash
@@ -12,7 +12,7 @@ generated_at: 2026-04-09T07:09:44.262Z
 
 This pattern describes: **Glob → Bash**
 
-**Occurrence count:** 62
+**Occurrence count:** 6
 
 ## Nodes
 

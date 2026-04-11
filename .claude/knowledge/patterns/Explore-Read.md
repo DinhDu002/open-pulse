@@ -2,8 +2,8 @@
 type: pattern
 source: component:Explore
 target: tool:Read
-occurrences: 25
-generated_at: 2026-04-09T06:54:44.324Z
+occurrences: 9
+generated_at: 2026-04-10T13:25:59.417Z
 ---
 
 # Explore → Read
@@ -12,7 +12,7 @@ generated_at: 2026-04-09T06:54:44.324Z
 
 This pattern describes: **Explore → Read**
 
-**Occurrence count:** 25
+**Occurrence count:** 9
 
 ## Nodes
 

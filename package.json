@@ -6,6 +6,7 @@
   "scripts": {
     "start": "node src/server.js",
     "test": "node --test test/*.test.js test/**/*.test.js",
+    "test:e2e": "playwright test",
     "reset-db": "node scripts/reset-db.js",
     "install-service": "bash scripts/op-install.sh",
     "uninstall-service": "bash scripts/op-uninstall.sh"
@@ -17,5 +18,8 @@
   },
   "engines": {
     "node": ">=20.0.0"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.59.1"
   }
 }

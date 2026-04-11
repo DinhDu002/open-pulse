@@ -2,8 +2,8 @@
 type: pattern
 source: tool:TaskUpdate
 target: tool:Read
-occurrences: 15
-generated_at: 2026-04-10T09:20:59.067Z
+occurrences: 26
+generated_at: 2026-04-10T14:40:59.752Z
 ---
 
 # TaskUpdate → Read
@@ -12,7 +12,7 @@ generated_at: 2026-04-10T09:20:59.067Z
 
 This pattern describes: **TaskUpdate → Read**
 
-**Occurrence count:** 15
+**Occurrence count:** 26
 
 ## Nodes
 

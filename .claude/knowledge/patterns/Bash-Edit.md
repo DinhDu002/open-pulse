@@ -2,8 +2,8 @@
 type: pattern
 source: tool:Bash
 target: tool:Edit
-occurrences: 9
-generated_at: 2026-04-10T09:20:59.067Z
+occurrences: 12
+generated_at: 2026-04-10T10:34:06.246Z
 ---
 
 # Bash → Edit
@@ -12,7 +12,7 @@ generated_at: 2026-04-10T09:20:59.067Z
 
 This pattern describes: **Bash → Edit**
 
-**Occurrence count:** 9
+**Occurrence count:** 12
 
 ## Nodes
 

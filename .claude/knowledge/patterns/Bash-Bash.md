@@ -2,8 +2,8 @@
 type: pattern
 source: tool:Bash
 target: tool:Bash
-occurrences: 161
-generated_at: 2026-04-10T09:20:59.066Z
+occurrences: 416
+generated_at: 2026-04-10T14:40:59.750Z
 ---
 
 # Bash → Bash
@@ -12,7 +12,7 @@ generated_at: 2026-04-10T09:20:59.066Z
 
 This pattern describes: **Bash → Bash**
 
-**Occurrence count:** 161
+**Occurrence count:** 416
 
 ## Nodes
 

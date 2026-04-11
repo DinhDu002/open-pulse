@@ -267,10 +267,13 @@ if (require.main === module) {
   } catch { /* use defaults */ }
 
   const db = createDb(DB_PATH);
+  const yesterday = new Date(Date.now() - 86400000).toISOString().slice(0, 10);
   runDailyReview(db, {
+    date: yesterday,
     model: config.daily_review_model || 'opus',
     timeout: config.daily_review_timeout_ms || 300000,
     max_suggestions: config.daily_review_max_suggestions || 25,
+    historyDays: config.daily_review_history_days || 1,
   })
     .then(result => {
       console.log(`Daily review complete: ${result.suggestions.length} suggestions`);

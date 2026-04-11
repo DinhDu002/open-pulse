@@ -253,22 +253,24 @@ describe('knowledge_entries', () => {
   it('getKnowledgeStats returns counts by category and status', () => {
     const stats = dbMod.getKnowledgeStats(db, 'proj-ke-test');
 
-    assert.ok(Array.isArray(stats.byCategory));
-    assert.ok(Array.isArray(stats.byStatus));
-    assert.ok(Array.isArray(stats.byProject));
+    assert.ok(typeof stats.total === 'number', 'total should be a number');
+    assert.ok(stats.total > 0, 'total should be > 0');
+    assert.ok(Array.isArray(stats.by_category));
+    assert.ok(Array.isArray(stats.by_status));
+    assert.ok(Array.isArray(stats.by_project));
 
     // Should have at least 'database' and 'domain' categories
-    const categories = stats.byCategory.map(r => r.category);
+    const categories = stats.by_category.map(r => r.category);
     assert.ok(categories.includes('database'), 'should include database category');
     assert.ok(categories.includes('domain'), 'should include domain category');
 
     // Should have 'active' and 'outdated' statuses
-    const statuses = stats.byStatus.map(r => r.status);
+    const statuses = stats.by_status.map(r => r.status);
     assert.ok(statuses.includes('active'), 'should include active status');
     assert.ok(statuses.includes('outdated'), 'should include outdated status');
 
-    // byProject should list our project
-    const projectIds = stats.byProject.map(r => r.project_id);
+    // by_project should list our project
+    const projectIds = stats.by_project.map(r => r.project_id);
     assert.ok(projectIds.includes('proj-ke-test'));
   });
 
@@ -882,10 +884,11 @@ describe('knowledge entry API routes', () => {
     const res = await app.inject({ method: 'GET', url: '/api/knowledge/entries/stats?project=proj-api-test' });
     assert.equal(res.statusCode, 200);
     const body = JSON.parse(res.body);
-    assert.ok(Array.isArray(body.byCategory), 'byCategory should be an array');
-    assert.ok(Array.isArray(body.byStatus),   'byStatus should be an array');
-    assert.ok(Array.isArray(body.byProject),  'byProject should be an array');
-    const cats = body.byCategory.map(r => r.category);
+    assert.ok(typeof body.total === 'number', 'total should be a number');
+    assert.ok(Array.isArray(body.by_category), 'by_category should be an array');
+    assert.ok(Array.isArray(body.by_status),   'by_status should be an array');
+    assert.ok(Array.isArray(body.by_project),  'by_project should be an array');
+    const cats = body.by_category.map(r => r.category);
     assert.ok(cats.includes('domain'), 'should include domain category');
   });
 

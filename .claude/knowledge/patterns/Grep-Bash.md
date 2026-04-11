@@ -2,8 +2,8 @@
 type: pattern
 source: tool:Grep
 target: tool:Bash
-occurrences: 15
-generated_at: 2026-04-10T08:20:59.035Z
+occurrences: 33
+generated_at: 2026-04-10T14:40:59.752Z
 ---
 
 # Grep → Bash
@@ -12,7 +12,7 @@ generated_at: 2026-04-10T08:20:59.035Z
 
 This pattern describes: **Grep → Bash**
 
-**Occurrence count:** 15
+**Occurrence count:** 33
 
 ## Nodes
 

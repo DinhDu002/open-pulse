@@ -2,8 +2,8 @@
 type: pattern
 source: tool:Bash
 target: component:general-purpose
-occurrences: 14
-generated_at: 2026-04-10T09:20:59.068Z
+occurrences: 20
+generated_at: 2026-04-10T14:40:59.753Z
 ---
 
 # Bash → general-purpose
@@ -12,7 +12,7 @@ generated_at: 2026-04-10T09:20:59.068Z
 
 This pattern describes: **Bash → general-purpose**
 
-**Occurrence count:** 14
+**Occurrence count:** 20
 
 ## Nodes
 

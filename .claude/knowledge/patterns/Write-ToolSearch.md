@@ -2,8 +2,8 @@
 type: pattern
 source: tool:Write
 target: tool:ToolSearch
-occurrences: 26
-generated_at: 2026-04-09T06:54:44.327Z
+occurrences: 12
+generated_at: 2026-04-10T13:55:59.780Z
 ---
 
 # Write → ToolSearch
@@ -12,7 +12,7 @@ generated_at: 2026-04-09T06:54:44.327Z
 
 This pattern describes: **Write → ToolSearch**
 
-**Occurrence count:** 26
+**Occurrence count:** 12
 
 ## Nodes
 

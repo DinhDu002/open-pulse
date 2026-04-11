@@ -2,8 +2,8 @@
 type: pattern
 source: tool:mcp__playwright__browser_snapshot
 target: tool:mcp__playwright__browser_click
-occurrences: 7
-generated_at: 2026-04-08T12:05:33.408Z
+occurrences: 5
+generated_at: 2026-04-10T14:10:59.764Z
 ---
 
 # mcp__playwright__browser_snapshot → mcp__playwright__browser_click
@@ -12,7 +12,7 @@ generated_at: 2026-04-08T12:05:33.408Z
 
 This pattern describes: **mcp__playwright__browser_snapshot → mcp__playwright__browser_click**
 
-**Occurrence count:** 7
+**Occurrence count:** 5
 
 ## Nodes
 

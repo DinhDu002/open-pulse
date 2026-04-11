@@ -2,8 +2,8 @@
 type: pattern
 source: tool:Bash
 target: tool:Write
-occurrences: 88
-generated_at: 2026-04-08T17:00:55.969Z
+occurrences: 8
+generated_at: 2026-04-10T14:25:59.759Z
 ---
 
 # Bash → Write
@@ -12,7 +12,7 @@ generated_at: 2026-04-08T17:00:55.969Z
 
 This pattern describes: **Bash → Write**
 
-**Occurrence count:** 88
+**Occurrence count:** 8
 
 ## Nodes
 

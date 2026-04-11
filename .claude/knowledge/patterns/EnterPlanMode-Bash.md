@@ -2,8 +2,8 @@
 type: pattern
 source: tool:EnterPlanMode
 target: tool:Bash
-occurrences: 8
-generated_at: 2026-04-09T03:42:30.726Z
+occurrences: 5
+generated_at: 2026-04-10T12:55:59.383Z
 ---
 
 # EnterPlanMode → Bash
@@ -12,7 +12,7 @@ generated_at: 2026-04-09T03:42:30.726Z
 
 This pattern describes: **EnterPlanMode → Bash**
 
-**Occurrence count:** 8
+**Occurrence count:** 5
 
 ## Nodes
 

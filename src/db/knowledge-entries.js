@@ -146,19 +146,23 @@ function getKnowledgeStats(db, projectId) {
   const params = projectId ? { projectId } : {};
   const where = projectId ? 'WHERE project_id = @projectId' : '';
 
-  const byCategory = db.prepare(
+  const total = db.prepare(
+    `SELECT COUNT(*) AS c FROM knowledge_entries ${where}`
+  ).get(params).c;
+
+  const by_category = db.prepare(
     `SELECT category, COUNT(*) AS count FROM knowledge_entries ${where} GROUP BY category`
   ).all(params);
 
-  const byStatus = db.prepare(
+  const by_status = db.prepare(
     `SELECT status, COUNT(*) AS count FROM knowledge_entries ${where} GROUP BY status`
   ).all(params);
 
-  const byProject = db.prepare(
+  const by_project = db.prepare(
     'SELECT project_id, COUNT(*) AS count FROM knowledge_entries GROUP BY project_id'
   ).all();
 
-  return { byCategory, byStatus, byProject };
+  return { total, by_category, by_status, by_project };
 }
 
 // ---------------------------------------------------------------------------

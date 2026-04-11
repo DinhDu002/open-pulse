@@ -2,8 +2,8 @@
 type: pattern
 source: tool:ToolSearch
 target: tool:TaskCreate
-occurrences: 27
-generated_at: 2026-04-09T07:09:44.263Z
+occurrences: 5
+generated_at: 2026-04-10T13:55:59.782Z
 ---
 
 # ToolSearch → TaskCreate
@@ -12,7 +12,7 @@ generated_at: 2026-04-09T07:09:44.263Z
 
 This pattern describes: **ToolSearch → TaskCreate**
 
-**Occurrence count:** 27
+**Occurrence count:** 5
 
 ## Nodes
 

@@ -2,8 +2,8 @@
 type: pattern
 source: component:Explore
 target: component:Explore
-occurrences: 5
-generated_at: 2026-04-10T06:35:59.014Z
+occurrences: 7
+generated_at: 2026-04-10T11:01:32.430Z
 ---
 
 # Explore → Explore
@@ -12,7 +12,7 @@ generated_at: 2026-04-10T06:35:59.014Z
 
 This pattern describes: **Explore → Explore**
 
-**Occurrence count:** 5
+**Occurrence count:** 7
 
 ## Nodes
 

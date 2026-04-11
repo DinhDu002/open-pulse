@@ -2,8 +2,8 @@
 type: pattern
 source: tool:Bash
 target: component:Explore
-occurrences: 33
-generated_at: 2026-04-09T08:09:44.255Z
+occurrences: 7
+generated_at: 2026-04-10T13:10:59.396Z
 ---
 
 # Bash → Explore
@@ -12,7 +12,7 @@ generated_at: 2026-04-09T08:09:44.255Z
 
 This pattern describes: **Bash → Explore**
 
-**Occurrence count:** 33
+**Occurrence count:** 7
 
 ## Nodes
 

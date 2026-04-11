@@ -2,8 +2,8 @@
 type: pattern
 source: tool:Edit
 target: tool:TaskUpdate
-occurrences: 39
-generated_at: 2026-04-09T03:42:30.720Z
+occurrences: 12
+generated_at: 2026-04-10T14:25:59.758Z
 ---
 
 # Edit → TaskUpdate
@@ -12,7 +12,7 @@ generated_at: 2026-04-09T03:42:30.720Z
 
 This pattern describes: **Edit → TaskUpdate**
 
-**Occurrence count:** 39
+**Occurrence count:** 12
 
 ## Nodes
 

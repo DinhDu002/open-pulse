@@ -54,6 +54,11 @@ describe('op-auto-evolve', () => {
     assert.equal(autoEvolve.extractBody(content), 'Some body');
   });
 
+  it('extractBody returns empty string when body is whitespace only (A3)', () => {
+    const content = '---\nid: x\n---\n\n\n   \n\n';
+    assert.equal(autoEvolve.extractBody(content), '');
+  });
+
   // -- slugify --
 
   it('slugify converts title to kebab-case', () => {
@@ -145,6 +150,43 @@ describe('op-auto-evolve', () => {
     const row = db.prepare('SELECT * FROM auto_evolves WHERE title = ?').get('personal-pattern');
     assert.ok(row, 'should find personal instinct in auto_evolves');
     assert.equal(row.target_type, 'rule');
+  });
+
+  it('syncInstincts uses meta.description as fallback when no body (B2)', () => {
+    const yaml = [
+      '---',
+      'name: fallback-desc-test',
+      'description: Fallback description from frontmatter',
+      'type: rule',
+      'confidence: 0.1',
+      'seen_count: 1',
+      '---',
+    ].join('\n');
+    fs.writeFileSync(path.join(TEST_INHERITED_DIR, 'fallback-desc.md'), yaml);
+
+    autoEvolve.syncInstincts(db, TEST_DIR);
+
+    const row = db.prepare('SELECT * FROM auto_evolves WHERE title = ?').get('fallback-desc-test');
+    assert.ok(row, 'should find row');
+    assert.equal(row.description, 'Fallback description from frontmatter');
+  });
+
+  it('syncInstincts sets empty description when no body and no meta.description (B3)', () => {
+    const yaml = [
+      '---',
+      'name: no-desc-test',
+      'type: rule',
+      'confidence: 0.1',
+      'seen_count: 1',
+      '---',
+    ].join('\n');
+    fs.writeFileSync(path.join(TEST_INHERITED_DIR, 'no-desc.md'), yaml);
+
+    autoEvolve.syncInstincts(db, TEST_DIR);
+
+    const row = db.prepare('SELECT * FROM auto_evolves WHERE title = ?').get('no-desc-test');
+    assert.ok(row, 'should find row');
+    assert.equal(row.description, '');
   });
 
   it('syncInstincts increments confidence when observation_count grows', () => {

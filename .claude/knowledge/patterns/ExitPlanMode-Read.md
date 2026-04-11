@@ -2,8 +2,8 @@
 type: pattern
 source: tool:ExitPlanMode
 target: tool:Read
-occurrences: 14
-generated_at: 2026-04-09T06:54:44.323Z
+occurrences: 6
+generated_at: 2026-04-10T13:55:59.781Z
 ---
 
 # ExitPlanMode → Read
@@ -12,7 +12,7 @@ generated_at: 2026-04-09T06:54:44.323Z
 
 This pattern describes: **ExitPlanMode → Read**
 
-**Occurrence count:** 14
+**Occurrence count:** 6
 
 ## Nodes
 

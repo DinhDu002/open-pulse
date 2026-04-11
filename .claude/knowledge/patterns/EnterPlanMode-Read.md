@@ -2,8 +2,8 @@
 type: pattern
 source: tool:EnterPlanMode
 target: tool:Read
-occurrences: 20
-generated_at: 2026-04-09T03:42:30.720Z
+occurrences: 6
+generated_at: 2026-04-10T13:25:59.417Z
 ---
 
 # EnterPlanMode → Read
@@ -12,7 +12,7 @@ generated_at: 2026-04-09T03:42:30.720Z
 
 This pattern describes: **EnterPlanMode → Read**
 
-**Occurrence count:** 20
+**Occurrence count:** 6
 
 ## Nodes
 

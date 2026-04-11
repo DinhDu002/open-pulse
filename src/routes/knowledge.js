@@ -4,7 +4,6 @@ const {
   getKnowledgeEntry,
   queryKnowledgeEntries,
   getKnowledgeStats,
-  markKnowledgeEntryOutdated,
   deleteKnowledgeEntry,
   purgeKnowledgeEntries,
   updateKnowledgeEntry,
@@ -59,7 +58,8 @@ module.exports = async function knowledgeRoutes(app, opts) {
   app.put('/api/knowledge/entries/:id/outdated', async (req, reply) => {
     const existing = getKnowledgeEntry(db, req.params.id);
     if (!existing) return errorReply(reply, 404, 'Entry not found');
-    markKnowledgeEntryOutdated(db, req.params.id);
+    const newStatus = existing.status === 'outdated' ? 'active' : 'outdated';
+    updateKnowledgeEntry(db, req.params.id, { status: newStatus });
     return getKnowledgeEntry(db, req.params.id);
   });
 

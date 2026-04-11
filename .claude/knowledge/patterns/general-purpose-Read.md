@@ -2,8 +2,8 @@
 type: pattern
 source: component:general-purpose
 target: tool:Read
-occurrences: 12
-generated_at: 2026-04-09T07:54:44.266Z
+occurrences: 5
+generated_at: 2026-04-10T14:40:59.754Z
 ---
 
 # general-purpose → Read
@@ -12,7 +12,7 @@ generated_at: 2026-04-09T07:54:44.266Z
 
 This pattern describes: **general-purpose → Read**
 
-**Occurrence count:** 12
+**Occurrence count:** 5
 
 ## Nodes
 

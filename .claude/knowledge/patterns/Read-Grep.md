@@ -2,8 +2,8 @@
 type: pattern
 source: tool:Read
 target: tool:Grep
-occurrences: 43
-generated_at: 2026-04-10T09:20:59.066Z
+occurrences: 83
+generated_at: 2026-04-10T14:40:59.750Z
 ---
 
 # Read → Grep
@@ -12,7 +12,7 @@ generated_at: 2026-04-10T09:20:59.066Z
 
 This pattern describes: **Read → Grep**
 
-**Occurrence count:** 43
+**Occurrence count:** 83
 
 ## Nodes
 

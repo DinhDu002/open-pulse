@@ -2,8 +2,8 @@
 type: pattern
 source: tool:WebSearch
 target: tool:WebSearch
-occurrences: 23
-generated_at: 2026-04-09T06:54:44.327Z
+occurrences: 15
+generated_at: 2026-04-10T14:10:59.763Z
 ---
 
 # WebSearch → WebSearch
@@ -12,7 +12,7 @@ generated_at: 2026-04-09T06:54:44.327Z
 
 This pattern describes: **WebSearch → WebSearch**
 
-**Occurrence count:** 23
+**Occurrence count:** 15
 
 ## Nodes
 

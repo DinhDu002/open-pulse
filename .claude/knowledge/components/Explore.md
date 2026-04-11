@@ -1,18 +1,19 @@
 ---
 type: component
-invocations: 12
-sessions_used: 3
-last_used: 2026-04-10T06:27:26.750Z
-generated_at: 2026-04-10T09:20:59.065Z
+invocations: 23
+sessions_used: 11
+last_used: 2026-04-10T13:14:27.112Z
+generated_at: 2026-04-10T14:40:59.749Z
 ---
 
 # Explore
 
 ## Triggers
 
-- [[components/Explore]] (weight: 65)
+- [[components/Explore]] (weight: 304)
+- [[tools/Read]] (weight: 234)
 
 ## Stats
 
-- **Invocations:** 12
-- **Sessions used:** 3
+- **Invocations:** 23
+- **Sessions used:** 11
