@@ -28,6 +28,9 @@ You are a Claude Code setup advisor. Analyze the user's complete configuration a
 ## Project Configurations ({{project_count}} projects)
 {{project_configs_content}}
 
+## Knowledge Entries for Validation ({{knowledge_entry_count}})
+{{knowledge_entries_content}}
+
 ## Best Practices Reference
 {{claude_code_knowledge}}
 
@@ -40,6 +43,7 @@ Analyze configurations against best practices. Consider:
 3. Are there components that should be merged, updated, or removed?
 4. Are there missing components suggested by best practices?
 5. Are there cost optimization opportunities based on model usage?
+6. Are there knowledge entries whose body contradicts their source file? Flag these with category "cleanup", target_type "knowledge", and describe what's wrong.
 
 ### Part 2: Cross-Project Insights
 Analyze configurations across all {{project_count}} projects. Identify:

@@ -7,6 +7,7 @@ const { execFileSync } = require('child_process');
 
 const {
   collectWorkHistory, scanAllComponents, loadBestPractices, buildPrompt,
+  getKnowledgeReviewContext,
   discoverProjectPaths, scanOneProject, scanProjectConfigs,
 } = require('./context');
 const {
@@ -217,12 +218,13 @@ async function runDailyReview(db, opts = {}) {
   const components = scanAllComponents(claudeDir);
   const projectConfigs = scanProjectConfigs(db);
   const practices = loadBestPractices(repoDir);
+  const knowledgeContext = getKnowledgeReviewContext(db);
   const prompt = buildPrompt(history, components, practices, {
     date,
     max_suggestions,
     projectConfigs,
     historyDays,
-  });
+  }, knowledgeContext);
 
   let output;
   try {

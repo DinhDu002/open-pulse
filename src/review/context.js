@@ -245,7 +245,7 @@ function getKnowledgeReviewContext(db) {
 // Phase 4: Build prompt
 // ---------------------------------------------------------------------------
 
-function buildPrompt(history, components, practices, opts = {}) {
+function buildPrompt(history, components, practices, opts = {}, knowledgeContext = []) {
   const { date = new Date().toISOString().slice(0, 10), max_suggestions = 25, projectConfigs = {}, historyDays = 1 } = opts;
 
   const templatePath = path.join(__dirname, 'prompt.md');
@@ -298,6 +298,12 @@ function buildPrompt(history, components, practices, opts = {}) {
     '{{project_configs_content}}': projectContent,
     '{{claude_code_knowledge}}': practices.map(p => `### ${p.name}\n${p.content}`).join('\n\n'),
     '{{max_suggestions}}': String(max_suggestions),
+    '{{knowledge_entry_count}}': String(knowledgeContext.length),
+    '{{knowledge_entries_content}}': knowledgeContext.length > 0
+      ? knowledgeContext.map(e =>
+          `### ${e.title}\n- **Source:** ${e.source_file}\n- **Entry says:** ${e.body_excerpt}\n- **Source code says:** \`\`\`\n${e.source_content_excerpt}\n\`\`\``
+        ).join('\n\n')
+      : 'None',
   };
 
   for (const [key, val] of Object.entries(replacements)) {
