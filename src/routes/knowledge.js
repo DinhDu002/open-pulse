@@ -7,6 +7,7 @@ const {
   deleteKnowledgeEntry,
   purgeKnowledgeEntries,
   updateKnowledgeEntry,
+  insertEntryHistory,
 } = require('../db/knowledge-entries');
 
 const { scanProject } = require('../knowledge/scan');
@@ -45,6 +46,12 @@ module.exports = async function knowledgeRoutes(app, opts) {
   app.put('/api/knowledge/entries/:id', async (req, reply) => {
     const existing = getKnowledgeEntry(db, req.params.id);
     if (!existing) return errorReply(reply, 404, 'Entry not found');
+    // Record snapshot of state before update
+    insertEntryHistory(db, {
+      entry_id: existing.id,
+      change_type: 'updated',
+      snapshot: { title: existing.title, body: existing.body, category: existing.category, status: existing.status },
+    });
     const { title, body, tags, category } = req.body || {};
     const fields = {};
     if (title !== undefined)    fields.title    = title;
@@ -58,6 +65,12 @@ module.exports = async function knowledgeRoutes(app, opts) {
   app.put('/api/knowledge/entries/:id/outdated', async (req, reply) => {
     const existing = getKnowledgeEntry(db, req.params.id);
     if (!existing) return errorReply(reply, 404, 'Entry not found');
+    // Record snapshot of state before status change
+    insertEntryHistory(db, {
+      entry_id: existing.id,
+      change_type: 'status_changed',
+      snapshot: { title: existing.title, body: existing.body, category: existing.category, status: existing.status },
+    });
     const newStatus = existing.status === 'outdated' ? 'active' : 'outdated';
     updateKnowledgeEntry(db, req.params.id, { status: newStatus });
     return getKnowledgeEntry(db, req.params.id);
