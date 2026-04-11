@@ -192,7 +192,7 @@ function renderEntriesList(el) {
       }
 
       items.forEach(entry => {
-        renderEntryCard(listEl, entry, loadList);
+        renderEntryCard(listEl, entry);
       });
 
       paginationEl.textContent = '';
@@ -234,15 +234,10 @@ function renderEntriesList(el) {
   loadList();
 }
 
-function renderEntryCard(container, entry, onRefresh) {
+function renderEntryCard(container, entry) {
   const card = document.createElement('div');
   card.className = 'card';
   card.style.cssText = 'margin-bottom:10px; cursor:pointer; transition:border-color 0.15s;';
-
-  let expanded = false;
-
-  // Card summary row
-  const summary = document.createElement('div');
 
   const titleRow = document.createElement('div');
   titleRow.style.cssText = 'display:flex; align-items:center; gap:8px; margin-bottom:6px; flex-wrap:wrap;';
@@ -265,35 +260,125 @@ function renderEntryCard(container, entry, onRefresh) {
   }
   titleRow.appendChild(statusBadge);
 
-  summary.appendChild(titleRow);
+  card.appendChild(titleRow);
 
   if (entry.source_file) {
     const srcEl = document.createElement('div');
     srcEl.style.cssText = 'font-size:11px; color:var(--text-muted); margin-bottom:4px; font-family:monospace;';
     srcEl.textContent = entry.source_file;
-    summary.appendChild(srcEl);
+    card.appendChild(srcEl);
   }
 
   const excerpt = document.createElement('div');
   excerpt.style.cssText = 'font-size:12px; color:var(--text-muted); line-height:1.5;';
   excerpt.textContent = (entry.body || '').slice(0, 120) + ((entry.body || '').length > 120 ? '\u2026' : '');
-  summary.appendChild(excerpt);
+  card.appendChild(excerpt);
 
   const metaRow = document.createElement('div');
   metaRow.style.cssText = 'font-size:11px; color:var(--text-muted); margin-top:6px;';
   metaRow.textContent = timeAgo(entry.updated_at || entry.created_at);
-  summary.appendChild(metaRow);
+  card.appendChild(metaRow);
 
-  card.appendChild(summary);
+  card.addEventListener('mouseenter', () => { card.style.borderColor = 'var(--accent)'; });
+  card.addEventListener('mouseleave', () => { card.style.borderColor = ''; });
 
-  // Expanded detail (hidden initially)
-  const detail = document.createElement('div');
-  detail.style.cssText = 'display:none; margin-top:12px; border-top:1px solid var(--border); padding-top:12px;';
+  card.addEventListener('click', () => {
+    location.hash = '#knowledge/entries/' + entry.id;
+  });
 
-  // Full body display
+  container.appendChild(card);
+}
+
+// ── Detail Page ───────────────────────────────────────────────────────────────
+
+async function renderDetail(el, entryId) {
+  el.textContent = '';
+
+  // Loading spinner
+  const loading = document.createElement('div');
+  loading.className = 'empty-state';
+  const sp = document.createElement('span');
+  sp.className = 'spinner';
+  loading.appendChild(sp);
+  el.appendChild(loading);
+
+  let entry, history;
+  try {
+    [entry, history] = await Promise.all([
+      get('/knowledge/entries/' + entryId),
+      get('/knowledge/entries/' + entryId + '/history'),
+    ]);
+  } catch (err) {
+    el.textContent = '';
+    const errEl = document.createElement('div');
+    errEl.className = 'empty-state';
+    errEl.style.color = 'var(--danger)';
+    errEl.textContent = 'Failed to load entry: ' + err.message;
+    el.appendChild(errEl);
+    return;
+  }
+
+  el.textContent = '';
+
+  // Back link
+  const backLink = document.createElement('a');
+  backLink.href = '#knowledge/entries';
+  backLink.style.cssText = 'display:inline-block; font-size:13px; color:var(--accent); text-decoration:none; margin-bottom:16px;';
+  backLink.textContent = '\u2190 Back to Entries';
+  el.appendChild(backLink);
+
+  // Header card
+  const headerCard = document.createElement('div');
+  headerCard.className = 'card';
+  headerCard.style.cssText = 'margin-bottom:16px;';
+
+  const headerTop = document.createElement('div');
+  headerTop.style.cssText = 'display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin-bottom:12px;';
+
+  const titleEl = document.createElement('span');
+  titleEl.style.cssText = 'font-size:18px; font-weight:700; color:var(--text);';
+  titleEl.textContent = entry.title || '(no title)';
+  headerTop.appendChild(titleEl);
+
+  headerTop.appendChild(categoryBadge(entry.category));
+
+  const statusBadge = document.createElement('span');
+  statusBadge.className = 'badge';
+  if (entry.status === 'outdated') {
+    statusBadge.style.cssText = 'background:#d6303126; color:#d63031; font-size:10px; padding:2px 8px; margin-left:auto;';
+    statusBadge.textContent = 'outdated';
+  } else {
+    statusBadge.style.cssText = 'background:#00b89426; color:#00b894; font-size:10px; padding:2px 8px; margin-left:auto;';
+    statusBadge.textContent = 'active';
+  }
+  headerTop.appendChild(statusBadge);
+
+  headerCard.appendChild(headerTop);
+
+  // Body display
   const bodyDisplay = document.createElement('div');
   bodyDisplay.style.cssText = 'font-size:13px; line-height:1.7; color:var(--text); white-space:pre-wrap; margin-bottom:12px;';
   bodyDisplay.textContent = entry.body || '';
+  headerCard.appendChild(bodyDisplay);
+
+  // Meta row
+  const metaRow = document.createElement('div');
+  metaRow.style.cssText = 'font-size:11px; color:var(--text-muted); margin-bottom:12px; display:flex; gap:16px; flex-wrap:wrap;';
+  if (entry.source_file) {
+    const src = document.createElement('span');
+    src.style.fontFamily = 'monospace';
+    src.textContent = entry.source_file;
+    metaRow.appendChild(src);
+  }
+  const created = document.createElement('span');
+  created.textContent = 'Created ' + timeAgo(entry.created_at);
+  metaRow.appendChild(created);
+  if (entry.updated_at && entry.updated_at !== entry.created_at) {
+    const updated = document.createElement('span');
+    updated.textContent = 'Updated ' + timeAgo(entry.updated_at);
+    metaRow.appendChild(updated);
+  }
+  headerCard.appendChild(metaRow);
 
   // Edit form (hidden initially)
   const editForm = document.createElement('div');
@@ -321,10 +406,11 @@ function renderEntryCard(container, entry, onRefresh) {
   editForm.appendChild(editTitle);
   editForm.appendChild(editCategorySelect);
   editForm.appendChild(editBody);
+  headerCard.appendChild(editForm);
 
-  // Actions row
+  // Action buttons
   const actionsRow = document.createElement('div');
-  actionsRow.style.cssText = 'display:flex; gap:8px; flex-wrap:wrap;';
+  actionsRow.style.cssText = 'display:flex; gap:8px; flex-wrap:wrap; align-items:center;';
 
   const editBtn = document.createElement('button');
   editBtn.className = 'btn';
@@ -356,26 +442,17 @@ function renderEntryCard(container, entry, onRefresh) {
   actionsRow.appendChild(cancelBtn);
   actionsRow.appendChild(outdatedBtn);
   actionsRow.appendChild(deleteBtn);
+  headerCard.appendChild(actionsRow);
 
-  detail.appendChild(bodyDisplay);
-  detail.appendChild(editForm);
-  detail.appendChild(actionsRow);
-  card.appendChild(detail);
+  el.appendChild(headerCard);
 
-  // Toggle expand on summary click
-  card.addEventListener('mouseenter', () => { if (!expanded) card.style.borderColor = 'var(--accent)'; });
-  card.addEventListener('mouseleave', () => { if (!expanded) card.style.borderColor = ''; });
-
-  summary.addEventListener('click', () => {
-    expanded = !expanded;
-    detail.style.display = expanded ? 'block' : 'none';
-    card.style.borderColor = expanded ? 'var(--accent)' : '';
-  });
+  // Change History
+  renderHistory(el, history || []);
 
   // Edit mode toggle
-  editBtn.addEventListener('click', (e) => {
-    e.stopPropagation();
+  editBtn.addEventListener('click', () => {
     bodyDisplay.style.display = 'none';
+    metaRow.style.display = 'none';
     editForm.style.display = 'block';
     editBtn.style.display = 'none';
     saveBtn.style.display = '';
@@ -384,12 +461,12 @@ function renderEntryCard(container, entry, onRefresh) {
     deleteBtn.style.display = 'none';
   });
 
-  cancelBtn.addEventListener('click', (e) => {
-    e.stopPropagation();
+  cancelBtn.addEventListener('click', () => {
     editTitle.value = entry.title || '';
     editCategorySelect.value = entry.category || '';
     editBody.value = entry.body || '';
     bodyDisplay.style.display = 'block';
+    metaRow.style.display = 'flex';
     editForm.style.display = 'none';
     editBtn.style.display = '';
     saveBtn.style.display = 'none';
@@ -398,8 +475,7 @@ function renderEntryCard(container, entry, onRefresh) {
     deleteBtn.style.display = '';
   });
 
-  saveBtn.addEventListener('click', (e) => {
-    e.stopPropagation();
+  saveBtn.addEventListener('click', () => {
     saveBtn.disabled = true;
     saveBtn.textContent = 'Saving\u2026';
     put('/knowledge/entries/' + entry.id, {
@@ -407,7 +483,7 @@ function renderEntryCard(container, entry, onRefresh) {
       category: editCategorySelect.value,
       body: editBody.value,
     }).then(() => {
-      onRefresh();
+      location.reload();
     }).catch(err => {
       alert('Save failed: ' + err.message);
       saveBtn.disabled = false;
@@ -415,27 +491,199 @@ function renderEntryCard(container, entry, onRefresh) {
     });
   });
 
-  outdatedBtn.addEventListener('click', (e) => {
-    e.stopPropagation();
+  outdatedBtn.addEventListener('click', () => {
     outdatedBtn.disabled = true;
     const newStatus = entry.status === 'outdated' ? 'active' : 'outdated';
     put('/knowledge/entries/' + entry.id + '/outdated', { status: newStatus }).then(() => {
-      onRefresh();
+      location.reload();
     }).catch(err => {
       alert('Failed: ' + err.message);
       outdatedBtn.disabled = false;
     });
   });
 
-  deleteBtn.addEventListener('click', (e) => {
-    e.stopPropagation();
+  deleteBtn.addEventListener('click', () => {
     if (!confirm('Delete this entry permanently?')) return;
     del('/knowledge/entries/' + entry.id).then(() => {
-      onRefresh();
+      location.hash = '#knowledge/entries';
     }).catch(err => alert('Delete failed: ' + err.message));
   });
+}
 
-  container.appendChild(card);
+// ── Change History ────────────────────────────────────────────────────────────
+
+function renderHistory(el, history) {
+  const card = document.createElement('div');
+  card.className = 'card';
+  card.style.marginBottom = '16px';
+
+  const cardTitle = document.createElement('div');
+  cardTitle.className = 'card-title';
+  cardTitle.textContent = 'Change History (' + history.length + ')';
+  card.appendChild(cardTitle);
+
+  if (history.length === 0) {
+    const empty = document.createElement('div');
+    empty.style.cssText = 'font-size:13px; color:var(--text-muted); padding:8px 0;';
+    empty.textContent = 'No changes recorded yet.';
+    card.appendChild(empty);
+    el.appendChild(card);
+    return;
+  }
+
+  // Render history items in reverse chronological order (newest first)
+  const items = [...history].reverse();
+
+  items.forEach((item, idx) => {
+    const itemEl = document.createElement('div');
+    itemEl.style.cssText = 'border-top:1px solid var(--border); padding:12px 0;' + (idx === 0 ? 'border-top:none;' : '');
+
+    // Header: timeAgo + change_type badge
+    const header = document.createElement('div');
+    header.style.cssText = 'display:flex; align-items:center; gap:8px; margin-bottom:8px;';
+
+    const timeEl = document.createElement('span');
+    timeEl.style.cssText = 'font-size:12px; color:var(--text-muted);';
+    timeEl.textContent = timeAgo(item.changed_at);
+    header.appendChild(timeEl);
+
+    const typeBadge = document.createElement('span');
+    typeBadge.className = 'badge';
+    let badgeColor = '#0984e3';
+    if (item.change_type === 'created') badgeColor = '#00b894';
+    else if (item.change_type === 'status_changed') badgeColor = '#e17055';
+    typeBadge.style.cssText = 'background:' + badgeColor + '26; color:' + badgeColor + '; font-size:10px; padding:2px 8px;';
+    typeBadge.textContent = item.change_type;
+    header.appendChild(typeBadge);
+
+    itemEl.appendChild(header);
+
+    if (item.change_type === 'created') {
+      const msg = document.createElement('div');
+      msg.style.cssText = 'font-size:13px; color:var(--text-muted);';
+      msg.textContent = "Entry created with category '" + (item.snapshot.category || 'unknown') + "'";
+      itemEl.appendChild(msg);
+    } else {
+      // For updated/status_changed: find next item's snapshot (or current state) as "after"
+      // The snapshot stored is the state BEFORE the change
+      // next item in reverse = previous change = the "after" state of this item
+      // We need to find what it changed TO. Since history is stored as pre-change snapshots,
+      // for item[i] (reversed), the "after" state is the snapshot of item[i-1] (reversed)
+      // i.e., the snapshot of the PREVIOUS item in original order
+      // In reversed array: items[idx] is the snapshot before this change
+      // items[idx-1] would be the snapshot before the previous change (= after this change)
+      // The "after" for the last change (idx=0 in reversed = most recent) is the current entry state
+      // We'll get current entry via the parent scope — but we don't have it here easily.
+      // Instead, find what changed by comparing to the next recorded snapshot in original order.
+      const originalIdx = history.length - 1 - idx;
+      const afterSnapshot = originalIdx + 1 < history.length
+        ? history[originalIdx + 1].snapshot
+        : null; // current state not available in history items; skip showing "after" for most recent
+
+      if (afterSnapshot) {
+        const diffContainer = document.createElement('div');
+        renderDiff(diffContainer, item.snapshot, afterSnapshot);
+        itemEl.appendChild(diffContainer);
+      } else {
+        // Most recent change — just show the snapshot fields
+        const snap = item.snapshot;
+        const msg = document.createElement('div');
+        msg.style.cssText = 'font-size:13px; color:var(--text-muted);';
+        msg.textContent = item.change_type === 'status_changed'
+          ? "Status changed (was '" + snap.status + "')"
+          : 'Entry updated';
+        itemEl.appendChild(msg);
+      }
+    }
+
+    card.appendChild(itemEl);
+  });
+
+  el.appendChild(card);
+}
+
+// ── Diff Display ─────────────────────────────────────────────────────────────
+
+function renderDiff(container, oldSnap, newSnap) {
+  const fields = ['title', 'category', 'status', 'body'];
+
+  fields.forEach(field => {
+    const oldVal = (oldSnap[field] || '');
+    const newVal = (newSnap[field] || '');
+    if (oldVal === newVal) return;
+
+    const fieldEl = document.createElement('div');
+    fieldEl.style.cssText = 'margin-bottom:8px;';
+
+    const fieldLabel = document.createElement('div');
+    fieldLabel.style.cssText = 'font-size:11px; color:var(--text-muted); margin-bottom:4px; font-weight:600; text-transform:uppercase; letter-spacing:0.05em;';
+    fieldLabel.textContent = field;
+    fieldEl.appendChild(fieldLabel);
+
+    if (field === 'body') {
+      // Line-level diff
+      const oldLines = oldVal.split('\n');
+      const newLines = newVal.split('\n');
+
+      const diffEl = document.createElement('div');
+      diffEl.style.cssText = 'font-size:12px; font-family:"SF Mono",Monaco,Consolas,monospace; line-height:1.6;';
+
+      // Simple LCS-based diff: find removed and added lines
+      const removed = [];
+      const added = [];
+      const oldSet = new Set(oldLines);
+      const newSet = new Set(newLines);
+
+      oldLines.forEach(line => {
+        if (!newSet.has(line)) removed.push(line);
+      });
+      newLines.forEach(line => {
+        if (!oldSet.has(line)) added.push(line);
+      });
+
+      // Show removed lines
+      removed.forEach(line => {
+        const lineEl = document.createElement('div');
+        lineEl.style.cssText = 'background:#d6303120; border-left:3px solid #d63031; padding:2px 8px; white-space:pre-wrap; word-break:break-word;';
+        lineEl.textContent = '- ' + line;
+        diffEl.appendChild(lineEl);
+      });
+
+      // Show added lines
+      added.forEach(line => {
+        const lineEl = document.createElement('div');
+        lineEl.style.cssText = 'background:#00b89420; border-left:3px solid #00b894; padding:2px 8px; white-space:pre-wrap; word-break:break-word;';
+        lineEl.textContent = '+ ' + line;
+        diffEl.appendChild(lineEl);
+      });
+
+      if (removed.length === 0 && added.length === 0) return; // no visible diff
+      fieldEl.appendChild(diffEl);
+    } else {
+      // Inline old → new for short fields
+      const inlineEl = document.createElement('div');
+      inlineEl.style.cssText = 'font-size:13px; display:flex; align-items:center; gap:8px; flex-wrap:wrap;';
+
+      const oldSpan = document.createElement('span');
+      oldSpan.style.cssText = 'text-decoration:line-through; color:#d63031;';
+      oldSpan.textContent = oldVal || '(empty)';
+      inlineEl.appendChild(oldSpan);
+
+      const arrow = document.createElement('span');
+      arrow.style.cssText = 'color:var(--text-muted);';
+      arrow.textContent = '\u2192';
+      inlineEl.appendChild(arrow);
+
+      const newSpan = document.createElement('span');
+      newSpan.style.cssText = 'color:#00b894;';
+      newSpan.textContent = newVal || '(empty)';
+      inlineEl.appendChild(newSpan);
+
+      fieldEl.appendChild(inlineEl);
+    }
+
+    container.appendChild(fieldEl);
+  });
 }
 
 // ── Tab 3: Scan ───────────────────────────────────────────────────────────────
@@ -574,6 +822,10 @@ let activeTab = 'entries';
 export function mount(el, { params } = {}) {
   if (params) {
     const parts = params.split('/').filter(Boolean);
+    if (parts[0] === 'entries' && parts[1]) {
+      renderDetail(el, parts[1]);
+      return;
+    }
     if (parts[0] === 'scan') {
       activeTab = 'scan';
     } else if (parts[0] === 'entries') {
