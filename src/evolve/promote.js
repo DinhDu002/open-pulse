@@ -30,6 +30,20 @@ function generateComponent(insight) {
     case 'knowledge':
       return `# ${title}\n\n${description}\n`;
 
+    case 'agent': {
+      const firstLine = (description || title).split('\n')[0].slice(0, 200);
+      return [
+        '---',
+        `name: ${slugify(title)}`,
+        `description: ${firstLine}`,
+        'model: sonnet',
+        '---',
+        '',
+        `${description}`,
+        '',
+      ].join('\n');
+    }
+
     default:
       return `# ${title}\n\n${description}\n`;
   }

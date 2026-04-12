@@ -54,6 +54,34 @@ describe('op-promote', () => {
     assert.ok(content.includes('Steps to deploy'));
   });
 
+  it('generateComponent returns YAML frontmatter for agent type', () => {
+    const content = promote.generateComponent({
+      target_type: 'agent',
+      title: 'Test Runner',
+      description: 'Runs the project test suite and reports failures',
+    });
+    assert.ok(content.startsWith('---\n'), 'must start with YAML frontmatter');
+    assert.ok(content.includes('name: test-runner'), 'must have slugified name');
+    assert.ok(content.includes('description: Runs the project test suite and reports failures'));
+    assert.ok(content.includes('model: sonnet'), 'must have default model');
+    assert.ok(content.includes('Runs the project test suite and reports failures'), 'must include body');
+  });
+
+  it('generateComponent agent description caps at 200 chars and uses first line', () => {
+    const longDesc = 'First line of description.\nSecond line that should not appear in frontmatter.\n' + 'x'.repeat(300);
+    const content = promote.generateComponent({
+      target_type: 'agent',
+      title: 'Long Desc',
+      description: longDesc,
+    });
+    const fmMatch = content.match(/^---\n([\s\S]*?)\n---/);
+    assert.ok(fmMatch, 'frontmatter must exist');
+    const descLine = fmMatch[1].split('\n').find(l => l.startsWith('description:'));
+    assert.ok(descLine.length <= 'description: '.length + 200, 'description line capped at 200 chars');
+    assert.ok(descLine.includes('First line of description'));
+    assert.ok(!descLine.includes('Second line'), 'second line must not leak into frontmatter');
+  });
+
   it('generateComponent returns plain markdown for agent type', () => {
     const content = promote.generateComponent({
       target_type: 'agent', title: 'Code reviewer', description: 'Review code', category: 'quality',
