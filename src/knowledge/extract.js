@@ -9,6 +9,7 @@ const {
   getExistingTitles,
   insertEntryHistory,
 } = require('./queries');
+const { insertPipelineRun } = require('../db/pipeline-runs');
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -388,15 +389,41 @@ async function extractKnowledgeFromPrompt(db, promptId, opts = {}) {
 
   // Build prompt and call Claude CLI
   const llmPrompt = buildExtractPrompt(project.name || project.project_id, events, existingEntriesBlock);
-  const claudeResult = await callClaude(llmPrompt, model, { effort: 'max' });
-  const entries = parseJsonResponse(claudeResult.output);
 
+  let claudeResult;
+  try {
+    claudeResult = await callClaude(llmPrompt, model, { effort: 'max' });
+  } catch (err) {
+    const tokens = parseTokenUsage(err.stderr || '');
+    insertPipelineRun(db, {
+      pipeline: 'knowledge_extract',
+      project_id: project.project_id,
+      model,
+      status: 'error',
+      error: err.message,
+      input_tokens: tokens.input_tokens,
+      output_tokens: tokens.output_tokens,
+      duration_ms: err.duration_ms || 0,
+    });
+    throw err;
+  }
+
+  const tokens = parseTokenUsage(claudeResult.stderr);
+  insertPipelineRun(db, {
+    pipeline: 'knowledge_extract',
+    project_id: project.project_id,
+    model,
+    status: 'success',
+    input_tokens: tokens.input_tokens,
+    output_tokens: tokens.output_tokens,
+    duration_ms: claudeResult.duration_ms,
+  });
+
+  const entries = parseJsonResponse(claudeResult.output);
   if (entries.length === 0) return { extracted: 0, inserted: 0, updated: 0 };
 
-  // Merge into DB
   const { inserted, updated } = mergeOrUpdate(db, project.project_id, entries);
 
-  // Render vault (lazy-require to avoid circular dependency)
   const { renderKnowledgeVault } = require('./vault');
   renderKnowledgeVault(db, project.project_id);
 
