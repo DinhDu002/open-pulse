@@ -115,7 +115,7 @@ module.exports = async function knowledgeRoutes(app, opts) {
     const result = await scanProject(db, project_id, {
       scanFiles: scan_files || config.knowledge_scan_files || ['README.md', 'package.json', 'CLAUDE.md'],
       patterns:  patterns  || config.knowledge_scan_patterns || [],
-      model: config.knowledge_model || 'sonnet',
+      model: config.knowledge_model || 'opus',
     });
     return result;
   });

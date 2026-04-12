@@ -8,8 +8,8 @@
     "test": "node --test test/*.test.js test/**/*.test.js",
     "test:e2e": "playwright test",
     "reset-db": "node scripts/reset-db.js",
-    "install-service": "bash scripts/op-install.sh",
-    "uninstall-service": "bash scripts/op-uninstall.sh"
+    "install-service": "bash scripts/install.sh",
+    "uninstall-service": "bash scripts/uninstall.sh"
   },
   "dependencies": {
     "@fastify/static": "^8.0.0",

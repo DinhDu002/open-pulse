@@ -1,5 +1,8 @@
 import { get, post, put } from './api.js';
 
+// Module-level state for active polling intervals (cleared on unmount)
+const activePollers = new Map();
+
 function categoryBadge(cat) {
   const colors = {
     adoption: '#00b894', cleanup: '#e17055', agent_creation: '#6c5ce7',
@@ -386,6 +389,238 @@ async function renderInsightDetail(el, insightId) {
   }
 }
 
+function renderPlanSection(el, review, reviewId) {
+  if (review.plan_status === 'running') {
+    const card = document.createElement('div');
+    card.className = 'card';
+    card.style.marginBottom = '20px';
+    renderRunningState(card, reviewId, el);
+    el.appendChild(card);
+    return;
+  }
+
+  if (review.plan_md && review.plan_status === 'done') {
+    renderPlanCards(el, review, reviewId);
+    return;
+  }
+
+  if (review.plan_status === 'error') {
+    const card = document.createElement('div');
+    card.className = 'card';
+    card.style.marginBottom = '20px';
+    renderPlanError(card, review, reviewId, el);
+    el.appendChild(card);
+    return;
+  }
+
+  // No plan yet — show generate button
+  const card = document.createElement('div');
+  card.className = 'card';
+  card.style.marginBottom = '20px';
+  renderGenerateButton(card, reviewId, el);
+  el.appendChild(card);
+}
+
+function renderGenerateButton(card, reviewId, el) {
+  const title = document.createElement('div');
+  title.className = 'card-title';
+  title.textContent = 'Plan';
+  card.appendChild(title);
+
+  const desc = document.createElement('div');
+  desc.style.cssText = 'font-size:13px;color:var(--muted);margin-bottom:12px';
+  desc.textContent = 'Sinh plan + handoff prompt từ Claude Opus để áp dụng suggestion này.';
+  card.appendChild(desc);
+
+  const btn = document.createElement('button');
+  btn.className = 'btn btn-sm';
+  btn.style.cssText = 'background:var(--accent,#0984e3);color:white';
+  btn.textContent = 'Generate Plan with Opus';
+  btn.onclick = () => triggerGenerate(reviewId, el, btn);
+  card.appendChild(btn);
+}
+
+async function triggerGenerate(reviewId, el, btn) {
+  btn.disabled = true;
+  const orig = btn.textContent;
+  btn.textContent = 'Starting\u2026';
+  try {
+    await post(`/daily-reviews/${reviewId}/plan/generate`);
+    renderDetail(el, reviewId);
+  } catch (err) {
+    btn.disabled = false;
+    btn.textContent = orig;
+    const errMsg = document.createElement('div');
+    errMsg.style.cssText = 'color:#e17055;font-size:13px;margin-top:8px';
+    errMsg.textContent = err.message || 'Failed to start plan generation';
+    btn.parentNode.appendChild(errMsg);
+    setTimeout(() => errMsg.remove(), 8000);
+  }
+}
+
+function renderRunningState(card, reviewId, el) {
+  const title = document.createElement('div');
+  title.className = 'card-title';
+  title.textContent = 'Generating Plan\u2026';
+  card.appendChild(title);
+
+  const desc = document.createElement('div');
+  desc.style.cssText = 'font-size:13px;color:var(--muted)';
+  desc.textContent = 'Claude Opus đang phân tích suggestion. Quá trình này thường mất 30-90 giây.';
+  card.appendChild(desc);
+
+  const elapsed = document.createElement('div');
+  elapsed.style.cssText = 'font-size:12px;color:var(--muted);margin-top:8px';
+  elapsed.textContent = 'Elapsed: 0s';
+  card.appendChild(elapsed);
+
+  startPolling(reviewId, el, elapsed);
+}
+
+function startPolling(reviewId, el, elapsedEl) {
+  stopPolling(reviewId);
+  const startedAt = Date.now();
+
+  const intervalId = setInterval(async () => {
+    if (elapsedEl) {
+      const secs = Math.floor((Date.now() - startedAt) / 1000);
+      elapsedEl.textContent = `Elapsed: ${secs}s`;
+    }
+    try {
+      const status = await get(`/daily-reviews/${reviewId}/plan-status`);
+      if (status.plan_status === 'done' || status.plan_status === 'error') {
+        stopPolling(reviewId);
+        renderDetail(el, reviewId);
+      }
+    } catch (err) {
+      stopPolling(reviewId);
+      renderDetail(el, reviewId);
+    }
+  }, 3000);
+
+  const timeoutId = setTimeout(() => {
+    if (activePollers.has(reviewId)) {
+      stopPolling(reviewId);
+      renderDetail(el, reviewId);
+    }
+  }, 5 * 60 * 1000);
+
+  activePollers.set(reviewId, { intervalId, startedAt, timeoutId });
+}
+
+function stopPolling(reviewId) {
+  const poller = activePollers.get(reviewId);
+  if (poller) {
+    clearInterval(poller.intervalId);
+    clearTimeout(poller.timeoutId);
+    activePollers.delete(reviewId);
+  }
+}
+
+function renderPlanCards(el, review, reviewId) {
+  // Card 1: Plan
+  const planCard = document.createElement('div');
+  planCard.className = 'card';
+  planCard.style.marginBottom = '20px';
+
+  const planTitle = document.createElement('div');
+  planTitle.className = 'card-title';
+  planTitle.textContent = 'Plan';
+  planCard.appendChild(planTitle);
+
+  if (review.plan_generated_at) {
+    const meta = document.createElement('div');
+    meta.style.cssText = 'font-size:12px;color:var(--muted);margin-bottom:8px';
+    meta.textContent = 'Generated: ' + new Date(review.plan_generated_at).toLocaleString();
+    planCard.appendChild(meta);
+  }
+
+  const planBody = document.createElement('pre');
+  planBody.style.cssText = 'white-space:pre-wrap;font-size:13px;line-height:1.6;background:var(--bg-elev,#1a1a1f);padding:12px;border-radius:6px;overflow:auto;max-height:400px;margin:0';
+  planBody.textContent = review.plan_md;
+  planCard.appendChild(planBody);
+
+  const copyPlanBtn = document.createElement('button');
+  copyPlanBtn.className = 'btn btn-sm';
+  copyPlanBtn.style.marginTop = '8px';
+  copyPlanBtn.textContent = 'Copy Plan';
+  copyPlanBtn.onclick = () => copyToClipboard(review.plan_md, copyPlanBtn);
+  planCard.appendChild(copyPlanBtn);
+  el.appendChild(planCard);
+
+  // Card 2: Handoff Prompt
+  const hCard = document.createElement('div');
+  hCard.className = 'card';
+  hCard.style.marginBottom = '20px';
+
+  const hTitle = document.createElement('div');
+  hTitle.className = 'card-title';
+  hTitle.textContent = 'Handoff Prompt';
+  hCard.appendChild(hTitle);
+
+  const hDesc = document.createElement('div');
+  hDesc.style.cssText = 'font-size:12px;color:var(--muted);margin-bottom:8px';
+  hDesc.textContent = 'Copy đoạn này, paste vào 1 Claude Code session mới để bắt đầu thực thi.';
+  hCard.appendChild(hDesc);
+
+  const ta = document.createElement('textarea');
+  ta.readOnly = true;
+  ta.value = review.handoff_prompt;
+  ta.style.cssText = 'width:100%;min-height:200px;font-family:monospace;font-size:12px;background:var(--bg-elev,#1a1a1f);color:var(--text,#e1e1e6);padding:8px;border-radius:6px;border:1px solid var(--border,#2a2a30);box-sizing:border-box';
+  hCard.appendChild(ta);
+
+  const actionRow = document.createElement('div');
+  actionRow.style.cssText = 'display:flex;gap:8px;margin-top:8px';
+
+  const copyHBtn = document.createElement('button');
+  copyHBtn.className = 'btn btn-sm';
+  copyHBtn.style.cssText = 'background:var(--accent,#0984e3);color:white';
+  copyHBtn.textContent = 'Copy Handoff Prompt';
+  copyHBtn.onclick = () => copyToClipboard(review.handoff_prompt, copyHBtn);
+  actionRow.appendChild(copyHBtn);
+
+  const regenBtn = document.createElement('button');
+  regenBtn.className = 'btn btn-sm';
+  regenBtn.textContent = 'Regenerate Plan';
+  regenBtn.onclick = () => triggerGenerate(reviewId, el, regenBtn);
+  actionRow.appendChild(regenBtn);
+
+  hCard.appendChild(actionRow);
+  el.appendChild(hCard);
+}
+
+function renderPlanError(card, review, reviewId, el) {
+  const title = document.createElement('div');
+  title.className = 'card-title';
+  title.style.color = '#e17055';
+  title.textContent = 'Plan generation failed';
+  card.appendChild(title);
+
+  const body = document.createElement('div');
+  body.style.cssText = 'font-size:13px;color:var(--muted);margin-bottom:12px;white-space:pre-wrap';
+  body.textContent = review.plan_error || 'Unknown error';
+  card.appendChild(body);
+
+  const retry = document.createElement('button');
+  retry.className = 'btn btn-sm';
+  retry.textContent = 'Try Again';
+  retry.onclick = () => triggerGenerate(reviewId, el, retry);
+  card.appendChild(retry);
+}
+
+async function copyToClipboard(text, btn) {
+  try {
+    await navigator.clipboard.writeText(text);
+    const orig = btn.textContent;
+    btn.textContent = 'Copied!';
+    setTimeout(() => { btn.textContent = orig; }, 2000);
+  } catch {
+    const orig = btn.textContent;
+    btn.textContent = 'Copy failed';
+    setTimeout(() => { btn.textContent = orig; }, 2000);
+  }
+}
+
 async function renderDetail(el, reviewId) {
   el.textContent = '';
   const loading = document.createElement('div');
@@ -499,6 +734,9 @@ async function renderDetail(el, reviewId) {
       el.appendChild(viCard);
     }
 
+    // Plan generation section
+    renderPlanSection(el, review, reviewId);
+
   } catch (err) {
     if (loading.parentNode === el) el.removeChild(loading);
     const errDiv = document.createElement('div');
@@ -602,4 +840,6 @@ export async function mount(app, { period, params } = {}) {
   showTab(0);
 }
 
-export function unmount() {}
+export function unmount() {
+  for (const id of activePollers.keys()) stopPolling(id);
+}

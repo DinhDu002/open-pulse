@@ -64,11 +64,14 @@ Return TWO labeled JSON code blocks:
     "target_type": "rule|skill|agent|hook|knowledge",
     "action": "create|update|remove|merge",
     "confidence": 0.5,
+    "projects": ["project-a", "project-b"],
     "reasoning": "Evidence-based reasoning for this suggestion",
     "summary_vi": "Tóm tắt bằng tiếng Việt (có dấu đầy đủ): giải thích vấn đề gì đang xảy ra và đề xuất hành động cụ thể để cải thiện"
   }
 ]
 ```
+
+Notes for `suggestions.projects`: array of project names this suggestion applies to. Use exact names from the Project Configurations section above. Empty array `[]` for global/cross-project suggestions (not tied to a single project).
 
 ```json insights
 [

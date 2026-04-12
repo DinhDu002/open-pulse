@@ -1,15 +1,6 @@
 // Projects sub-module
 import { get, del } from './api.js';
-import { fmtDate, fmtDateShort, escHtml } from './utils.js';
-
-// ── Chart management ──────────────────────────────────────────────────────────
-
-let charts = [];
-
-function destroyCharts() {
-  charts.forEach(function(c) { c.destroy(); });
-  charts = [];
-}
+import { fmtDate, escHtml } from './utils.js';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -46,7 +37,7 @@ function timeAgo(isoString) {
   return days + 'd ago';
 }
 
-// ── Mount / Unmount ──────────────────────────────────────────────────────────
+// ── Mount ─────────────────────────────────────────────────────────────────────
 
 export function mount(el, { params } = {}) {
   if (params) {
@@ -56,14 +47,9 @@ export function mount(el, { params } = {}) {
   }
 }
 
-export function unmount() {
-  destroyCharts();
-}
-
 // ── List View ─────────────────────────────────────────────────────────────────
 
 function renderList(el) {
-  destroyCharts();
   el.innerHTML = '<div class="empty-state"><span class="spinner"></span></div>';
 
   get('/projects').then(function(projects) {
@@ -157,7 +143,6 @@ function buildProjectCard(proj, listEl) {
 // ── Detail View ───────────────────────────────────────────────────────────────
 
 function renderDetail(el, projectId) {
-  destroyCharts();
   el.textContent = '';
   var spinner = document.createElement('div');
   spinner.className = 'empty-state';
@@ -241,81 +226,6 @@ function renderDetailContent(el, summary, projectId) {
   headerCard.appendChild(actionsDiv);
 
   el.appendChild(headerCard);
-
-  // ── Timeline chart ────────────────────────────────────────────────────────
-
-  var timelineCard = document.createElement('div');
-  timelineCard.className = 'card';
-  timelineCard.style.marginBottom = '1rem';
-
-  var tlTitle = document.createElement('div');
-  tlTitle.className = 'card-title';
-  tlTitle.textContent = 'Timeline';
-  timelineCard.appendChild(tlTitle);
-
-  var chartWrap = document.createElement('div');
-  chartWrap.className = 'chart-wrap tall';
-  var canvas = document.createElement('canvas');
-  canvas.id = 'op-proj-timeline-canvas';
-  chartWrap.appendChild(canvas);
-  timelineCard.appendChild(chartWrap);
-
-  el.appendChild(timelineCard);
-
-  get('/projects/' + encodeURIComponent(projectId) + '/timeline?weeks=8')
-    .then(function(data) {
-      var cvs = document.getElementById('op-proj-timeline-canvas');
-      if (!cvs || !data || !data.length) {
-        chartWrap.textContent = '';
-        var empty = document.createElement('div');
-        empty.className = 'empty-state';
-        empty.style.padding = '20px';
-        empty.textContent = 'No timeline data yet';
-        chartWrap.appendChild(empty);
-        return;
-      }
-      var labels = data.map(function(d) { return d.week || fmtDateShort(d.week_start); });
-      var sessionCounts = data.map(function(d) { return d.session_count || 0; });
-      charts.push(new Chart(cvs.getContext('2d'), {
-        type: 'line',
-        data: {
-          labels: labels,
-          datasets: [
-            {
-              label: 'Sessions',
-              data: sessionCounts,
-              borderColor: '#6c5ce7',
-              backgroundColor: '#6c5ce720',
-              tension: 0.3,
-              fill: true,
-            },
-          ],
-        },
-        options: {
-          responsive: true,
-          maintainAspectRatio: false,
-          plugins: {
-            legend: { display: true, labels: { color: '#8b8fa3', font: { size: 11 } } },
-          },
-          scales: {
-            x: { grid: { color: '#2a2d3a' }, ticks: { font: { size: 11 } } },
-            y: {
-              grid: { color: '#2a2d3a' },
-              beginAtZero: true,
-              title: { display: true, text: 'Sessions', color: '#8b8fa3', font: { size: 11 } },
-            },
-          },
-        },
-      }));
-    })
-    .catch(function() {
-      chartWrap.textContent = '';
-      var errEl = document.createElement('div');
-      errEl.className = 'empty-state';
-      errEl.style.padding = '20px';
-      errEl.textContent = 'Failed to load timeline';
-      chartWrap.appendChild(errEl);
-    });
 
   // ── Pipeline Runs ─────────────────────────────────────────────────────────
 
@@ -470,5 +380,327 @@ function renderDetailContent(el, summary, projectId) {
       errEl.style.padding = '20px';
       errEl.textContent = 'Failed to load pipeline runs';
       runsTableWrap.appendChild(errEl);
+    });
+
+  // ── Project-scoped cards: Auto-evolves, Daily Reviews (with tabs) ─────────
+
+  buildAutoEvolvesCard(el, projectId);
+  buildDailyReviewsCard(el, projectId);
+}
+
+// ── Reusable card builders ──────────────────────────────────────────────────
+
+function statCellNode(label, value) {
+  var wrap = document.createElement('div');
+  wrap.style.cssText = 'text-align:center;padding:12px 8px;background:var(--bg);border-radius:8px';
+  var lbl = document.createElement('div');
+  lbl.style.cssText = 'font-size:11px;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:4px';
+  lbl.textContent = String(label);
+  var val = document.createElement('div');
+  val.style.cssText = "font-size:16px;font-weight:700;font-family:'SF Mono',monospace";
+  val.textContent = String(value);
+  wrap.appendChild(lbl);
+  wrap.appendChild(val);
+  return wrap;
+}
+
+function replaceStats(statsRow, entries) {
+  statsRow.textContent = '';
+  entries.forEach(function(e) { statsRow.appendChild(statCellNode(e[0], e[1])); });
+}
+
+function makeBadge(text, color) {
+  var span = document.createElement('span');
+  span.style.cssText = 'padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600;background:' + color + '26;color:' + color;
+  span.textContent = text;
+  return span;
+}
+
+function makePanelContents(statLabels) {
+  var statsRow = document.createElement('div');
+  statsRow.style.cssText = 'display:grid;grid-template-columns:repeat(4,1fr);gap:12px;font-size:13px;margin-bottom:16px';
+  statLabels.forEach(function(l) { statsRow.appendChild(statCellNode(l, '\u2014')); });
+
+  var tableWrap = document.createElement('div');
+  tableWrap.style.cssText = 'overflow-x:auto';
+  var spinnerWrap = document.createElement('div');
+  spinnerWrap.className = 'empty-state';
+  var spinEl = document.createElement('span');
+  spinEl.className = 'spinner';
+  spinnerWrap.appendChild(spinEl);
+  tableWrap.appendChild(spinnerWrap);
+
+  return { statsRow: statsRow, tableWrap: tableWrap };
+}
+
+function makeListCard(title, statLabels) {
+  var card = document.createElement('div');
+  card.className = 'card';
+  card.style.marginBottom = '1rem';
+
+  var titleEl = document.createElement('div');
+  titleEl.className = 'card-title';
+  titleEl.textContent = title;
+  card.appendChild(titleEl);
+
+  var panel = makePanelContents(statLabels);
+  card.appendChild(panel.statsRow);
+  card.appendChild(panel.tableWrap);
+
+  return { card: card, statsRow: panel.statsRow, tableWrap: panel.tableWrap };
+}
+
+function makeTabbedCard(title, tabs) {
+  var card = document.createElement('div');
+  card.className = 'card';
+  card.style.marginBottom = '1rem';
+
+  var titleEl = document.createElement('div');
+  titleEl.className = 'card-title';
+  titleEl.textContent = title;
+  card.appendChild(titleEl);
+
+  var tabsRow = document.createElement('div');
+  tabsRow.style.cssText = 'display:flex;gap:4px;border-bottom:1px solid var(--border);margin-bottom:16px';
+
+  var panels = {};
+  var buttons = {};
+
+  function activate(key) {
+    Object.keys(panels).forEach(function(k) {
+      var isActive = k === key;
+      panels[k].style.display = isActive ? 'block' : 'none';
+      buttons[k].style.color = isActive ? 'var(--text)' : 'var(--text-muted)';
+      buttons[k].style.borderBottomColor = isActive ? '#6c5ce7' : 'transparent';
+    });
+  }
+
+  tabs.forEach(function(t, idx) {
+    var btn = document.createElement('button');
+    btn.type = 'button';
+    btn.textContent = t.label;
+    btn.style.cssText = 'background:none;border:none;padding:10px 16px;cursor:pointer;font-size:13px;font-weight:600;border-bottom:2px solid transparent;margin-bottom:-1px;color:var(--text-muted)';
+    btn.addEventListener('click', function() { activate(t.key); });
+
+    var panel = document.createElement('div');
+    panel.style.display = idx === 0 ? 'block' : 'none';
+
+    tabsRow.appendChild(btn);
+    buttons[t.key] = btn;
+    panels[t.key] = panel;
+  });
+
+  card.appendChild(tabsRow);
+  tabs.forEach(function(t) { card.appendChild(panels[t.key]); });
+
+  // Activate first tab styling
+  if (tabs.length > 0) activate(tabs[0].key);
+
+  return { card: card, panels: panels };
+}
+
+function showEmpty(tableWrap, text) {
+  tableWrap.textContent = '';
+  var empty = document.createElement('div');
+  empty.className = 'empty-state';
+  empty.style.padding = '20px';
+  empty.textContent = text;
+  tableWrap.appendChild(empty);
+}
+
+function showError(tableWrap, text) {
+  tableWrap.textContent = '';
+  var err = document.createElement('div');
+  err.className = 'empty-state';
+  err.style.padding = '20px';
+  err.textContent = text;
+  tableWrap.appendChild(err);
+}
+
+function buildTable(columns) {
+  var table = document.createElement('table');
+  table.style.cssText = 'width:100%;border-collapse:collapse;font-size:13px';
+  var thead = document.createElement('thead');
+  var headerRow = document.createElement('tr');
+  headerRow.style.borderBottom = '1px solid var(--border)';
+  columns.forEach(function(text) {
+    var th = document.createElement('th');
+    th.style.cssText = 'padding:8px;text-align:left;color:var(--text-muted);font-weight:600;text-transform:uppercase;font-size:10px;letter-spacing:0.5px';
+    th.textContent = text;
+    headerRow.appendChild(th);
+  });
+  thead.appendChild(headerRow);
+  table.appendChild(thead);
+  var tbody = document.createElement('tbody');
+  table.appendChild(tbody);
+  return { table: table, tbody: tbody };
+}
+
+function td(text, style) {
+  var cell = document.createElement('td');
+  cell.style.cssText = 'padding:8px;' + (style || '');
+  if (text !== undefined && text !== null) cell.textContent = String(text);
+  return cell;
+}
+
+function tdNode(node, style) {
+  var cell = document.createElement('td');
+  cell.style.cssText = 'padding:8px;' + (style || '');
+  cell.appendChild(node);
+  return cell;
+}
+
+// ── Card 1: Auto-evolves ────────────────────────────────────────────────────
+
+var AE_STATUS_COLORS = { active: '#6c5ce7', promoted: '#00b894', reverted: '#e17055' };
+
+function buildAutoEvolvesCard(el, projectId) {
+  var built = makeListCard('Auto-evolves', ['Total', 'Active', 'Promoted', 'Avg Confidence']);
+  el.appendChild(built.card);
+
+  get('/projects/' + encodeURIComponent(projectId) + '/auto-evolves?per_page=100')
+    .then(function(data) {
+      var rows = data.rows || [];
+      var total = data.total || 0;
+      var active = rows.filter(function(r) { return r.status === 'active'; }).length;
+      var promoted = rows.filter(function(r) { return r.status === 'promoted'; }).length;
+      var confSum = rows.reduce(function(s, r) { return s + (r.confidence || 0); }, 0);
+      var avgConf = rows.length > 0 ? (confSum / rows.length * 100).toFixed(0) + '%' : '\u2014';
+      replaceStats(built.statsRow, [
+        ['Total', total],
+        ['Active', active],
+        ['Promoted', promoted],
+        ['Avg Confidence', avgConf],
+      ]);
+
+      if (rows.length === 0) {
+        showEmpty(built.tableWrap, 'No project-tagged auto-evolves yet');
+        return;
+      }
+
+      var t = buildTable(['Title', 'Type', 'Confidence', 'Obs.', 'Status', 'Updated']);
+      rows.slice(0, 10).forEach(function(r) {
+        var tr = document.createElement('tr');
+        tr.style.borderBottom = '1px solid var(--border)';
+        tr.appendChild(td(r.title, 'font-weight:600'));
+        tr.appendChild(td(r.target_type || '\u2014'));
+        tr.appendChild(td(Math.round((r.confidence || 0) * 100) + '%', "font-family:'SF Mono',monospace"));
+        tr.appendChild(td(r.observation_count || 0, "font-family:'SF Mono',monospace"));
+        tr.appendChild(tdNode(makeBadge(r.status, AE_STATUS_COLORS[r.status] || '#8b8fa3')));
+        tr.appendChild(td(timeAgo(r.updated_at || r.created_at), 'color:var(--text-muted)'));
+        t.tbody.appendChild(tr);
+      });
+      built.tableWrap.textContent = '';
+      built.tableWrap.appendChild(t.table);
+    })
+    .catch(function() {
+      showError(built.tableWrap, 'Failed to load auto-evolves');
+    });
+}
+
+// ── Card 2: Daily Reviews (Suggestions + Cross-project Insights in tabs) ────
+
+var DR_CATEGORY_COLORS = {
+  adoption: '#00b894', cleanup: '#e17055', agent_creation: '#6c5ce7',
+  update: '#fdcb6e', optimization: '#74b9ff', integration: '#a29bfe',
+  cost: '#fd79a8', security: '#d63031', refinement: '#00cec9',
+};
+var DR_STATUS_COLORS = { pending: '#fdcb6e', accepted: '#00b894', dismissed: '#e17055' };
+
+var INSIGHT_TYPE_COLORS = {
+  duplicate: '#6c5ce7', conflict: '#d63031', gap: '#e17055',
+  unused: '#8b8fa3', cross_dependency: '#74b9ff',
+};
+var SEVERITY_COLORS = { info: '#74b9ff', warning: '#fdcb6e', critical: '#d63031' };
+
+function buildDailyReviewsCard(el, projectId) {
+  var tabbed = makeTabbedCard('Daily Reviews', [
+    { key: 'suggestions', label: 'Suggestions' },
+    { key: 'insights', label: 'Cross-project Insights' },
+  ]);
+
+  var sugg = makePanelContents(['Total', 'Pending', 'Accepted', 'Dismissed']);
+  tabbed.panels.suggestions.appendChild(sugg.statsRow);
+  tabbed.panels.suggestions.appendChild(sugg.tableWrap);
+
+  var ins = makePanelContents(['Total', 'Info', 'Warning', 'Critical']);
+  tabbed.panels.insights.appendChild(ins.statsRow);
+  tabbed.panels.insights.appendChild(ins.tableWrap);
+
+  el.appendChild(tabbed.card);
+
+  get('/projects/' + encodeURIComponent(projectId) + '/daily-reviews?per_page=100')
+    .then(function(data) {
+      var rows = data.rows || [];
+      var total = data.total || 0;
+      var pending = rows.filter(function(r) { return r.status === 'pending'; }).length;
+      var accepted = rows.filter(function(r) { return r.status === 'accepted'; }).length;
+      var dismissed = rows.filter(function(r) { return r.status === 'dismissed'; }).length;
+      replaceStats(sugg.statsRow, [
+        ['Total', total],
+        ['Pending', pending],
+        ['Accepted', accepted],
+        ['Dismissed', dismissed],
+      ]);
+
+      if (rows.length === 0) {
+        showEmpty(sugg.tableWrap, 'No project-tagged daily review suggestions yet');
+        return;
+      }
+
+      var t = buildTable(['Date', 'Category', 'Title', 'Action', 'Confidence', 'Status']);
+      rows.slice(0, 10).forEach(function(r) {
+        var tr = document.createElement('tr');
+        tr.style.borderBottom = '1px solid var(--border)';
+        tr.appendChild(td(r.review_date || '\u2014', 'color:var(--text-muted)'));
+        tr.appendChild(tdNode(makeBadge(r.category || 'general', DR_CATEGORY_COLORS[r.category] || '#8b8fa3')));
+        tr.appendChild(td(r.title, 'font-weight:600'));
+        tr.appendChild(td(r.action || '\u2014'));
+        tr.appendChild(td(Math.round((r.confidence || 0) * 100) + '%', "font-family:'SF Mono',monospace"));
+        tr.appendChild(tdNode(makeBadge(r.status || 'pending', DR_STATUS_COLORS[r.status] || '#8b8fa3')));
+        t.tbody.appendChild(tr);
+      });
+      sugg.tableWrap.textContent = '';
+      sugg.tableWrap.appendChild(t.table);
+    })
+    .catch(function() {
+      showError(sugg.tableWrap, 'Failed to load daily reviews');
+    });
+
+  get('/projects/' + encodeURIComponent(projectId) + '/daily-review-insights?per_page=100')
+    .then(function(data) {
+      var rows = data.rows || [];
+      var total = data.total || 0;
+      var info = rows.filter(function(r) { return r.severity === 'info'; }).length;
+      var warning = rows.filter(function(r) { return r.severity === 'warning'; }).length;
+      var critical = rows.filter(function(r) { return r.severity === 'critical'; }).length;
+      replaceStats(ins.statsRow, [
+        ['Total', total],
+        ['Info', info],
+        ['Warning', warning],
+        ['Critical', critical],
+      ]);
+
+      if (rows.length === 0) {
+        showEmpty(ins.tableWrap, 'No insights mentioning this project yet');
+        return;
+      }
+
+      var t = buildTable(['Date', 'Type', 'Severity', 'Title', 'Target']);
+      rows.slice(0, 10).forEach(function(r) {
+        var tr = document.createElement('tr');
+        tr.style.borderBottom = '1px solid var(--border)';
+        tr.appendChild(td(r.review_date || '\u2014', 'color:var(--text-muted)'));
+        tr.appendChild(tdNode(makeBadge(r.insight_type || 'unknown', INSIGHT_TYPE_COLORS[r.insight_type] || '#8b8fa3')));
+        tr.appendChild(tdNode(makeBadge(r.severity || 'info', SEVERITY_COLORS[r.severity] || '#8b8fa3')));
+        tr.appendChild(td(r.title, 'font-weight:600'));
+        tr.appendChild(td(r.target_type || '\u2014'));
+        t.tbody.appendChild(tr);
+      });
+      ins.tableWrap.textContent = '';
+      ins.tableWrap.appendChild(t.table);
+    })
+    .catch(function() {
+      showError(ins.tableWrap, 'Failed to load insights');
     });
 }

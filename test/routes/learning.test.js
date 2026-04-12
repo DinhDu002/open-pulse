@@ -7,7 +7,7 @@ const os = require('node:os');
 const path = require('node:path');
 
 const { createDb } = require('../../src/db/schema');
-const { upsertClProject, getProjectSummary, getProjectTimeline, queryLearningActivity, queryLearningRecent } = require('../../src/db/projects');
+const { upsertClProject, getProjectSummary, queryLearningActivity, queryLearningRecent } = require('../../src/db/projects');
 
 // ---------------------------------------------------------------------------
 // Test helpers
@@ -125,17 +125,6 @@ describe('getProjectSummary', () => {
 });
 
 // ---------------------------------------------------------------------------
-// getProjectTimeline
-// ---------------------------------------------------------------------------
-
-describe('getProjectTimeline', () => {
-  test('returns array', () => {
-    const timeline = getProjectTimeline(db, 'proj-a', 4);
-    assert.ok(Array.isArray(timeline));
-  });
-});
-
-// ---------------------------------------------------------------------------
 // queryLearningActivity
 // ---------------------------------------------------------------------------
 
@@ -224,13 +213,6 @@ describe('HTTP: /api/projects and /api/learning', () => {
     assert.equal(res.statusCode, 404);
     const body = JSON.parse(res.body);
     assert.ok('error' in body);
-  });
-
-  test('GET /api/projects/:id/timeline returns array', async () => {
-    const res = await app.inject({ method: 'GET', url: '/api/projects/pl-proj/timeline?weeks=4' });
-    assert.equal(res.statusCode, 200);
-    const body = JSON.parse(res.body);
-    assert.ok(Array.isArray(body));
   });
 
   test('GET /api/learning/activity returns daily activity array', async () => {

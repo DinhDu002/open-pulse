@@ -4,10 +4,12 @@ const path = require('path');
 const fs = require('fs');
 const {
   getProjectSummary,
-  getProjectTimeline,
   deleteProject,
 } = require('../db/projects');
 const { queryPipelineRuns, getPipelineRunStats } = require('../db/pipeline-runs');
+const { queryAutoEvolvesByProject } = require('../evolve/queries');
+const { queryDailyReviewsByProject, queryInsightsByProject } = require('../review/queries');
+const { parsePagination, errorReply } = require('../lib/format');
 
 module.exports = async function projectsRoutes(app, opts) {
   const { db, repoDir } = opts;
@@ -34,11 +36,6 @@ module.exports = async function projectsRoutes(app, opts) {
     const summary = getProjectSummary(db, request.params.id);
     if (!summary) return reply.code(404).send({ error: 'Project not found' });
     return summary;
-  });
-
-  app.get('/api/projects/:id/timeline', async (request) => {
-    const weeks = Math.max(1, parseInt(request.query.weeks) || 8);
-    return getProjectTimeline(db, request.params.id, weeks);
   });
 
   app.delete('/api/projects/:id', async (request, reply) => {
@@ -97,5 +94,51 @@ module.exports = async function projectsRoutes(app, opts) {
     const limit = Math.min(Math.max(1, parseInt(request.query.limit) || 20), 100);
     const page = Math.max(1, parseInt(request.query.page) || 1);
     return queryPipelineRuns(db, { projectId, pipeline, status, page, perPage: limit });
+  });
+
+  // ── Project-scoped: auto-evolves, daily-reviews, insights ────────────────
+
+  function lookupProjectName(projectId) {
+    const row = db.prepare('SELECT name FROM cl_projects WHERE project_id = ?').get(projectId);
+    return row ? row.name : null;
+  }
+
+  app.get('/api/projects/:id/auto-evolves', async (request, reply) => {
+    const name = lookupProjectName(request.params.id);
+    if (!name) return errorReply(reply, 404, 'Project not found');
+    const { page, perPage } = parsePagination(request.query);
+    return queryAutoEvolvesByProject(db, name, {
+      status: request.query.status || undefined,
+      target_type: request.query.target_type || undefined,
+      page,
+      per_page: perPage,
+    });
+  });
+
+  app.get('/api/projects/:id/daily-reviews', async (request, reply) => {
+    const name = lookupProjectName(request.params.id);
+    if (!name) return errorReply(reply, 404, 'Project not found');
+    const { page, perPage } = parsePagination(request.query);
+    return queryDailyReviewsByProject(db, name, {
+      review_date: request.query.review_date || undefined,
+      status: request.query.status || undefined,
+      category: request.query.category || undefined,
+      page,
+      per_page: perPage,
+    });
+  });
+
+  app.get('/api/projects/:id/daily-review-insights', async (request, reply) => {
+    const name = lookupProjectName(request.params.id);
+    if (!name) return errorReply(reply, 404, 'Project not found');
+    const { page, perPage } = parsePagination(request.query);
+    return queryInsightsByProject(db, name, {
+      review_date: request.query.review_date || undefined,
+      insight_type: request.query.insight_type || undefined,
+      status: request.query.status || undefined,
+      severity: request.query.severity || undefined,
+      page,
+      per_page: perPage,
+    });
   });
 };

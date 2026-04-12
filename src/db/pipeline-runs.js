@@ -93,4 +93,18 @@ function getPipelineRunStats(db, opts = {}) {
   };
 }
 
-module.exports = { insertPipelineRun, queryPipelineRuns, getPipelineRunStats };
+function updatePipelineRun(db, id, fields) {
+  const allowed = ['status', 'error', 'input_tokens', 'output_tokens', 'duration_ms'];
+  const sets = [];
+  const params = { id };
+  for (const key of allowed) {
+    if (fields[key] !== undefined) {
+      sets.push(`${key} = @${key}`);
+      params[key] = fields[key];
+    }
+  }
+  if (sets.length === 0) return;
+  db.prepare(`UPDATE pipeline_runs SET ${sets.join(', ')} WHERE id = @id`).run(params);
+}
+
+module.exports = { insertPipelineRun, updatePipelineRun, queryPipelineRuns, getPipelineRunStats };

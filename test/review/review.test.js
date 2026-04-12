@@ -81,7 +81,7 @@ describe('runDailyReview with mocked execFileSync', () => {
       timeout: 5000,
     });
     assert.equal(capturedArgs.length, 1, 'execFileSync called once');
-    const promptArg = capturedArgs[0].args[capturedArgs[0].args.indexOf('-p') + 1];
+    const promptArg = capturedArgs[0].opts.input;
     assert.ok(promptArg.includes('2026-04-10'), 'prompt contains provided date');
     assert.ok(promptArg.includes('3 days'), 'prompt contains historyDays');
     assert.equal(result.suggestions.length, 1);
@@ -91,6 +91,32 @@ describe('runDailyReview with mocked execFileSync', () => {
     const rows = mockDb.prepare('SELECT * FROM daily_reviews WHERE review_date = ?').all('2026-04-10');
     assert.equal(rows.length, 1);
     assert.equal(rows[0].review_date, '2026-04-10');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// TC-DR: dryRun mode
+// ---------------------------------------------------------------------------
+
+describe('runDailyReview dryRun mode', () => {
+  let db;
+
+  before(() => {
+    db = require('../../src/db/schema').createDb(':memory:');
+  });
+  after(() => { if (db) db.close(); });
+
+  it('TC-DR1: dryRun skips Claude invocation and returns promptSize', async () => {
+    const { runDailyReview } = require('../../src/review/pipeline');
+    const result = await runDailyReview(db, {
+      date: '2026-04-10',
+      dryRun: true,
+    });
+    assert.strictEqual(result.dryRun, true);
+    assert.ok(result.promptSize > 0, 'promptSize should be positive');
+    assert.deepStrictEqual(result.suggestions, []);
+    assert.deepStrictEqual(result.insights, []);
+    assert.strictEqual(result.reportPath, null);
   });
 });
 
@@ -296,6 +322,71 @@ describe('op-daily-review', () => {
 
     const rows = db.prepare("SELECT * FROM daily_reviews WHERE title = 'Use TDD' AND review_date = '2026-04-10'").all();
     assert.equal(rows.length, 1);
+  });
+
+  it('saveSuggestions persists projects JSON array', () => {
+    const suggestions = [{
+      category: 'cleanup',
+      title: 'Project-tagged suggestion',
+      description: 'd',
+      target_type: 'rule',
+      action: 'update',
+      confidence: 0.6,
+      reasoning: 'r',
+      projects: ['open-pulse', 'carthings'],
+    }];
+    review.saveSuggestions(db, suggestions, '2026-04-11');
+    const row = db.prepare(
+      "SELECT * FROM daily_reviews WHERE title = 'Project-tagged suggestion'"
+    ).get();
+    assert.ok(row);
+    assert.ok(row.projects);
+    assert.deepEqual(JSON.parse(row.projects), ['open-pulse', 'carthings']);
+  });
+
+  it('saveSuggestions leaves projects NULL when field missing', () => {
+    const suggestions = [{
+      category: 'cleanup',
+      title: 'Untagged suggestion',
+      description: 'd',
+      target_type: 'rule',
+      action: 'remove',
+      confidence: 0.5,
+      reasoning: 'r',
+    }];
+    review.saveSuggestions(db, suggestions, '2026-04-11');
+    const row = db.prepare(
+      "SELECT * FROM daily_reviews WHERE title = 'Untagged suggestion'"
+    ).get();
+    assert.ok(row);
+    assert.equal(row.projects, null);
+  });
+
+  it('queryDailyReviewsByProject matches JSON array element', () => {
+    const { queryDailyReviewsByProject } = require('../../src/review/queries');
+    const result = queryDailyReviewsByProject(db, 'open-pulse');
+    const hit = result.rows.find(r => r.title === 'Project-tagged suggestion');
+    assert.ok(hit, 'should find the tagged suggestion');
+    const miss = result.rows.find(r => r.title === 'Untagged suggestion');
+    assert.equal(miss, undefined, 'should not return untagged suggestion');
+  });
+
+  it('queryDailyReviewsByProject ignores projects that only substring-match', () => {
+    // Make sure the query matches the full JSON-quoted token, not a substring
+    const { queryDailyReviewsByProject } = require('../../src/review/queries');
+    review.saveSuggestions(db, [{
+      category: 'cleanup',
+      title: 'Prefix test suggestion',
+      description: 'd',
+      target_type: 'rule',
+      action: 'update',
+      confidence: 0.5,
+      reasoning: 'r',
+      projects: ['open-pulse-other'],
+    }], '2026-04-11');
+    const result = queryDailyReviewsByProject(db, 'open-pulse');
+    const leaked = result.rows.find(r => r.title === 'Prefix test suggestion');
+    assert.equal(leaked, undefined, 'substring "open-pulse-other" should not match "open-pulse"');
   });
 
   // -- daily_review_insights table --

@@ -163,7 +163,7 @@ async function scanProject(db, projectId, opts = {}) {
 
   let claudeResult;
   try {
-    claudeResult = await callClaude(llmPrompt, model, { effort: 'max' });
+    claudeResult = await callClaude(llmPrompt, model);
   } catch (err) {
     insertPipelineRun(db, {
       pipeline: 'knowledge_scan',

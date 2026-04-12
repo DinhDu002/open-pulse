@@ -201,11 +201,19 @@ function callClaude(prompt, model = 'opus', opts = {}) {
   return new Promise((resolve, reject) => {
     const startTime = Date.now();
     const args = ['-p', '--model', model, '--no-session-persistence', '--output-format', 'json'];
-    if (opts.effort) args.push('--effort', opts.effort);
     const proc = spawn('claude', args, {
       env: { ...process.env, OPEN_PULSE_INTERNAL: '1' },
       stdio: ['pipe', 'pipe', 'pipe'],
     });
+
+    let killTimer = null;
+    let timedOut = false;
+    if (opts.timeout) {
+      killTimer = setTimeout(() => {
+        timedOut = true;
+        proc.kill('SIGTERM');
+      }, opts.timeout);
+    }
 
     let stdout = '';
     let stderr = '';
@@ -214,7 +222,13 @@ function callClaude(prompt, model = 'opus', opts = {}) {
     proc.stderr.on('data', chunk => { stderr += chunk; });
 
     proc.on('close', code => {
+      if (killTimer) clearTimeout(killTimer);
       const duration_ms = Date.now() - startTime;
+      if (timedOut) {
+        const err = new Error(`claude CLI timed out after ${opts.timeout}ms`);
+        err.duration_ms = duration_ms;
+        return reject(err);
+      }
       if (code === 0) {
         try {
           const parsed = JSON.parse(stdout);
@@ -239,6 +253,7 @@ function callClaude(prompt, model = 'opus', opts = {}) {
     });
 
     proc.on('error', err => {
+      if (killTimer) clearTimeout(killTimer);
       err.duration_ms = Date.now() - startTime;
       reject(new Error(`Failed to spawn claude CLI: ${err.message}`));
     });
@@ -387,7 +402,7 @@ async function extractKnowledgeFromPrompt(db, promptId, opts = {}) {
 
   let claudeResult;
   try {
-    claudeResult = await callClaude(llmPrompt, model, { effort: 'max' });
+    claudeResult = await callClaude(llmPrompt, model);
   } catch (err) {
     insertPipelineRun(db, {
       pipeline: 'knowledge_extract',

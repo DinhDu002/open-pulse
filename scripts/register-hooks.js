@@ -5,7 +5,7 @@
  * Safely merge Open Pulse hooks into ~/.claude/settings.json.
  * - Backs up settings.json before modification
  * - Removes old collector/automation-suggester/suggestion-analyzer hooks
- * - Adds new op-collector hooks
+ * - Adds new collector hooks
  * - Validates JSON before and after
  */
 
@@ -40,6 +40,7 @@ function main() {
     'automation-suggester-stop.js',
     'op-collector.js',
     'op-suggestion-analyzer.js',
+    'ingest/collector.js',
   ];
 
   for (const [event, groups] of Object.entries(settings.hooks)) {

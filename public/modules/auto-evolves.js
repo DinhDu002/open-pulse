@@ -5,6 +5,11 @@ function fmtTime(ts) {
   return dayjs(ts).format('MMM D, HH:mm');
 }
 
+function fmtFull(ts) {
+  if (!ts) return '\u2014';
+  return new Date(ts).toLocaleString();
+}
+
 function confidenceBar(score) {
   const pct = Math.round((score || 0) * 100);
   const color = pct >= 80 ? 'var(--success)' : pct >= 50 ? 'var(--warning)' : 'var(--danger)';
@@ -75,21 +80,11 @@ async function renderList(container, filterStatus) {
     const tr = document.createElement('tr');
 
     const tdTitle = document.createElement('td');
-    if (row.description) {
-      const details = document.createElement('details');
-      details.className = 'inline-details';
-      const summary = document.createElement('summary');
-      summary.textContent = row.title;
-      summary.style.cursor = 'pointer';
-      details.appendChild(summary);
-      const body = document.createElement('pre');
-      body.className = 'evolve-body';
-      body.textContent = row.description;
-      details.appendChild(body);
-      tdTitle.appendChild(details);
-    } else {
-      tdTitle.textContent = row.title;
-    }
+    const titleLink = document.createElement('a');
+    titleLink.href = '#auto-evolves/' + row.id;
+    titleLink.textContent = row.title;
+    titleLink.style.cssText = 'color:var(--accent);text-decoration:none;cursor:pointer';
+    tdTitle.appendChild(titleLink);
     tr.appendChild(tdTitle);
 
     const tdType = document.createElement('td');
@@ -131,7 +126,126 @@ async function renderList(container, filterStatus) {
   container.appendChild(table);
 }
 
-export function mount(app, opts = {}) {
+async function renderDetail(el, id) {
+  el.textContent = '';
+  const loading = document.createElement('div');
+  loading.className = 'empty-state';
+  loading.textContent = 'Loading\u2026';
+  el.appendChild(loading);
+
+  try {
+    const row = await get('/auto-evolves/' + id);
+    el.removeChild(loading);
+
+    const backLink = document.createElement('a');
+    backLink.href = '#auto-evolves';
+    backLink.className = 'back-link';
+    backLink.textContent = '\u2190 Back to Auto-evolves';
+    el.appendChild(backLink);
+
+    // Header card
+    const header = document.createElement('div');
+    header.className = 'card';
+    header.style.marginBottom = '20px';
+
+    const title = document.createElement('h2');
+    title.style.cssText = 'margin:0 0 12px 0;font-size:18px';
+    title.textContent = row.title;
+    header.appendChild(title);
+
+    const badges = document.createElement('div');
+    badges.style.cssText = 'display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px';
+    badges.appendChild(typeBadge(row.target_type));
+    badges.appendChild(statusBadge(row.status));
+    badges.appendChild(confidenceBar(row.confidence));
+    header.appendChild(badges);
+
+    el.appendChild(header);
+
+    // Meta card
+    const metaCard = document.createElement('div');
+    metaCard.className = 'card';
+    metaCard.style.marginBottom = '20px';
+    const metaTitle = document.createElement('div');
+    metaTitle.className = 'card-title';
+    metaTitle.textContent = 'Details';
+    metaCard.appendChild(metaTitle);
+
+    const fields = [
+      ['ID', row.id],
+      ['Target type', row.target_type],
+      ['Observation count', row.observation_count],
+      ['Rejection count', row.rejection_count],
+      ['Created', fmtFull(row.created_at)],
+      ['Updated', fmtFull(row.updated_at)],
+    ];
+    if (row.status === 'promoted' || row.promoted_at) {
+      fields.push(['Promoted at', fmtFull(row.promoted_at)]);
+      fields.push(['Promoted to', row.promoted_to || '\u2014']);
+    }
+
+    const dl = document.createElement('dl');
+    dl.style.cssText = 'display:grid;grid-template-columns:140px 1fr;gap:8px 16px;margin:0;font-size:14px';
+    for (const [label, value] of fields) {
+      const dt = document.createElement('dt');
+      dt.style.cssText = 'color:var(--muted);font-weight:600';
+      dt.textContent = label;
+      dl.appendChild(dt);
+      const dd = document.createElement('dd');
+      dd.style.cssText = 'margin:0;word-break:break-all';
+      dd.textContent = value ?? '\u2014';
+      dl.appendChild(dd);
+    }
+    metaCard.appendChild(dl);
+    el.appendChild(metaCard);
+
+    // Description card
+    if (row.description) {
+      const descCard = document.createElement('div');
+      descCard.className = 'card';
+      descCard.style.marginBottom = '20px';
+      const descTitle = document.createElement('div');
+      descTitle.className = 'card-title';
+      descTitle.textContent = 'Description';
+      descCard.appendChild(descTitle);
+      const descBody = document.createElement('div');
+      descBody.style.cssText = 'white-space:pre-wrap;font-size:14px;line-height:1.6';
+      descBody.textContent = row.description;
+      descCard.appendChild(descBody);
+      el.appendChild(descCard);
+    }
+
+    // Action buttons
+    if (row.status === 'promoted') {
+      const actions = document.createElement('div');
+      actions.style.cssText = 'display:flex;gap:8px;margin-top:16px';
+      const btn = document.createElement('button');
+      btn.className = 'btn btn-sm btn-danger';
+      btn.textContent = 'Revert';
+      btn.onclick = async () => {
+        await put('/auto-evolves/' + id + '/revert');
+        renderDetail(el, id);
+      };
+      actions.appendChild(btn);
+      el.appendChild(actions);
+    }
+
+  } catch (err) {
+    if (loading.parentNode === el) el.removeChild(loading);
+    const errDiv = document.createElement('div');
+    errDiv.className = 'empty-state';
+    errDiv.style.color = 'var(--danger)';
+    errDiv.textContent = 'Failed to load: ' + err.message;
+    el.appendChild(errDiv);
+  }
+}
+
+export async function mount(app, opts = {}) {
+  if (opts.params) {
+    await renderDetail(app, opts.params);
+    return;
+  }
+
   app.textContent = '';
 
   const header = document.createElement('h2');

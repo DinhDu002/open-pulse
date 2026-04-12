@@ -15,12 +15,12 @@ echo "=== Open Pulse Installer ==="
 echo "Repo: $REPO_DIR"
 
 # ── 1. npm install ──
-echo "[1/7] Installing dependencies..."
+echo "[1/8] Installing dependencies..."
 cd "$REPO_DIR"
 npm install --production
 
 # ── 2. Create runtime directories ──
-echo "[2/7] Creating directories..."
+echo "[2/8] Creating directories..."
 mkdir -p "$REPO_DIR/data"
 mkdir -p "$REPO_DIR/logs"
 mkdir -p "$REPO_DIR/cl/instincts/personal"
@@ -29,19 +29,15 @@ mkdir -p "$REPO_DIR/cl/evolved"
 mkdir -p "$REPO_DIR/cl/projects"
 
 # ── 3. Initialize empty DB ──
-echo "[3/9] Initializing database..."
-node -e "require('$REPO_DIR/src/op-db').createDb('$REPO_DIR/open-pulse.db')"
+echo "[3/8] Initializing database..."
+node -e "require('$REPO_DIR/src/db/schema').createDb('$REPO_DIR/open-pulse.db')"
 
 # ── 4. Backfill prompts ──
-echo "[4/9] Backfilling prompts..."
-node "$REPO_DIR/scripts/op-backfill-prompts.js" --repo-dir "$REPO_DIR"
+echo "[4/8] Backfilling prompts..."
+node "$REPO_DIR/scripts/backfill-prompts.js" --repo-dir "$REPO_DIR"
 
-# ── 5. Seed instincts (cold start) ──
-echo "[5/9] Seeding instincts..."
-node "$REPO_DIR/scripts/cl-seed-instincts.js" --repo-dir "$REPO_DIR"
-
-# ── 6. Symlink skills ──
-echo "[6/9] Symlinking skills..."
+# ── 5. Symlink skills ──
+echo "[5/8] Symlinking skills..."
 for skill_dir in "$REPO_DIR/claude/skills"/*/; do
   skill_name=$(basename "$skill_dir")
   target="$CLAUDE_DIR/skills/$skill_name"
@@ -57,8 +53,8 @@ for skill_dir in "$REPO_DIR/claude/skills"/*/; do
   fi
 done
 
-# ── 7. Symlink agents ──
-echo "[7/9] Symlinking agents..."
+# ── 6. Symlink agents ──
+echo "[6/8] Symlinking agents..."
 for agent_file in "$REPO_DIR/claude/agents"/*.md; do
   [ -f "$agent_file" ] || continue
   agent_name=$(basename "$agent_file")
@@ -73,12 +69,12 @@ for agent_file in "$REPO_DIR/claude/agents"/*.md; do
   fi
 done
 
-# ── 8. Register hooks in settings.json ──
-echo "[8/9] Registering hooks..."
+# ── 7. Register hooks in settings.json ──
+echo "[7/8] Registering hooks..."
 node "$REPO_DIR/scripts/register-hooks.js" "$REPO_DIR"
 
-# ── 9. Setup launchd services ──
-echo "[9/9] Setting up launchd services..."
+# ── 8. Setup launchd services ──
+echo "[8/8] Setting up launchd services..."
 if launchctl list 2>/dev/null | grep -q "$PLIST_NAME"; then
   launchctl bootout "gui/$(id -u)/$PLIST_NAME" 2>/dev/null || true
 fi
@@ -93,7 +89,7 @@ cat > "$PLIST_PATH" << PLIST
   <key>ProgramArguments</key>
   <array>
     <string>${NODE_PATH}</string>
-    <string>${REPO_DIR}/src/op-server.js</string>
+    <string>${REPO_DIR}/src/server.js</string>
   </array>
   <key>WorkingDirectory</key>
   <string>${REPO_DIR}</string>
@@ -133,7 +129,7 @@ cat > "$AGENT_PLIST_PATH" << PLIST
   <key>ProgramArguments</key>
   <array>
     <string>${NODE_PATH}</string>
-    <string>${REPO_DIR}/scripts/op-daily-review.js</string>
+    <string>${REPO_DIR}/src/review/pipeline.js</string>
   </array>
   <key>WorkingDirectory</key>
   <string>${REPO_DIR}</string>
@@ -167,7 +163,7 @@ echo "Dashboard: http://127.0.0.1:3827"
 echo "Logs:      $REPO_DIR/logs/"
 echo ""
 echo "Daily review: runs daily at 3:00 AM"
-echo "  Manual:  node $REPO_DIR/scripts/op-daily-review.js"
+echo "  Manual:  node $REPO_DIR/src/review/pipeline.js"
 echo "  Logs:    $REPO_DIR/logs/suggestion-agent-stdout.log"
 echo ""
 echo "Management:"

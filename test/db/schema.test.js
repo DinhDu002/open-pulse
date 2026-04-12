@@ -478,6 +478,14 @@ describe('op-db', () => {
     assert.ok(cols.includes('created_at'), 'has created_at column');
   });
 
+  it('migration adds projects column to auto_evolves and daily_reviews', () => {
+    const aeCols = db.prepare("PRAGMA table_info('auto_evolves')").all().map(c => c.name);
+    assert.ok(aeCols.includes('projects'), 'auto_evolves should have projects column');
+
+    const drCols = db.prepare("PRAGMA table_info('daily_reviews')").all().map(c => c.name);
+    assert.ok(drCols.includes('projects'), 'daily_reviews should have projects column');
+  });
+
   it('migration backfills project_name with basename fallback', () => {
     const Database = require('better-sqlite3');
     const tmpPath = path.join(os.tmpdir(), `op-db-backfill-basename-${Date.now()}.db`);

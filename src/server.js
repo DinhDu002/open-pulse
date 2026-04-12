@@ -63,9 +63,8 @@ function buildApp(opts = {}) {
 
   if (config.knowledge_enabled !== false) {
     setKnowledgeHook(extractKnowledgeFromPrompt, {
-      maxTokens: config.knowledge_max_tokens ?? 1000,
       maxEvents: config.knowledge_max_events_per_prompt ?? 50,
-      model: config.knowledge_model || 'sonnet',
+      model: config.knowledge_model || 'opus',
     });
   }
 

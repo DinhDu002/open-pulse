@@ -132,7 +132,7 @@ open-pulse/
 │       ├── prompts.js          # Prompt history list + per-prompt event flow timeline
 │       ├── inventory.js        # Skills/Agents 2-tab view, project filter, pagination
 │       ├── projects.js         # Router shim — delegates to learning-projects.js
-│       ├── learning-projects.js # Projects list + detail (timeline, session breakdown)
+│       ├── learning-projects.js # Projects list + detail (session breakdown)
 │       ├── knowledge.js        # 2-tab: Notes editor (tab 1) + Projects & Sync (tab 2)
 │       ├── auto-evolves.js     # Auto-evolve patterns list + promote/revert UI
 │       ├── daily-reviews.js    # Daily review suggestions list + accept/dismiss UI
@@ -222,7 +222,6 @@ open-pulse/
 |---|---|---|
 | GET | `/api/projects` | All projects (registered + event-only) |
 | GET | `/api/projects/:id/summary` | Project summary (sessions, cost, top tools) |
-| GET | `/api/projects/:id/timeline?weeks=` | Weekly activity timeline |
 | DELETE | `/api/projects/:id` | Remove project from DB + filesystem + registry |
 
 ### Knowledge Entries

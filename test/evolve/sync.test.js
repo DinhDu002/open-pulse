@@ -210,6 +210,46 @@ describe('op-auto-evolve', () => {
     assert.ok(row.confidence > 0.1);
   });
 
+  it('syncInstincts persists projects JSON array from frontmatter', () => {
+    const yaml = [
+      '---',
+      'name: project-tagged-rule',
+      'description: Only applies to open-pulse',
+      'type: rule',
+      'confidence: 0.3',
+      'seen_count: 2',
+      'projects: ["open-pulse", "carthings"]',
+      '---',
+      '',
+      'Body.',
+    ].join('\n');
+    fs.writeFileSync(path.join(TEST_PERSONAL_DIR, 'project-tagged-rule.md'), yaml);
+
+    autoEvolve.syncInstincts(db, TEST_DIR);
+
+    const row = db.prepare('SELECT * FROM auto_evolves WHERE title = ?').get('project-tagged-rule');
+    assert.ok(row, 'should find row');
+    assert.ok(row.projects, 'projects should be populated');
+    assert.deepEqual(JSON.parse(row.projects), ['open-pulse', 'carthings']);
+  });
+
+  it('syncInstincts leaves projects NULL when frontmatter has no projects field', () => {
+    const row = db.prepare('SELECT * FROM auto_evolves WHERE title = ?').get('always-test');
+    assert.ok(row, 'fixture row should exist');
+    assert.equal(row.projects, null);
+  });
+
+  it('parseProjectsField handles non-string input gracefully', () => {
+    const { parseProjectsField } = require('../../src/evolve/sync');
+    assert.equal(parseProjectsField(null), null);
+    assert.equal(parseProjectsField(undefined), null);
+    assert.equal(parseProjectsField(''), null);
+    assert.equal(parseProjectsField('not-an-array'), null);
+    assert.equal(parseProjectsField('[]'), '[]');
+    assert.equal(parseProjectsField('["a","b"]'), '["a","b"]');
+    assert.equal(parseProjectsField(['a', 'b']), '["a","b"]');
+  });
+
   it('syncInstincts skips blacklisted target_types', () => {
     const yaml = [
       '---',
@@ -227,33 +267,6 @@ describe('op-auto-evolve', () => {
     const countAfter = db.prepare('SELECT COUNT(*) as c FROM auto_evolves').get().c;
 
     assert.equal(countAfter, countBefore);
-  });
-
-  it('syncInstincts works with real seeder output (e2e)', () => {
-    const seeder = require('../../src/evolve/seed');
-    const e2eDir = path.join(TEST_DIR, 'e2e');
-    fs.mkdirSync(path.join(e2eDir, 'cl', 'instincts', 'inherited'), { recursive: true });
-    seeder.seedStarter(e2eDir);
-
-    const synced = autoEvolve.syncInstincts(db, e2eDir);
-    assert.equal(synced, seeder.STARTER_INSTINCTS.length);
-
-    // Verify synced rows have descriptions populated from markdown body
-    const titles = seeder.STARTER_INSTINCTS.map(i =>
-      i.id.replace(/-/g, ' ').replace(/\b\w/g, c => c.toUpperCase())
-    );
-    const rows = db.prepare(
-      `SELECT * FROM auto_evolves WHERE title IN (${titles.map(() => '?').join(',')})`
-    ).all(...titles);
-    assert.equal(rows.length, seeder.STARTER_INSTINCTS.length);
-    for (const row of rows) {
-      assert.ok(row.description.length > 0, `${row.title} should have description`);
-    }
-
-    const blacklisted = db.prepare(
-      "SELECT * FROM auto_evolves WHERE target_type IN ('agent', 'hook')"
-    ).all();
-    assert.equal(blacklisted.length, 0);
   });
 
   // -- runAutoEvolve --

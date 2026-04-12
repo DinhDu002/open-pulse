@@ -876,5 +876,81 @@ describe('op-server', () => {
     });
   });
 
+  describe('project-scoped auto-evolves / daily-reviews API', () => {
+    const PROJ_ID = 'proj-scoped';
+    const PROJ_NAME = 'scoped-demo';
+
+    before(() => {
+      const { upsertClProject } = require('../../src/db/projects');
+      const testDb = require('better-sqlite3')(process.env.OPEN_PULSE_DB);
+      upsertClProject(testDb, {
+        project_id: PROJ_ID, name: PROJ_NAME, directory: '/tmp/' + PROJ_NAME,
+        first_seen_at: '2026-04-10T00:00:00Z',
+        last_seen_at: '2026-04-11T00:00:00Z',
+        session_count: 3,
+      });
+
+      // Seed auto_evolves rows
+      const aeStmt = testDb.prepare(
+        'INSERT INTO auto_evolves (id, title, description, target_type, confidence, observation_count, projects, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+      );
+      aeStmt.run('ae-tagged-1', 'Tagged AE', 'desc', 'rule', 0.5, 2, JSON.stringify([PROJ_NAME]), 'active', '2026-04-11T00:00:00Z', '2026-04-11T00:00:00Z');
+      aeStmt.run('ae-global-1', 'Global AE', 'desc', 'rule', 0.5, 2, null, 'active', '2026-04-11T00:00:00Z', '2026-04-11T00:00:00Z');
+
+      // Seed daily_reviews rows
+      const drStmt = testDb.prepare(
+        "INSERT INTO daily_reviews (id, review_date, category, title, description, target_type, action, confidence, reasoning, summary_vi, projects, status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)"
+      );
+      drStmt.run('dr-tagged-1', '2026-04-11', 'cleanup', 'Tagged DR', 'desc', 'rule', 'remove', 0.6, 'r', 'v', JSON.stringify([PROJ_NAME]), '2026-04-11T00:00:00Z');
+      drStmt.run('dr-global-1', '2026-04-11', 'cleanup', 'Global DR', 'desc', 'rule', 'remove', 0.6, 'r', 'v', null, '2026-04-11T00:00:00Z');
+
+      // Seed daily_review_insights row
+      const iStmt = testDb.prepare(
+        "INSERT INTO daily_review_insights (id, review_date, insight_type, title, description, projects, target_type, severity, reasoning, summary_vi, status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)"
+      );
+      iStmt.run('dri-tagged-1', '2026-04-11', 'duplicate', 'Tagged Insight', 'desc', JSON.stringify([PROJ_NAME, 'other']), 'rule', 'warning', 'r', 'v', '2026-04-11T00:00:00Z');
+      iStmt.run('dri-other-1', '2026-04-11', 'gap', 'Other Insight', 'desc', JSON.stringify(['other']), 'rule', 'info', 'r', 'v', '2026-04-11T00:00:00Z');
+
+      testDb.close();
+    });
+
+    it('GET /api/projects/:id/auto-evolves returns only project-tagged rows', async () => {
+      const res = await app.inject({ method: 'GET', url: '/api/projects/' + PROJ_ID + '/auto-evolves' });
+      assert.equal(res.statusCode, 200);
+      const body = JSON.parse(res.body);
+      assert.equal(body.total, 1);
+      assert.equal(body.rows.length, 1);
+      assert.equal(body.rows[0].title, 'Tagged AE');
+    });
+
+    it('GET /api/projects/:id/daily-reviews returns only project-tagged rows', async () => {
+      const res = await app.inject({ method: 'GET', url: '/api/projects/' + PROJ_ID + '/daily-reviews' });
+      assert.equal(res.statusCode, 200);
+      const body = JSON.parse(res.body);
+      assert.equal(body.total, 1);
+      assert.equal(body.rows[0].title, 'Tagged DR');
+    });
+
+    it('GET /api/projects/:id/daily-review-insights returns insights mentioning project', async () => {
+      const res = await app.inject({ method: 'GET', url: '/api/projects/' + PROJ_ID + '/daily-review-insights' });
+      assert.equal(res.statusCode, 200);
+      const body = JSON.parse(res.body);
+      assert.equal(body.total, 1);
+      assert.equal(body.rows[0].title, 'Tagged Insight');
+    });
+
+    it('GET /api/projects/:id/auto-evolves returns 404 for unknown project', async () => {
+      const res = await app.inject({ method: 'GET', url: '/api/projects/no-such-project/auto-evolves' });
+      assert.equal(res.statusCode, 404);
+    });
+
+    it('GET /api/projects/:id/daily-reviews honors pagination', async () => {
+      const res = await app.inject({ method: 'GET', url: '/api/projects/' + PROJ_ID + '/daily-reviews?page=1&per_page=5' });
+      const body = JSON.parse(res.body);
+      assert.equal(body.page, 1);
+      assert.equal(body.per_page, 5);
+    });
+  });
+
 });
 

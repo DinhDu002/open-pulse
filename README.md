@@ -7,7 +7,7 @@ Local analytics dashboard for Claude Code — usage metrics, expert system, comp
 ```bash
 git clone <repo-url> ~/Workspace/open-pulse
 cd ~/Workspace/open-pulse
-./scripts/op-install.sh
+./scripts/install.sh
 ```
 
 Dashboard: http://127.0.0.1:3827
@@ -46,7 +46,7 @@ launchctl print gui/$(id -u)/com.open-pulse
 npm test
 
 # Uninstall
-./scripts/op-uninstall.sh
+./scripts/uninstall.sh
 ```
 
 ## Tech Stack

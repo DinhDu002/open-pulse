@@ -31,11 +31,6 @@ function getProjectSummary(db, projectId) {
   return { ...project, instinct_count: 0 };
 }
 
-function getProjectTimeline(db, projectId, weeks) {
-  // cl_instincts has been dropped; return empty timeline
-  return [];
-}
-
 function deleteProject(db, projectId) {
   const tx = db.transaction(() => {
     // Delete vault hashes
@@ -62,7 +57,6 @@ function queryLearningRecent(db, limit) {
 module.exports = {
   upsertClProject,
   getProjectSummary,
-  getProjectTimeline,
   deleteProject,
   queryLearningActivity,
   queryLearningRecent,

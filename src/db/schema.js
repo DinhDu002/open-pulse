@@ -379,7 +379,27 @@ function createDb(dbPath) {
   }
 
   // Migrate: add summary_vi column to daily_reviews
-  try { db.exec('ALTER TABLE daily_reviews ADD COLUMN summary_vi TEXT'); } catch { /* already exists */ }
+  try { db.prepare('ALTER TABLE daily_reviews ADD COLUMN summary_vi TEXT').run(); } catch { /* already exists */ }
+
+  // Migrate: add projects column (JSON array of project names) to auto_evolves and daily_reviews
+  try { db.prepare('ALTER TABLE auto_evolves ADD COLUMN projects TEXT').run(); } catch { /* already exists */ }
+  try { db.prepare('ALTER TABLE daily_reviews ADD COLUMN projects TEXT').run(); } catch { /* already exists */ }
+
+  // Migrate: add plan generation columns to daily_reviews
+  try { db.prepare('ALTER TABLE daily_reviews ADD COLUMN plan_md TEXT').run(); } catch { /* already exists */ }
+  try { db.prepare('ALTER TABLE daily_reviews ADD COLUMN handoff_prompt TEXT').run(); } catch { /* already exists */ }
+  try { db.prepare('ALTER TABLE daily_reviews ADD COLUMN plan_status TEXT').run(); } catch { /* already exists */ }
+  try { db.prepare('ALTER TABLE daily_reviews ADD COLUMN plan_generated_at TEXT').run(); } catch { /* already exists */ }
+  try { db.prepare('ALTER TABLE daily_reviews ADD COLUMN plan_error TEXT').run(); } catch { /* already exists */ }
+  try { db.prepare('ALTER TABLE daily_reviews ADD COLUMN plan_run_id INTEGER').run(); } catch { /* already exists */ }
+
+  // Cleanup orphan running plans from previous server instance
+  try {
+    db.prepare(`UPDATE daily_reviews
+                SET plan_status = 'error',
+                    plan_error = 'Server restarted during plan generation'
+                WHERE plan_status = 'running'`).run();
+  } catch { /* table may not exist on first boot */ }
 
   return db;
 }

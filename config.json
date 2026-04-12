@@ -7,9 +7,8 @@
   "retention_warm_days": 7,
   "retention_cold_days": 90,
   "knowledge_enabled": true,
-  "knowledge_max_events_per_prompt": 50,
-  "knowledge_max_tokens": 1000,
-  "knowledge_model": "sonnet",
+  "knowledge_max_events_per_prompt": 100,
+  "knowledge_model": "haiku",
   "knowledge_scan_files": [
     "README.md",
     "package.json",
@@ -22,8 +21,13 @@
   ],
   "auto_evolve_min_confidence": 0.85,
   "daily_review_enabled": true,
-  "daily_review_model": "opus",
-  "daily_review_timeout_ms": 300000,
-  "daily_review_max_suggestions": 25,
-  "daily_review_history_days": 1
+  "daily_review_model": "claude-opus-4-6[1m]",
+  "daily_review_timeout_ms": 1800000,
+  "daily_review_max_suggestions": 50,
+  "daily_review_history_days": 1,
+  "plan_generation_enabled": true,
+  "plan_generation_model": "opus",
+  "plan_generation_timeout_ms": 1800000,
+  "plan_generation_max_context_kb": 100,
+  "plan_generation_max_concurrent": 3
 }

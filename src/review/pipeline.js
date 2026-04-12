@@ -78,14 +78,15 @@ function makeReviewId(title, date) {
 function saveSuggestions(db, suggestions, reviewDate) {
   const stmt = db.prepare(`
     INSERT INTO daily_reviews
-      (id, review_date, category, title, description, target_type, action, confidence, reasoning, summary_vi, status, created_at)
+      (id, review_date, category, title, description, target_type, action, confidence, reasoning, summary_vi, projects, status, created_at)
     VALUES
-      (@id, @review_date, @category, @title, @description, @target_type, @action, @confidence, @reasoning, @summary_vi, 'pending', @created_at)
+      (@id, @review_date, @category, @title, @description, @target_type, @action, @confidence, @reasoning, @summary_vi, @projects, 'pending', @created_at)
     ON CONFLICT(id) DO UPDATE SET
       description = excluded.description,
       confidence = excluded.confidence,
       reasoning = excluded.reasoning,
-      summary_vi = excluded.summary_vi
+      summary_vi = excluded.summary_vi,
+      projects = excluded.projects
   `);
 
   const tx = db.transaction((rows) => {
@@ -101,6 +102,7 @@ function saveSuggestions(db, suggestions, reviewDate) {
         confidence: Math.min(1.0, Math.max(0.0, s.confidence || 0.5)),
         reasoning: s.reasoning || '',
         summary_vi: s.summary_vi || '',
+        projects: Array.isArray(s.projects) ? JSON.stringify(s.projects) : null,
         created_at: new Date().toISOString(),
       });
     }
