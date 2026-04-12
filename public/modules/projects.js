@@ -6,7 +6,7 @@ import { fmtDate, fmtDateShort, escHtml } from './utils.js';
 
 let charts = [];
 
-export function destroyCharts() {
+function destroyCharts() {
   charts.forEach(function(c) { c.destroy(); });
   charts = [];
 }
@@ -26,9 +26,43 @@ function statCell(label, value) {
   );
 }
 
+function fmtTokens(n) {
+  if (!n || n === 0) return '0';
+  if (n >= 1000000) return (n / 1000000).toFixed(1) + 'M';
+  if (n >= 1000) return (n / 1000).toFixed(1) + 'k';
+  return String(n);
+}
+
+function timeAgo(isoString) {
+  if (!isoString) return '\u2014';
+  var diff = Date.now() - new Date(isoString).getTime();
+  var secs = Math.floor(diff / 1000);
+  if (secs < 60) return secs + 's ago';
+  var mins = Math.floor(secs / 60);
+  if (mins < 60) return mins + 'm ago';
+  var hrs = Math.floor(mins / 60);
+  if (hrs < 24) return hrs + 'h ago';
+  var days = Math.floor(hrs / 24);
+  return days + 'd ago';
+}
+
+// ── Mount / Unmount ──────────────────────────────────────────────────────────
+
+export function mount(el, { params } = {}) {
+  if (params) {
+    renderDetail(el, decodeURIComponent(params));
+  } else {
+    renderList(el);
+  }
+}
+
+export function unmount() {
+  destroyCharts();
+}
+
 // ── List View ─────────────────────────────────────────────────────────────────
 
-export function renderList(el) {
+function renderList(el) {
   destroyCharts();
   el.innerHTML = '<div class="empty-state"><span class="spinner"></span></div>';
 
@@ -122,7 +156,7 @@ function buildProjectCard(proj, listEl) {
 
 // ── Detail View ───────────────────────────────────────────────────────────────
 
-export function renderDetail(el, projectId) {
+function renderDetail(el, projectId) {
   destroyCharts();
   el.textContent = '';
   var spinner = document.createElement('div');
@@ -281,5 +315,160 @@ function renderDetailContent(el, summary, projectId) {
       errEl.style.padding = '20px';
       errEl.textContent = 'Failed to load timeline';
       chartWrap.appendChild(errEl);
+    });
+
+  // ── Pipeline Runs ─────────────────────────────────────────────────────────
+
+  var runsCard = document.createElement('div');
+  runsCard.className = 'card';
+  runsCard.style.marginBottom = '1rem';
+
+  var runsTitle = document.createElement('div');
+  runsTitle.className = 'card-title';
+  runsTitle.textContent = 'Pipeline Runs';
+  runsCard.appendChild(runsTitle);
+
+  // Stats row (same pattern as header stats)
+  var runsStatsRow = document.createElement('div');
+  runsStatsRow.style.cssText = 'display:grid;grid-template-columns:repeat(4,1fr);gap:12px;font-size:13px;margin-bottom:16px';
+  runsStatsRow.innerHTML =
+    statCell('Total Runs', '\u2014') +
+    statCell('Total Tokens', '\u2014') +
+    statCell('Success Rate', '\u2014') +
+    statCell('Avg Duration', '\u2014');
+  runsCard.appendChild(runsStatsRow);
+
+  // Table container
+  var runsTableWrap = document.createElement('div');
+  runsTableWrap.style.cssText = 'overflow-x:auto';
+  var runsSpinner = document.createElement('div');
+  runsSpinner.className = 'empty-state';
+  var runsSpinEl = document.createElement('span');
+  runsSpinEl.className = 'spinner';
+  runsSpinner.appendChild(runsSpinEl);
+  runsTableWrap.appendChild(runsSpinner);
+  runsCard.appendChild(runsTableWrap);
+
+  el.appendChild(runsCard);
+
+  get('/pipeline-runs/stats?project_id=' + encodeURIComponent(projectId))
+    .then(function(stats) {
+      var totalTokens = (stats.total_input_tokens || 0) + (stats.total_output_tokens || 0);
+      var rate = stats.total_runs > 0
+        ? ((stats.success_count / stats.total_runs) * 100).toFixed(1) + '%'
+        : '\u2014';
+      var avgDur = stats.avg_duration_ms > 0
+        ? (stats.avg_duration_ms / 1000).toFixed(1) + 's'
+        : '\u2014';
+      runsStatsRow.innerHTML =
+        statCell('Total Runs', stats.total_runs) +
+        statCell('Total Tokens', fmtTokens(totalTokens)) +
+        statCell('Success Rate', rate) +
+        statCell('Avg Duration', avgDur);
+    })
+    .catch(function() {});
+
+  var PIPELINE_COLORS = {
+    knowledge_extract: '#74b9ff',
+    knowledge_scan: '#a29bfe',
+    daily_review: '#fdcb6e',
+    auto_evolve: '#00b894',
+  };
+
+  get('/projects/' + encodeURIComponent(projectId) + '/pipeline-runs?limit=20')
+    .then(function(data) {
+      runsTableWrap.textContent = '';
+      if (!data.items || data.items.length === 0) {
+        var empty = document.createElement('div');
+        empty.className = 'empty-state';
+        empty.style.padding = '20px';
+        empty.textContent = 'No pipeline runs yet';
+        runsTableWrap.appendChild(empty);
+        return;
+      }
+
+      var table = document.createElement('table');
+      table.style.cssText = 'width:100%;border-collapse:collapse;font-size:13px';
+
+      // Header
+      var thead = document.createElement('thead');
+      var headerRow = document.createElement('tr');
+      headerRow.style.borderBottom = '1px solid var(--border)';
+      ['Time', 'Pipeline', 'Model', 'Tokens (in/out)', 'Duration', 'Status'].forEach(function(text) {
+        var th = document.createElement('th');
+        th.style.cssText = 'padding:8px;text-align:left';
+        th.textContent = text;
+        headerRow.appendChild(th);
+      });
+      thead.appendChild(headerRow);
+      table.appendChild(thead);
+
+      // Body
+      var tbody = document.createElement('tbody');
+      data.items.forEach(function(run) {
+        var tr = document.createElement('tr');
+        tr.style.borderBottom = '1px solid var(--border)';
+
+        // Time
+        var tdTime = document.createElement('td');
+        tdTime.style.cssText = 'padding:8px;color:var(--text-muted)';
+        tdTime.textContent = timeAgo(run.created_at);
+        tr.appendChild(tdTime);
+
+        // Pipeline badge
+        var tdPipeline = document.createElement('td');
+        tdPipeline.style.padding = '8px';
+        var badge = document.createElement('span');
+        var color = PIPELINE_COLORS[run.pipeline] || '#636e72';
+        badge.style.cssText = 'padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600;background:' + color + '20;color:' + color;
+        badge.textContent = run.pipeline.replace(/_/g, ' ');
+        tdPipeline.appendChild(badge);
+        tr.appendChild(tdPipeline);
+
+        // Model
+        var tdModel = document.createElement('td');
+        tdModel.style.padding = '8px';
+        tdModel.textContent = run.model || '\u2014';
+        tr.appendChild(tdModel);
+
+        // Tokens
+        var tdTokens = document.createElement('td');
+        tdTokens.style.cssText = "padding:8px;font-family:'SF Mono',monospace";
+        tdTokens.textContent = fmtTokens(run.input_tokens) + ' / ' + fmtTokens(run.output_tokens);
+        tr.appendChild(tdTokens);
+
+        // Duration
+        var tdDur = document.createElement('td');
+        tdDur.style.cssText = "padding:8px;font-family:'SF Mono',monospace";
+        tdDur.textContent = run.duration_ms > 0 ? (run.duration_ms / 1000).toFixed(1) + 's' : '\u2014';
+        tr.appendChild(tdDur);
+
+        // Status
+        var tdStatus = document.createElement('td');
+        tdStatus.style.padding = '8px';
+        var statusSpan = document.createElement('span');
+        if (run.status === 'success') {
+          statusSpan.style.color = '#00b894';
+          statusSpan.textContent = '\u2713';
+        } else {
+          statusSpan.style.color = '#d63031';
+          statusSpan.textContent = '\u2717';
+          statusSpan.title = run.error || '';
+        }
+        tdStatus.appendChild(statusSpan);
+        tr.appendChild(tdStatus);
+
+        tbody.appendChild(tr);
+      });
+      table.appendChild(tbody);
+      runsTableWrap.appendChild(table);
+    })
+    .catch(function() {
+      runsTableWrap.textContent = '';
+      var errEl = document.createElement('div');
+      errEl.className = 'empty-state';
+      errEl.style.padding = '20px';
+      errEl.textContent = 'Failed to load pipeline runs';
+      runsTableWrap.appendChild(errEl);
     });
 }
