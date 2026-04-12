@@ -79,4 +79,23 @@ describe('op-retention', () => {
     assert.equal(result.compacted, 0);
     assert.equal(result.deleted, 0);
   });
+
+  it('deletes cold pipeline_runs', () => {
+    db.prepare(`
+      INSERT INTO pipeline_runs (pipeline, status, input_tokens, output_tokens, duration_ms, created_at)
+      VALUES ('knowledge_extract', 'success', 100, 50, 1000, datetime('now', '-100 days'))
+    `).run();
+    db.prepare(`
+      INSERT INTO pipeline_runs (pipeline, status, input_tokens, output_tokens, duration_ms, created_at)
+      VALUES ('knowledge_extract', 'success', 200, 80, 2000, datetime('now', '-1 day'))
+    `).run();
+
+    const before = db.prepare('SELECT COUNT(*) AS c FROM pipeline_runs').get().c;
+    assert.equal(before, 2);
+
+    retention.runRetention(db, { warmDays: 7, coldDays: 90 });
+
+    const after = db.prepare('SELECT COUNT(*) AS c FROM pipeline_runs').get().c;
+    assert.equal(after, 1, 'should delete the 100-day-old run');
+  });
 });

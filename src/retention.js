@@ -36,9 +36,15 @@ function runRetention(db, opts = {}) {
     WHERE timestamp < datetime('now', '-' || @coldDays || ' days')
   `).run({ coldDays });
 
+  // Tier 3: Delete cold pipeline_runs
+  const pipelineDeleteResult = db.prepare(`
+    DELETE FROM pipeline_runs
+    WHERE created_at < datetime('now', '-' || @coldDays || ' days')
+  `).run({ coldDays });
+
   return {
     compacted: compactResult.changes,
-    deleted: deleteResult.changes,
+    deleted: deleteResult.changes + pipelineDeleteResult.changes,
   };
 }
 
