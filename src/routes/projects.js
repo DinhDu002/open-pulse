@@ -7,6 +7,7 @@ const {
   getProjectTimeline,
   deleteProject,
 } = require('../db/projects');
+const { queryPipelineRuns, getPipelineRunStats } = require('../db/pipeline-runs');
 
 module.exports = async function projectsRoutes(app, opts) {
   const { db, repoDir } = opts;
@@ -79,5 +80,22 @@ module.exports = async function projectsRoutes(app, opts) {
     } catch { /* registry may not exist */ }
 
     return { deleted: true, project_id: projectId };
+  });
+
+  // ── Pipeline Runs ─────────────────────────────────────────────────────────
+
+  app.get('/api/pipeline-runs/stats', async (request) => {
+    const projectId = request.query.project_id || undefined;
+    const days = Math.max(1, parseInt(request.query.days) || 90);
+    return getPipelineRunStats(db, { projectId, days });
+  });
+
+  app.get('/api/projects/:id/pipeline-runs', async (request) => {
+    const projectId = request.params.id;
+    const pipeline = request.query.pipeline || undefined;
+    const status = request.query.status || undefined;
+    const limit = Math.min(Math.max(1, parseInt(request.query.limit) || 20), 100);
+    const page = Math.max(1, parseInt(request.query.page) || 1);
+    return queryPipelineRuns(db, { projectId, pipeline, status, page, perPage: limit });
   });
 };

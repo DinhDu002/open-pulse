@@ -835,5 +835,46 @@ describe('op-server', () => {
     }
   });
 
+  describe('pipeline-runs API', () => {
+    before(() => {
+      const { insertPipelineRun } = require('../../src/db/pipeline-runs');
+      const testDb = require('better-sqlite3')(process.env.OPEN_PULSE_DB);
+      insertPipelineRun(testDb, { pipeline: 'knowledge_extract', project_id: 'proj-1', model: 'sonnet', status: 'success', input_tokens: 1200, output_tokens: 380, duration_ms: 4200 });
+      insertPipelineRun(testDb, { pipeline: 'knowledge_scan', project_id: 'proj-1', model: 'sonnet', status: 'error', error: 'timeout', input_tokens: 500, output_tokens: 0, duration_ms: 30000 });
+      insertPipelineRun(testDb, { pipeline: 'daily_review', project_id: null, model: 'opus', status: 'success', input_tokens: 8000, output_tokens: 2000, duration_ms: 120000 });
+      testDb.close();
+    });
+
+    it('GET /api/projects/:id/pipeline-runs returns runs for project', async () => {
+      const res = await app.inject({ method: 'GET', url: '/api/projects/proj-1/pipeline-runs' });
+      assert.equal(res.statusCode, 200);
+      const body = JSON.parse(res.body);
+      assert.equal(body.total, 2);
+      assert.ok(Array.isArray(body.items));
+    });
+
+    it('GET /api/projects/:id/pipeline-runs filters by pipeline', async () => {
+      const res = await app.inject({ method: 'GET', url: '/api/projects/proj-1/pipeline-runs?pipeline=knowledge_extract' });
+      const body = JSON.parse(res.body);
+      assert.equal(body.total, 1);
+    });
+
+    it('GET /api/pipeline-runs/stats returns aggregated stats', async () => {
+      const res = await app.inject({ method: 'GET', url: '/api/pipeline-runs/stats' });
+      assert.equal(res.statusCode, 200);
+      const body = JSON.parse(res.body);
+      // >= 3 because other tests in the suite may insert daily_review pipeline runs
+      assert.ok(body.total_runs >= 3);
+      assert.ok(body.total_input_tokens > 0);
+      assert.ok(Array.isArray(body.by_pipeline));
+    });
+
+    it('GET /api/pipeline-runs/stats filters by project_id', async () => {
+      const res = await app.inject({ method: 'GET', url: '/api/pipeline-runs/stats?project_id=proj-1' });
+      const body = JSON.parse(res.body);
+      assert.equal(body.total_runs, 2);
+    });
+  });
+
 });
 
