@@ -188,18 +188,19 @@ function buildExtractPrompt(projectName, events, existingEntriesBlock = '') {
 // ---------------------------------------------------------------------------
 
 /**
- * Calls Claude via CLI (`claude -p`). Uses the user's Max subscription.
+ * Calls Claude via CLI (`claude -p --output-format json`).
+ * Uses the user's Max subscription.
  * Sets OPEN_PULSE_INTERNAL=1 to prevent collector hooks from firing.
  *
  * @param {string} prompt
  * @param {string} [model]
  * @param {object} [opts]
- * @returns {Promise<{output: string, stderr: string, duration_ms: number}>}
+ * @returns {Promise<{output: string, input_tokens: number, output_tokens: number, cost_usd: number, duration_ms: number}>}
  */
 function callClaude(prompt, model = 'opus', opts = {}) {
   return new Promise((resolve, reject) => {
     const startTime = Date.now();
-    const args = ['-p', '--model', model, '--no-session-persistence'];
+    const args = ['-p', '--model', model, '--no-session-persistence', '--output-format', 'json'];
     if (opts.effort) args.push('--effort', opts.effort);
     const proc = spawn('claude', args, {
       env: { ...process.env, OPEN_PULSE_INTERNAL: '1' },
@@ -215,7 +216,20 @@ function callClaude(prompt, model = 'opus', opts = {}) {
     proc.on('close', code => {
       const duration_ms = Date.now() - startTime;
       if (code === 0) {
-        resolve({ output: stdout, stderr, duration_ms });
+        try {
+          const parsed = JSON.parse(stdout);
+          const usage = parsed.usage || {};
+          resolve({
+            output: parsed.result || '',
+            input_tokens: (usage.input_tokens || 0) + (usage.cache_creation_input_tokens || 0) + (usage.cache_read_input_tokens || 0),
+            output_tokens: usage.output_tokens || 0,
+            cost_usd: parsed.total_cost_usd || 0,
+            duration_ms: parsed.duration_ms || duration_ms,
+          });
+        } catch {
+          // Fallback: treat stdout as plain text if JSON parse fails
+          resolve({ output: stdout, input_tokens: 0, output_tokens: 0, cost_usd: 0, duration_ms });
+        }
       } else {
         const err = new Error(`claude CLI exited with code ${code}: ${stderr.slice(0, 500)}`);
         err.stderr = stderr;
@@ -232,25 +246,6 @@ function callClaude(prompt, model = 'opus', opts = {}) {
     proc.stdin.write(prompt);
     proc.stdin.end();
   });
-}
-
-// ---------------------------------------------------------------------------
-// parseTokenUsage
-// ---------------------------------------------------------------------------
-
-/**
- * Parse token usage from Claude CLI stderr output.
- * @param {string} stderr
- * @returns {{ input_tokens: number, output_tokens: number }}
- */
-function parseTokenUsage(stderr) {
-  let input_tokens = 0;
-  let output_tokens = 0;
-  const inputMatch = stderr.match(/input.tokens?\s*[:=]\s*(\d[\d,]*)/i);
-  const outputMatch = stderr.match(/output.tokens?\s*[:=]\s*(\d[\d,]*)/i);
-  if (inputMatch) input_tokens = parseInt(inputMatch[1].replace(/,/g, ''), 10);
-  if (outputMatch) output_tokens = parseInt(outputMatch[1].replace(/,/g, ''), 10);
-  return { input_tokens, output_tokens };
 }
 
 // ---------------------------------------------------------------------------
@@ -394,28 +389,24 @@ async function extractKnowledgeFromPrompt(db, promptId, opts = {}) {
   try {
     claudeResult = await callClaude(llmPrompt, model, { effort: 'max' });
   } catch (err) {
-    const tokens = parseTokenUsage(err.stderr || '');
     insertPipelineRun(db, {
       pipeline: 'knowledge_extract',
       project_id: project.project_id,
       model,
       status: 'error',
       error: err.message,
-      input_tokens: tokens.input_tokens,
-      output_tokens: tokens.output_tokens,
       duration_ms: err.duration_ms || 0,
     });
     throw err;
   }
 
-  const tokens = parseTokenUsage(claudeResult.stderr);
   insertPipelineRun(db, {
     pipeline: 'knowledge_extract',
     project_id: project.project_id,
     model,
     status: 'success',
-    input_tokens: tokens.input_tokens,
-    output_tokens: tokens.output_tokens,
+    input_tokens: claudeResult.input_tokens,
+    output_tokens: claudeResult.output_tokens,
     duration_ms: claudeResult.duration_ms,
   });
 
@@ -439,7 +430,6 @@ module.exports = {
   buildExistingEntriesBlock,
   buildExtractPrompt,
   callClaude,
-  parseTokenUsage,
   parseJsonResponse,
   mergeOrUpdate,
   extractKnowledgeFromPrompt,

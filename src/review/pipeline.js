@@ -15,7 +15,6 @@ const {
   queryInsights, getInsight, updateInsightStatus, getInsightStats,
 } = require('./queries');
 const { insertPipelineRun } = require('../db/pipeline-runs');
-const { parseTokenUsage } = require('../knowledge/extract');
 
 const REPO_DIR = process.env.OPEN_PULSE_DIR || path.resolve(__dirname, '..', '..');
 
@@ -214,6 +213,7 @@ async function runDailyReview(db, opts = {}) {
     reportDir,
     repoDir,
     claudeDir,
+    dryRun = false,
   } = opts;
 
   const history = collectWorkHistory(db, date, historyDays);
@@ -228,14 +228,22 @@ async function runDailyReview(db, opts = {}) {
     historyDays,
   }, knowledgeContext);
 
+  const promptSize = Buffer.byteLength(prompt, 'utf8');
+  console.log(`Prompt size: ${promptSize} bytes (${(promptSize / 1024).toFixed(1)} KB)`);
+
+  if (dryRun) {
+    return { suggestions: [], insights: [], reportPath: null, dryRun: true, promptSize };
+  }
+
   let output;
+  let reviewTokens = { input_tokens: 0, output_tokens: 0 };
   const startTime = Date.now();
   try {
-    output = execFileSync('claude', [
+    const rawOutput = execFileSync('claude', [
       '--model', model,
       '--max-turns', '1',
-      '--print',
       '-p',
+      '--output-format', 'json',
     ], {
       input: prompt,
       timeout,
@@ -243,23 +251,33 @@ async function runDailyReview(db, opts = {}) {
       env: { ...process.env, OP_SKIP_COLLECT: '1', OP_HOOK_PROFILE: 'minimal' },
       maxBuffer: 50 * 1024 * 1024,
     });
+    try {
+      const parsed = JSON.parse(rawOutput);
+      output = parsed.result || rawOutput;
+      const usage = parsed.usage || {};
+      reviewTokens = {
+        input_tokens: (usage.input_tokens || 0) + (usage.cache_creation_input_tokens || 0) + (usage.cache_read_input_tokens || 0),
+        output_tokens: usage.output_tokens || 0,
+      };
+    } catch {
+      output = rawOutput;
+    }
     insertPipelineRun(db, {
       pipeline: 'daily_review',
       project_id: null,
       model,
       status: 'success',
+      input_tokens: reviewTokens.input_tokens,
+      output_tokens: reviewTokens.output_tokens,
       duration_ms: Date.now() - startTime,
     });
   } catch (err) {
-    const tokens = parseTokenUsage(err.stderr ? err.stderr.toString() : '');
     insertPipelineRun(db, {
       pipeline: 'daily_review',
       project_id: null,
       model,
       status: 'error',
       error: err.message,
-      input_tokens: tokens.input_tokens,
-      output_tokens: tokens.output_tokens,
       duration_ms: Date.now() - startTime,
     });
     console.error('Claude invocation failed:', err.message);
@@ -291,6 +309,7 @@ if (require.main === module) {
   } catch { /* use defaults */ }
 
   const db = createDb(DB_PATH);
+  const dryRun = process.argv.includes('--dry-run');
   const yesterday = new Date(Date.now() - 86400000).toISOString().slice(0, 10);
   runDailyReview(db, {
     date: yesterday,
@@ -298,6 +317,7 @@ if (require.main === module) {
     timeout: config.daily_review_timeout_ms || 300000,
     max_suggestions: config.daily_review_max_suggestions || 25,
     historyDays: config.daily_review_history_days || 1,
+    dryRun,
   })
     .then(result => {
       console.log(`Daily review complete: ${result.suggestions.length} suggestions`);

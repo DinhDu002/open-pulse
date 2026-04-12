@@ -4,7 +4,7 @@ const fs = require('fs');
 const path = require('path');
 
 const { getExistingTitles } = require('./queries');
-const { callClaude, parseJsonResponse, mergeOrUpdate, loadSkillTemplate, parseTokenUsage } = require('./extract');
+const { callClaude, parseJsonResponse, mergeOrUpdate, loadSkillTemplate } = require('./extract');
 const { renderKnowledgeVault } = require('./vault');
 const { insertPipelineRun } = require('../db/pipeline-runs');
 
@@ -165,28 +165,24 @@ async function scanProject(db, projectId, opts = {}) {
   try {
     claudeResult = await callClaude(llmPrompt, model, { effort: 'max' });
   } catch (err) {
-    const tokens = parseTokenUsage(err.stderr || '');
     insertPipelineRun(db, {
       pipeline: 'knowledge_scan',
       project_id: projectId,
       model,
       status: 'error',
       error: err.message,
-      input_tokens: tokens.input_tokens,
-      output_tokens: tokens.output_tokens,
       duration_ms: err.duration_ms || 0,
     });
     throw err;
   }
 
-  const tokens = parseTokenUsage(claudeResult.stderr);
   insertPipelineRun(db, {
     pipeline: 'knowledge_scan',
     project_id: projectId,
     model,
     status: 'success',
-    input_tokens: tokens.input_tokens,
-    output_tokens: tokens.output_tokens,
+    input_tokens: claudeResult.input_tokens,
+    output_tokens: claudeResult.output_tokens,
     duration_ms: claudeResult.duration_ms,
   });
 
