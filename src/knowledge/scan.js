@@ -4,8 +4,9 @@ const fs = require('fs');
 const path = require('path');
 
 const { getExistingTitles } = require('./queries');
-const { callClaude, parseJsonResponse, mergeOrUpdate, loadSkillTemplate } = require('./extract');
+const { callClaude, parseJsonResponse, mergeOrUpdate, loadSkillTemplate, parseTokenUsage } = require('./extract');
 const { renderKnowledgeVault } = require('./vault');
+const { insertPipelineRun } = require('../db/pipeline-runs');
 
 // ---------------------------------------------------------------------------
 // buildScanPrompt
@@ -159,13 +160,40 @@ async function scanProject(db, projectId, opts = {}) {
   try { claudeMdContent = fs.readFileSync(claudeMdPath, 'utf8').slice(0, 20000); } catch { /* skip */ }
 
   const llmPrompt = buildScanPrompt(projectName, files, existingTitles, claudeMdContent);
-  const claudeResult = await callClaude(llmPrompt, model, { effort: 'max' });
-  const entries = parseJsonResponse(claudeResult.output);
 
+  let claudeResult;
+  try {
+    claudeResult = await callClaude(llmPrompt, model, { effort: 'max' });
+  } catch (err) {
+    const tokens = parseTokenUsage(err.stderr || '');
+    insertPipelineRun(db, {
+      pipeline: 'knowledge_scan',
+      project_id: projectId,
+      model,
+      status: 'error',
+      error: err.message,
+      input_tokens: tokens.input_tokens,
+      output_tokens: tokens.output_tokens,
+      duration_ms: err.duration_ms || 0,
+    });
+    throw err;
+  }
+
+  const tokens = parseTokenUsage(claudeResult.stderr);
+  insertPipelineRun(db, {
+    pipeline: 'knowledge_scan',
+    project_id: projectId,
+    model,
+    status: 'success',
+    input_tokens: tokens.input_tokens,
+    output_tokens: tokens.output_tokens,
+    duration_ms: claudeResult.duration_ms,
+  });
+
+  const entries = parseJsonResponse(claudeResult.output);
   if (entries.length === 0) return { extracted: 0, inserted: 0, updated: 0 };
 
   const { inserted, updated } = mergeOrUpdate(db, projectId, entries);
-
   renderKnowledgeVault(db, projectId);
 
   return { extracted: entries.length, inserted, updated };
