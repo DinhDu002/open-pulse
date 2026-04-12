@@ -23,7 +23,7 @@ Hooks (Claude Code)          Server (Fastify)              Frontend (SPA)
                               │  (60s timer) │    confidence >= 0.85 → component files
                               │              │
                               │  Knowledge   │──→ knowledge_entries table
-                              │  (post-ingest│    Haiku extracts project understanding
+                              │  (post-ingest│    Opus extracts project understanding
                               │   + scan)    │
                               │              │
                               │  Knowledge   │──→ <project>/.claude/knowledge/*.md
@@ -49,7 +49,7 @@ Hooks (Claude Code)          Server (Fastify)              Frontend (SPA)
 3. **Observer (optional timer)**: Background observer in `src/evolve/observer.js` reads events from SQLite via `src/evolve/export-events.js`, invokes Haiku to detect patterns, updates instinct YAML files in `cl/instincts/`
 4. **Filesystem Sync**: Server timer (60s) syncs `projects.json`, instinct files, and components (skills/agents) from disk into DB via `src/ingest/sync.js`
 5. **Auto-Evolve**: Observer patterns → instinct files → `auto_evolves` table → auto-promote when confidence >= 0.85 (no rejections, blacklists agent/hook) → component files written to `~/.claude/`
-6. **Knowledge Extraction**: After each prompt is ingested, `src/knowledge/extract.js` invokes Haiku to extract project-specific understanding from recent events. Entries stored in `knowledge_entries` table. Cold-start scan bootstraps from key project files (`README.md`, `package.json`, `CLAUDE.md`)
+6. **Knowledge Extraction**: After each prompt is ingested, `src/knowledge/extract.js` invokes Opus to extract project-specific understanding from recent events. Entries stored in `knowledge_entries` table. Cold-start scan bootstraps from key project files (`README.md`, `package.json`, `CLAUDE.md`)
 7. **Knowledge Vault**: `src/knowledge/vault.js` renders `knowledge_entries` as markdown files in `<project>/.claude/knowledge/` — one file per category. Uses content hashing (`kg_vault_hashes` table) to skip unchanged content
 8. **Daily Review**: 3 AM daily → `src/review/pipeline.js` reads all component files + work history + best practices → Opus analysis → `daily_reviews` table + report `.md` in `reports/`. Triggerable via API
 9. **Retention**: Daily timer compacts tool data after 7 days (NULL tool_input/response), deletes events after 90 days. Configurable via `retention_warm_days` / `retention_cold_days`
@@ -95,7 +95,7 @@ open-pulse/
 │   │   ├── seed.js             # Cold-start: 10 starter instincts + CLAUDE.md parser
 │   │   └── export-events.js    # SQLite → JSONL for observer
 │   ├── knowledge/              # Knowledge extraction + vault
-│   │   ├── extract.js          # Haiku post-ingest extraction
+│   │   ├── extract.js          # Opus post-ingest extraction
 │   │   ├── vault.js            # Entries → markdown files in .claude/knowledge/
 │   │   ├── scan.js             # Cold-start scan from project files
 │   │   └── queries.js          # knowledge_entries + vault hash queries
@@ -117,7 +117,7 @@ open-pulse/
 │       ├── auto-evolves.js     # /api/auto-evolves/*
 │       └── daily-reviews.js    # /api/daily-reviews/*
 ├── scripts/                    # CLI utilities + installation
-│   ├── install.sh              # 8-step installer (npm, dirs, DB, seed, symlinks, hooks, launchd)
+│   ├── install.sh              # 8-step installer (npm, dirs, DB, backfill, symlinks, agents, hooks, launchd)
 │   ├── uninstall.sh            # 4-step uninstaller (symlinks, hooks, launchd)
 │   ├── register-hooks.js       # Merge hooks into ~/.claude/settings.json
 │   ├── reset-db.js             # Drop and recreate DB (clean break)
@@ -164,7 +164,7 @@ open-pulse/
 
 ## Database Schema
 
-13 tables:
+14 tables:
 
 | Table | Purpose | Key fields |
 |---|---|---|
@@ -181,6 +181,7 @@ open-pulse/
 | `knowledge_entries` | LLM-extracted project knowledge | project_id, category, title, body, source_file, status |
 | `kg_vault_hashes` | Content hashes for vault files | project_id, file_path, content_hash, generated_at |
 | `kg_sync_state` | KV state for graph sync | key, value |
+| `pipeline_runs` | Internal Claude CLI invocation log | pipeline, project_id, model, status, error, input_tokens, output_tokens, duration_ms |
 
 ## API Endpoints
 
@@ -271,6 +272,13 @@ open-pulse/
 | GET | `/api/scanner/latest` | Latest scan result |
 | GET | `/api/scanner/history?limit=` | Scan history |
 
+### Pipeline Runs
+
+| Method | Path | Purpose |
+|---|---|---|
+| GET | `/api/pipeline-runs/stats?project_id=&days=` | Aggregated run stats |
+| GET | `/api/projects/:id/pipeline-runs?pipeline=&status=&limit=&page=` | Project pipeline run history |
+
 ### Learning (legacy, returns empty)
 
 | Method | Path | Purpose |
@@ -290,8 +298,7 @@ open-pulse/
 | `retention_warm_days` | 7 | Days before NULLing tool_input/tool_response |
 | `retention_cold_days` | 90 | Days before deleting events |
 | `knowledge_enabled` | true | Enable knowledge extraction post-ingest |
-| `knowledge_max_events_per_prompt` | 50 | Max events fed to Haiku per extraction run |
-| `knowledge_max_tokens` | 1000 | Max output tokens for Haiku extraction response |
+| `knowledge_max_events_per_prompt` | 200 | Max events fed to Opus per extraction run |
 | `knowledge_scan_files` | ["README.md","package.json","CLAUDE.md"] | Files read during cold-start scan |
 | `knowledge_scan_patterns` | [] | Additional glob patterns for cold-start scan |
 | `auto_evolve_enabled` | true | Enable auto-evolve promotion timer |
@@ -319,7 +326,7 @@ open-pulse/
 - **Prompt linking**: During ingestion, contiguous events sharing the same `user_prompt` are grouped into a `prompts` record. Each event gets a `prompt_id` FK. Enables per-turn cost, token count, duration, and event breakdown without query-time aggregation.
 - **Split feedback loops**: Two independent flows replace the old unified insights system. Flow 1 (auto-evolve): Observer-detected patterns auto-promote to rule/knowledge/skill when confidence >= 0.85 (blacklists agent/hook). Flow 2 (daily review): Comprehensive 3AM analysis reads all component files + work history, invokes Opus for suggestions. Each flow has its own table, routes, and UI — zero shared code.
 - **Daily review pipeline**: `src/review/pipeline.js` reads full content of all component files (rules, skills, agents, hooks, memory, plugins) + best practices from `claude-code-knowledge` + day's work history. Invokes Opus for comprehensive analysis. Outputs: suggestions in `daily_reviews` table + markdown report in `reports/`.
-- **Knowledge entries architecture**: Replaces KG (`kg_nodes`/`kg_edges`). LLM (Haiku) extracts project understanding after each prompt. Entries stored in `knowledge_entries` table, rendered as markdown vault files per category in `<project>/.claude/knowledge/`. Cold-start scan bootstraps knowledge from key project files. No confidence scoring — entries are factual, not behavioral patterns.
+- **Knowledge entries architecture**: Replaces KG (`kg_nodes`/`kg_edges`). LLM (Opus) extracts project understanding after each prompt. Entries stored in `knowledge_entries` table, rendered as markdown vault files per category in `<project>/.claude/knowledge/`. Cold-start scan bootstraps knowledge from key project files. No confidence scoring — entries are factual, not behavioral patterns.
 - **`cl_` DB prefix**: The `cl_` prefix on DB tables (e.g., `cl_projects`) and the `cl/` runtime directory stand for the instinct-based observer subsystem. The code itself lives in `src/evolve/`.
 - **3-tier retention**: hot (0-7d full data), warm (7-90d NULLs tool_input/response), cold (90d+ deleted). Configurable, runs daily. Sessions never deleted.
 - **Cold start seeding**: 10 universal starter instincts + CLAUDE.md rule parser. Idempotent — skips existing files on reinstall.
@@ -333,7 +340,7 @@ npm start                    # → node src/server.js
 npm test                     # → node --test test/*.test.js test/**/*.test.js
 
 # Installation
-npm run install-service      # Full 8-step install (npm, dirs, DB, seed, symlinks, hooks, launchd)
+npm run install-service      # Full 8-step install (npm, dirs, DB, backfill, symlinks, agents, hooks, launchd)
 npm run uninstall-service    # Full uninstall
 
 # Service management (macOS launchd)
