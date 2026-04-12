@@ -31,10 +31,12 @@ function generateComponent(insight) {
       return `# ${title}\n\n${description}\n`;
 
     case 'agent': {
-      const firstLine = (description || title).split('\n')[0].slice(0, 200);
+      const rawFirstLine = (description || title).split('\n')[0].trim().slice(0, 200);
+      const firstLine = rawFirstLine || title;
+      const name = slugify(title) || 'unnamed-agent';
       return [
         '---',
-        `name: ${slugify(title)}`,
+        `name: ${name}`,
         `description: ${firstLine}`,
         'model: sonnet',
         '---',

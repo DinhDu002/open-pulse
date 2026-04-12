@@ -82,13 +82,6 @@ describe('op-promote', () => {
     assert.ok(!descLine.includes('Second line'), 'second line must not leak into frontmatter');
   });
 
-  it('generateComponent returns plain markdown for agent type', () => {
-    const content = promote.generateComponent({
-      target_type: 'agent', title: 'Code reviewer', description: 'Review code', category: 'quality',
-    });
-    assert.ok(content.includes('Code reviewer') || content.includes('Review code'));
-  });
-
   it('getComponentPath returns correct path for each target_type', () => {
     const rulePath = promote.getComponentPath('rule', 'always-lint');
     assert.ok(rulePath.includes('rules'));
