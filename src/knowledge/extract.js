@@ -7,6 +7,7 @@ const { spawn } = require('child_process');
 const {
   upsertKnowledgeEntry,
   getExistingTitles,
+  insertEntryHistory,
 } = require('./queries');
 
 // ---------------------------------------------------------------------------
@@ -191,11 +192,14 @@ function buildExtractPrompt(projectName, events, existingEntriesBlock = '') {
  *
  * @param {string} prompt
  * @param {string} [model]
- * @returns {Promise<string>} response text
+ * @param {object} [opts]
+ * @returns {Promise<{output: string, stderr: string, duration_ms: number}>}
  */
-function callClaude(prompt, model = 'sonnet') {
+function callClaude(prompt, model = 'opus', opts = {}) {
   return new Promise((resolve, reject) => {
+    const startTime = Date.now();
     const args = ['-p', '--model', model, '--no-session-persistence'];
+    if (opts.effort) args.push('--effort', opts.effort);
     const proc = spawn('claude', args, {
       env: { ...process.env, OPEN_PULSE_INTERNAL: '1' },
       stdio: ['pipe', 'pipe', 'pipe'],
@@ -208,20 +212,44 @@ function callClaude(prompt, model = 'sonnet') {
     proc.stderr.on('data', chunk => { stderr += chunk; });
 
     proc.on('close', code => {
+      const duration_ms = Date.now() - startTime;
       if (code === 0) {
-        resolve(stdout);
+        resolve({ output: stdout, stderr, duration_ms });
       } else {
-        reject(new Error(`claude CLI exited with code ${code}: ${stderr.slice(0, 500)}`));
+        const err = new Error(`claude CLI exited with code ${code}: ${stderr.slice(0, 500)}`);
+        err.stderr = stderr;
+        err.duration_ms = duration_ms;
+        reject(err);
       }
     });
 
     proc.on('error', err => {
+      err.duration_ms = Date.now() - startTime;
       reject(new Error(`Failed to spawn claude CLI: ${err.message}`));
     });
 
     proc.stdin.write(prompt);
     proc.stdin.end();
   });
+}
+
+// ---------------------------------------------------------------------------
+// parseTokenUsage
+// ---------------------------------------------------------------------------
+
+/**
+ * Parse token usage from Claude CLI stderr output.
+ * @param {string} stderr
+ * @returns {{ input_tokens: number, output_tokens: number }}
+ */
+function parseTokenUsage(stderr) {
+  let input_tokens = 0;
+  let output_tokens = 0;
+  const inputMatch = stderr.match(/input.tokens?\s*[:=]\s*(\d[\d,]*)/i);
+  const outputMatch = stderr.match(/output.tokens?\s*[:=]\s*(\d[\d,]*)/i);
+  if (inputMatch) input_tokens = parseInt(inputMatch[1].replace(/,/g, ''), 10);
+  if (outputMatch) output_tokens = parseInt(outputMatch[1].replace(/,/g, ''), 10);
+  return { input_tokens, output_tokens };
 }
 
 // ---------------------------------------------------------------------------
@@ -268,21 +296,38 @@ function mergeOrUpdate(db, projectId, newEntries) {
 
   for (const entry of newEntries) {
     const category = VALID_CATEGORIES.has(entry.category) ? entry.category : 'domain';
+    const title = entry.title || 'Untitled';
+
+    // Query existing entry BEFORE upsert to capture old state for history
+    const existing = db.prepare(
+      'SELECT * FROM knowledge_entries WHERE project_id = @project_id AND title = @title COLLATE NOCASE'
+    ).get({ project_id: projectId, title });
 
     const result = upsertKnowledgeEntry(db, {
       project_id:  projectId,
       category,
-      title:       entry.title || 'Untitled',
+      title,
       body:        entry.body || '',
       source_file: entry.source_file || null,
       tags:        entry.tags || [],
     });
 
-    // created_at === updated_at → just inserted; otherwise updated
     if (result.created_at === result.updated_at) {
+      // New entry — record 'created' snapshot
       inserted++;
+      insertEntryHistory(db, {
+        entry_id: result.id,
+        change_type: 'created',
+        snapshot: { title: result.title, body: result.body, category: result.category, status: result.status },
+      });
     } else {
+      // Updated entry — record 'updated' snapshot with OLD state
       updated++;
+      insertEntryHistory(db, {
+        entry_id: result.id,
+        change_type: 'updated',
+        snapshot: { title: existing.title, body: existing.body, category: existing.category, status: existing.status },
+      });
     }
   }
 
@@ -304,7 +349,7 @@ function mergeOrUpdate(db, projectId, newEntries) {
  */
 async function extractKnowledgeFromPrompt(db, promptId, opts = {}) {
   const maxEvents = opts.maxEvents ?? 50;
-  const model = opts.model || 'sonnet';
+  const model = opts.model || 'opus';
 
   // Get prompt
   const prompt = db.prepare('SELECT * FROM prompts WHERE id = ?').get(promptId);
@@ -343,8 +388,8 @@ async function extractKnowledgeFromPrompt(db, promptId, opts = {}) {
 
   // Build prompt and call Claude CLI
   const llmPrompt = buildExtractPrompt(project.name || project.project_id, events, existingEntriesBlock);
-  const rawResponse = await callClaude(llmPrompt, model);
-  const entries = parseJsonResponse(rawResponse);
+  const claudeResult = await callClaude(llmPrompt, model, { effort: 'max' });
+  const entries = parseJsonResponse(claudeResult.output);
 
   if (entries.length === 0) return { extracted: 0, inserted: 0, updated: 0 };
 
@@ -367,6 +412,7 @@ module.exports = {
   buildExistingEntriesBlock,
   buildExtractPrompt,
   callClaude,
+  parseTokenUsage,
   parseJsonResponse,
   mergeOrUpdate,
   extractKnowledgeFromPrompt,

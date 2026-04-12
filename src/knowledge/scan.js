@@ -102,7 +102,7 @@ function buildScanPrompt(projectName, files, existingTitles = [], claudeMdConten
  * @returns {Promise<{extracted:number, inserted:number, updated:number}|{message:string}>}
  */
 async function scanProject(db, projectId, opts = {}) {
-  const model = opts.model || 'sonnet';
+  const model = opts.model || 'opus';
   const project = db.prepare('SELECT * FROM cl_projects WHERE project_id = ?').get(projectId);
   if (!project || !project.directory) {
     return { message: `Project ${projectId} not found or has no directory` };
@@ -116,7 +116,7 @@ async function scanProject(db, projectId, opts = {}) {
   for (const filename of scanFiles) {
     const fullPath = path.join(projectDir, filename);
     try {
-      const content = fs.readFileSync(fullPath, 'utf8').slice(0, 5000);
+      const content = fs.readFileSync(fullPath, 'utf8').slice(0, 50000);
       files[filename] = content;
     } catch {
       // File doesn't exist or can't be read — skip
@@ -139,7 +139,7 @@ async function scanProject(db, projectId, opts = {}) {
           if (!files[key]) {
             const fullPath = path.join(srcDir, fname);
             try {
-              files[key] = fs.readFileSync(fullPath, 'utf8').slice(0, 3000);
+              files[key] = fs.readFileSync(fullPath, 'utf8').slice(0, 20000);
             } catch { /* skip */ }
           }
         }
@@ -156,11 +156,11 @@ async function scanProject(db, projectId, opts = {}) {
 
   let claudeMdContent = '';
   const claudeMdPath = path.join(projectDir, 'CLAUDE.md');
-  try { claudeMdContent = fs.readFileSync(claudeMdPath, 'utf8').slice(0, 3000); } catch { /* skip */ }
+  try { claudeMdContent = fs.readFileSync(claudeMdPath, 'utf8').slice(0, 20000); } catch { /* skip */ }
 
   const llmPrompt = buildScanPrompt(projectName, files, existingTitles, claudeMdContent);
-  const rawResponse = await callClaude(llmPrompt, model);
-  const entries = parseJsonResponse(rawResponse);
+  const claudeResult = await callClaude(llmPrompt, model, { effort: 'max' });
+  const entries = parseJsonResponse(claudeResult.output);
 
   if (entries.length === 0) return { extracted: 0, inserted: 0, updated: 0 };
 
