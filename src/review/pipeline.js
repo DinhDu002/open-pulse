@@ -14,6 +14,8 @@ const {
   queryDailyReviews, getDailyReview, updateDailyReviewStatus, getDailyReviewStats,
   queryInsights, getInsight, updateInsightStatus, getInsightStats,
 } = require('./queries');
+const { insertPipelineRun } = require('../db/pipeline-runs');
+const { parseTokenUsage } = require('../knowledge/extract');
 
 const REPO_DIR = process.env.OPEN_PULSE_DIR || path.resolve(__dirname, '..', '..');
 
@@ -227,19 +229,39 @@ async function runDailyReview(db, opts = {}) {
   }, knowledgeContext);
 
   let output;
+  const startTime = Date.now();
   try {
     output = execFileSync('claude', [
       '--model', model,
       '--max-turns', '1',
       '--print',
-      '-p', prompt,
+      '-p',
     ], {
+      input: prompt,
       timeout,
       encoding: 'utf8',
       env: { ...process.env, OP_SKIP_COLLECT: '1', OP_HOOK_PROFILE: 'minimal' },
       maxBuffer: 50 * 1024 * 1024,
     });
+    insertPipelineRun(db, {
+      pipeline: 'daily_review',
+      project_id: null,
+      model,
+      status: 'success',
+      duration_ms: Date.now() - startTime,
+    });
   } catch (err) {
+    const tokens = parseTokenUsage(err.stderr ? err.stderr.toString() : '');
+    insertPipelineRun(db, {
+      pipeline: 'daily_review',
+      project_id: null,
+      model,
+      status: 'error',
+      error: err.message,
+      input_tokens: tokens.input_tokens,
+      output_tokens: tokens.output_tokens,
+      duration_ms: Date.now() - startTime,
+    });
     console.error('Claude invocation failed:', err.message);
     return { suggestions: [], insights: [], reportPath: null, error: err.message };
   }
