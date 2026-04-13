@@ -7,6 +7,8 @@ PLIST_NAME="com.open-pulse"
 PLIST_PATH="$HOME/Library/LaunchAgents/${PLIST_NAME}.plist"
 AGENT_PLIST_NAME="com.open-pulse.suggestion-agent"
 AGENT_PLIST_PATH="$HOME/Library/LaunchAgents/${AGENT_PLIST_NAME}.plist"
+OBSERVER_PLIST_NAME="com.open-pulse.observer"
+OBSERVER_PLIST_PATH="$HOME/Library/LaunchAgents/${OBSERVER_PLIST_NAME}.plist"
 
 echo "=== Open Pulse Uninstaller ==="
 
@@ -66,6 +68,12 @@ if launchctl list 2>/dev/null | grep -q "$AGENT_PLIST_NAME"; then
   launchctl bootout "gui/$(id -u)/$AGENT_PLIST_NAME" 2>/dev/null || true
 fi
 [ -f "$AGENT_PLIST_PATH" ] && rm "$AGENT_PLIST_PATH"
+
+# Observer service
+if launchctl list 2>/dev/null | grep -q "$OBSERVER_PLIST_NAME"; then
+  launchctl bootout "gui/$(id -u)/$OBSERVER_PLIST_NAME" 2>/dev/null || true
+fi
+[ -f "$OBSERVER_PLIST_PATH" ] && rm "$OBSERVER_PLIST_PATH"
 
 echo ""
 echo "=== Open Pulse uninstalled ==="
