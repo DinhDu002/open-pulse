@@ -163,4 +163,120 @@ describe('op-observer', () => {
     const meta = require('../../src/lib/frontmatter').parseFrontmatter(fs.readFileSync(tmpFile, 'utf8'));
     assert.equal(meta.confidence, '0.12');
   });
+
+  // -- snapshotInstinctFiles --
+
+  it('snapshotInstinctFiles returns a Set of all .md files under instincts subdirs', () => {
+    const repoDir = path.join(TEST_DIR, 'repo-snap');
+    const inheritedDir = path.join(repoDir, 'cl/instincts/inherited');
+    const personalDir = path.join(repoDir, 'cl/instincts/personal');
+    fs.mkdirSync(inheritedDir, { recursive: true });
+    fs.mkdirSync(personalDir, { recursive: true });
+    fs.writeFileSync(path.join(inheritedDir, 'a.md'), '---\nname: a\ntype: rule\n---\n');
+    fs.writeFileSync(path.join(personalDir, 'b.md'), '---\nname: b\ntype: rule\n---\n');
+    fs.writeFileSync(path.join(personalDir, 'ignored.txt'), 'not markdown');
+
+    const result = observer.snapshotInstinctFiles(path.join(repoDir, 'cl/instincts'));
+    assert.equal(result.size, 2);
+    assert.ok(result.has(path.join(inheritedDir, 'a.md')));
+    assert.ok(result.has(path.join(personalDir, 'b.md')));
+    assert.ok(!result.has(path.join(personalDir, 'ignored.txt')));
+  });
+
+  // -- renderObserverPrompt --
+
+  it('renderObserverPrompt substitutes all double-brace placeholders', () => {
+    const tmpTemplate = path.join(TEST_DIR, 'tmpl.md');
+    fs.writeFileSync(tmpTemplate, 'Read {{analysis_path}} for project {{project_name}} ({{project_id}}) and write to {{instincts_dir}}.');
+
+    const out = observer.renderObserverPrompt(tmpTemplate, {
+      analysis_path: '/tmp/events.jsonl',
+      instincts_dir: '/repo/cl/instincts/personal',
+      project_id: 'p1',
+      project_name: 'my-proj',
+    });
+
+    assert.ok(out.includes('/tmp/events.jsonl'));
+    assert.ok(out.includes('my-proj'));
+    assert.ok(out.includes('p1'));
+    assert.ok(out.includes('/repo/cl/instincts/personal'));
+    assert.ok(!out.includes('{{'), 'all placeholders replaced');
+  });
+
+  // -- processProject (with fake CLI runner) --
+
+  it('processProject skips when fewer than 3 events since cursor', () => {
+    const repoDir = path.join(TEST_DIR, 'repo-skip');
+    fs.mkdirSync(path.join(repoDir, 'cl/instincts/personal'), { recursive: true });
+    fs.mkdirSync(path.join(repoDir, 'cl/instincts/inherited'), { recursive: true });
+
+    let cliCalled = false;
+    const fakeRunner = () => { cliCalled = true; return { stdout: '', usage: {} }; };
+
+    const result = observer.processProject(db, {
+      project: { project_id: 'p-skip', name: 'skip', directory: '/tmp/processproject-no-events' },
+      repoDir,
+      config: {
+        observer_model: 'fake',
+        observer_max_events_per_project: 100,
+        observer_confidence_cap_on_first_detect: 0.75,
+      },
+      runClaude: fakeRunner,
+    });
+
+    assert.equal(cliCalled, false, 'CLI must not run when events below threshold');
+    assert.equal(result.status, 'skipped');
+  });
+
+  it('processProject invokes CLI and normalizes new files', () => {
+    const repoDir = path.join(TEST_DIR, 'repo-run');
+    const instinctsDir = path.join(repoDir, 'cl/instincts/personal');
+    fs.mkdirSync(instinctsDir, { recursive: true });
+    fs.mkdirSync(path.join(repoDir, 'cl/instincts/inherited'), { recursive: true });
+
+    const projRoot = '/tmp/processproject-with-events';
+    // Seed 5 events for this project (all recent)
+    for (let i = 0; i < 5; i++) {
+      db.prepare(`INSERT INTO events (timestamp, event_type, name, working_directory, tool_input)
+        VALUES (datetime('now'), 'tool_call', 'Edit', ?, '{}')`).run(projRoot);
+    }
+
+    // Fake runner: simulates Haiku writing an instinct YAML file
+    const fakeRunner = () => {
+      fs.writeFileSync(path.join(instinctsDir, 'new-pattern.md'), [
+        '---',
+        'name: new-pattern',
+        'type: rule',
+        'confidence: 0.85',
+        '---',
+        '',
+        'Body text',
+      ].join('\n'));
+      return {
+        stdout: '{"result":"done","usage":{"input_tokens":100,"output_tokens":50}}',
+        usage: { input_tokens: 100, output_tokens: 50 },
+      };
+    };
+
+    const result = observer.processProject(db, {
+      project: { project_id: 'p-run', name: 'proj-run', directory: projRoot },
+      repoDir,
+      config: {
+        observer_model: 'fake',
+        observer_max_events_per_project: 100,
+        observer_confidence_cap_on_first_detect: 0.75,
+      },
+      runClaude: fakeRunner,
+    });
+
+    assert.equal(result.status, 'success');
+    assert.equal(result.input_tokens, 100);
+    assert.equal(result.output_tokens, 50);
+    assert.equal(result.events, 5);
+
+    // Verify the new file was normalized (confidence clamped, id rewritten)
+    const written = fs.readFileSync(path.join(instinctsDir, 'new-pattern.md'), 'utf8');
+    assert.ok(written.includes('confidence: 0.75'), 'new file confidence clamped to 0.75');
+    assert.ok(written.match(/id: ae-[a-f0-9]{16}/), 'canonical id set');
+  });
 });

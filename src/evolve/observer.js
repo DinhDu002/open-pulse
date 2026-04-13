@@ -7,6 +7,8 @@ const crypto = require('crypto');
 const { execFileSync } = require('child_process');
 
 const { parseFrontmatter, extractBody } = require('../lib/frontmatter');
+const { exportEventsSince } = require('./export-events');
+const { getKgSyncState, setKgSyncState } = require('../db/knowledge-sync');
 
 // ---------------------------------------------------------------------------
 // Active project query
@@ -84,8 +86,127 @@ function normalizeInstinctFile(filePath, wasNew, confidenceCap) {
   fs.writeFileSync(filePath, newContent, 'utf8');
 }
 
+// ---------------------------------------------------------------------------
+// Instinct snapshot: list all .md files under cl/instincts/{inherited,personal}
+// ---------------------------------------------------------------------------
+
+function snapshotInstinctFiles(instinctsRoot) {
+  const out = new Set();
+  for (const sub of ['inherited', 'personal']) {
+    const dir = path.join(instinctsRoot, sub);
+    if (!fs.existsSync(dir)) continue;
+    for (const f of fs.readdirSync(dir)) {
+      if (f.endsWith('.md')) out.add(path.join(dir, f));
+    }
+  }
+  return out;
+}
+
+// ---------------------------------------------------------------------------
+// Prompt template rendering
+// ---------------------------------------------------------------------------
+
+function renderObserverPrompt(templatePath, vars) {
+  let tpl = fs.readFileSync(templatePath, 'utf8');
+  for (const [key, val] of Object.entries(vars)) {
+    tpl = tpl.split(`{{${key}}}`).join(val);
+  }
+  return tpl;
+}
+
+// ---------------------------------------------------------------------------
+// Process a single project: query events, invoke CLI, post-process files
+// ---------------------------------------------------------------------------
+
+/**
+ * Process one active project: reads events since the per-project cursor,
+ * skips if below the 3-event minimum, writes JSONL to a tmpfile, renders
+ * the observer prompt template, invokes the injected runClaude({model, prompt}),
+ * then normalizes every instinct file touched during the run. Updates the
+ * cursor to the timestamp of the latest event processed.
+ *
+ * Returns { status: 'success', events, input_tokens, output_tokens }
+ *      or { status: 'skipped', reason, events }
+ * Throws if exportEventsSince or runClaude fails catastrophically.
+ */
+function processProject(db, opts) {
+  const { project, repoDir, config, runClaude } = opts;
+  const minEvents = 3;
+
+  const cursorKey = `observer_last_run_at_${project.project_id}`;
+  const cursor = getKgSyncState(db, cursorKey)
+    || new Date(Date.now() - 24 * 3600 * 1000).toISOString();
+
+  const events = exportEventsSince(
+    db,
+    project.directory,
+    cursor,
+    config.observer_max_events_per_project
+  );
+
+  if (events.length < minEvents) {
+    return { status: 'skipped', reason: 'below_min_events', events: events.length };
+  }
+
+  const tmpFile = path.join(
+    require('os').tmpdir(),
+    `op-observer-${project.project_id}-${Date.now()}.jsonl`
+  );
+  fs.writeFileSync(tmpFile, events.map(e => JSON.stringify(e)).join('\n') + '\n');
+
+  const instinctsRoot = path.join(repoDir, 'cl', 'instincts');
+  fs.mkdirSync(path.join(instinctsRoot, 'personal'), { recursive: true });
+  fs.mkdirSync(path.join(instinctsRoot, 'inherited'), { recursive: true });
+
+  const before = snapshotInstinctFiles(instinctsRoot);
+
+  const prompt = renderObserverPrompt(
+    path.join(__dirname, 'observer-prompt.md'),
+    {
+      analysis_path: tmpFile,
+      instincts_dir: path.join(instinctsRoot, 'personal'),
+      project_id: project.project_id,
+      project_name: project.name,
+    }
+  );
+
+  let cliResult;
+  try {
+    cliResult = runClaude({
+      model: config.observer_model,
+      prompt,
+    });
+  } finally {
+    try { fs.unlinkSync(tmpFile); } catch { /* best effort */ }
+  }
+
+  // Post-process all instinct files touched during this run
+  const after = snapshotInstinctFiles(instinctsRoot);
+  for (const filePath of after) {
+    const wasNew = !before.has(filePath);
+    try {
+      normalizeInstinctFile(filePath, wasNew, config.observer_confidence_cap_on_first_detect);
+    } catch { /* skip malformed files */ }
+  }
+
+  // Advance cursor to the latest event timestamp
+  if (events.length > 0) {
+    setKgSyncState(db, cursorKey, events[events.length - 1].timestamp);
+  }
+
+  return {
+    status: 'success',
+    events: events.length,
+    input_tokens: cliResult?.usage?.input_tokens || 0,
+    output_tokens: cliResult?.usage?.output_tokens || 0,
+  };
+}
+
 module.exports = {
   queryActiveProjects,
   serializeFrontmatter,
   normalizeInstinctFile,
+  snapshotInstinctFiles,
+  renderObserverPrompt,
+  processProject,
 };
