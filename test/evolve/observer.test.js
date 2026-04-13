@@ -83,4 +83,84 @@ describe('op-observer', () => {
     const parsed = parseFrontmatter(serialized + '\nbody');
     assert.deepEqual(parsed, original);
   });
+
+  // -- normalizeInstinctFile --
+
+  it('normalizeInstinctFile computes canonical id matching sync.js:makeId', () => {
+    const tmpFile = path.join(TEST_DIR, 'norm-1.md');
+    fs.writeFileSync(tmpFile, [
+      '---',
+      'id: random-id-from-haiku',
+      'name: always-test',
+      'type: rule',
+      'confidence: 0.8',
+      '---',
+      '',
+      'Body',
+    ].join('\n'));
+
+    observer.normalizeInstinctFile(tmpFile, false, 0.75);
+
+    const content = fs.readFileSync(tmpFile, 'utf8');
+    const meta = require('../../src/lib/frontmatter').parseFrontmatter(content);
+    const expected = 'ae-' + crypto.createHash('sha256').update('always-test::rule').digest('hex').substring(0, 16);
+    assert.equal(meta.id, expected);
+  });
+
+  it('normalizeInstinctFile clamps confidence when wasNew=true', () => {
+    const tmpFile = path.join(TEST_DIR, 'norm-2.md');
+    fs.writeFileSync(tmpFile, [
+      '---',
+      'id: x',
+      'name: clamp-me',
+      'type: rule',
+      'confidence: 0.85',
+      '---',
+      '',
+      'Body',
+    ].join('\n'));
+
+    observer.normalizeInstinctFile(tmpFile, true, 0.75);
+
+    const meta = require('../../src/lib/frontmatter').parseFrontmatter(fs.readFileSync(tmpFile, 'utf8'));
+    assert.equal(meta.confidence, '0.75');
+  });
+
+  it('normalizeInstinctFile does not clamp confidence when wasNew=false', () => {
+    const tmpFile = path.join(TEST_DIR, 'norm-3.md');
+    fs.writeFileSync(tmpFile, [
+      '---',
+      'id: x',
+      'name: existing',
+      'type: rule',
+      'confidence: 0.85',
+      '---',
+      '',
+      'Body',
+    ].join('\n'));
+
+    observer.normalizeInstinctFile(tmpFile, false, 0.75);
+
+    const meta = require('../../src/lib/frontmatter').parseFrontmatter(fs.readFileSync(tmpFile, 'utf8'));
+    assert.equal(meta.confidence, '0.85');
+  });
+
+  it('normalizeInstinctFile rounds confidence to 2 decimals', () => {
+    const tmpFile = path.join(TEST_DIR, 'norm-4.md');
+    fs.writeFileSync(tmpFile, [
+      '---',
+      'id: x',
+      'name: round-me',
+      'type: rule',
+      'confidence: 0.123456',
+      '---',
+      '',
+      'Body',
+    ].join('\n'));
+
+    observer.normalizeInstinctFile(tmpFile, false, 0.75);
+
+    const meta = require('../../src/lib/frontmatter').parseFrontmatter(fs.readFileSync(tmpFile, 'utf8'));
+    assert.equal(meta.confidence, '0.12');
+  });
 });

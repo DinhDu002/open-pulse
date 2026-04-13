@@ -48,7 +48,44 @@ function serializeFrontmatter(meta) {
   return lines.join('\n') + '\n';
 }
 
+// ---------------------------------------------------------------------------
+// Instinct file normalization: canonical id + warm-up confidence clamp
+// ---------------------------------------------------------------------------
+
+/**
+ * Rewrite an instinct YAML file in place to:
+ * 1. Replace the id field with the canonical hash (matches sync.js:makeId)
+ * 2. Clamp confidence to confidenceCap when wasNew=true (warm-up)
+ * 3. Round confidence to 2 decimals to avoid float drift
+ *
+ * Silently no-ops if the file has no frontmatter or is missing name/type.
+ */
+function normalizeInstinctFile(filePath, wasNew, confidenceCap) {
+  const content = fs.readFileSync(filePath, 'utf8');
+  const meta = parseFrontmatter(content);
+  if (!meta || !meta.name || !meta.type) return;
+
+  const body = extractBody(content);
+
+  const hash = crypto
+    .createHash('sha256')
+    .update(`${meta.name}::${meta.type}`)
+    .digest('hex')
+    .substring(0, 16);
+  meta.id = `ae-${hash}`;
+
+  const currentConf = parseFloat(meta.confidence);
+  if (Number.isFinite(currentConf)) {
+    const clamped = wasNew ? Math.min(currentConf, confidenceCap) : currentConf;
+    meta.confidence = clamped.toFixed(2);
+  }
+
+  const newContent = serializeFrontmatter(meta) + '\n' + body + '\n';
+  fs.writeFileSync(filePath, newContent, 'utf8');
+}
+
 module.exports = {
   queryActiveProjects,
   serializeFrontmatter,
+  normalizeInstinctFile,
 };
