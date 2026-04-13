@@ -210,3 +210,140 @@ module.exports = {
   renderObserverPrompt,
   processProject,
 };
+
+// ---------------------------------------------------------------------------
+// Real Claude CLI runner — production use. Tests inject a fake instead.
+// ---------------------------------------------------------------------------
+
+function runClaudeReal({ model, prompt }) {
+  const startTime = Date.now();
+  const rawOutput = execFileSync('claude', [
+    '--model', model,
+    '--max-turns', '10',
+    '-p',
+    '--output-format', 'json',
+  ], {
+    input: prompt,
+    timeout: 180000,
+    encoding: 'utf8',
+    env: { ...process.env, OP_SKIP_COLLECT: '1', OP_HOOK_PROFILE: 'minimal' },
+    maxBuffer: 50 * 1024 * 1024,
+  });
+
+  try {
+    const parsed = JSON.parse(rawOutput);
+    const usage = parsed.usage || {};
+    return {
+      stdout: parsed.result || rawOutput,
+      usage: {
+        input_tokens: (usage.input_tokens || 0)
+          + (usage.cache_creation_input_tokens || 0)
+          + (usage.cache_read_input_tokens || 0),
+        output_tokens: usage.output_tokens || 0,
+      },
+      duration_ms: Date.now() - startTime,
+    };
+  } catch {
+    return {
+      stdout: rawOutput,
+      usage: { input_tokens: 0, output_tokens: 0 },
+      duration_ms: Date.now() - startTime,
+    };
+  }
+}
+
+// ---------------------------------------------------------------------------
+// CLI entry point
+// ---------------------------------------------------------------------------
+
+function parseArgs(argv) {
+  const args = { repoDir: null };
+  for (let i = 2; i < argv.length; i++) {
+    if (argv[i] === '--repo-dir') args.repoDir = argv[++i];
+  }
+  return args;
+}
+
+function loadConfig(repoDir) {
+  const cfgPath = path.join(repoDir, 'config.json');
+  try {
+    return JSON.parse(fs.readFileSync(cfgPath, 'utf8'));
+  } catch {
+    return {};
+  }
+}
+
+function main() {
+  const args = parseArgs(process.argv);
+  const repoDir = args.repoDir || path.resolve(__dirname, '..', '..');
+  const config = loadConfig(repoDir);
+
+  if (config.observer_enabled === false) {
+    console.log('observer: disabled in config');
+    process.exit(0);
+  }
+
+  const dbPath = path.join(repoDir, 'open-pulse.db');
+  const Database = require('better-sqlite3');
+  const { insertPipelineRun } = require('../db/pipeline-runs');
+  const db = new Database(dbPath);
+  db.pragma('busy_timeout = 3000');
+
+  try {
+    const projects = queryActiveProjects(
+      db,
+      config.observer_active_project_window_hours || 24,
+      config.observer_max_projects_per_run || 5
+    );
+
+    const summary = { projects: 0, success: 0, skipped: 0, errors: 0 };
+
+    for (const project of projects) {
+      summary.projects++;
+      const startTime = Date.now();
+      try {
+        const result = processProject(db, {
+          project,
+          repoDir,
+          config,
+          runClaude: runClaudeReal,
+        });
+
+        if (result.status === 'success') {
+          summary.success++;
+          insertPipelineRun(db, {
+            pipeline: 'auto_evolve_observer',
+            project_id: project.project_id,
+            model: config.observer_model || 'claude-haiku-4-5-20251001',
+            status: 'success',
+            input_tokens: result.input_tokens,
+            output_tokens: result.output_tokens,
+            duration_ms: Date.now() - startTime,
+          });
+        } else {
+          summary.skipped++;
+        }
+        console.log(`observer: ${project.name} -> ${result.status} (events=${result.events})`);
+      } catch (err) {
+        summary.errors++;
+        insertPipelineRun(db, {
+          pipeline: 'auto_evolve_observer',
+          project_id: project.project_id,
+          model: config.observer_model || 'claude-haiku-4-5-20251001',
+          status: 'error',
+          error: err.message,
+          duration_ms: Date.now() - startTime,
+        });
+        console.error(`observer: ${project.name} -> error: ${err.message}`);
+      }
+    }
+
+    console.log(`observer: done ${JSON.stringify(summary)}`);
+  } finally {
+    db.close();
+  }
+}
+
+if (require.main === module) {
+  main();
+}
