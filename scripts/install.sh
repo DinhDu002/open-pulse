@@ -8,6 +8,8 @@ PLIST_NAME="com.open-pulse"
 PLIST_PATH="$HOME/Library/LaunchAgents/${PLIST_NAME}.plist"
 AGENT_PLIST_NAME="com.open-pulse.suggestion-agent"
 AGENT_PLIST_PATH="$HOME/Library/LaunchAgents/${AGENT_PLIST_NAME}.plist"
+OBSERVER_PLIST_NAME="com.open-pulse.observer"
+OBSERVER_PLIST_PATH="$HOME/Library/LaunchAgents/${OBSERVER_PLIST_NAME}.plist"
 NODE_PATH=$(which node)
 CLAUDE_BIN_DIR=$(dirname "$(which claude 2>/dev/null)" 2>/dev/null || echo "")
 
@@ -15,12 +17,12 @@ echo "=== Open Pulse Installer ==="
 echo "Repo: $REPO_DIR"
 
 # ── 1. npm install ──
-echo "[1/8] Installing dependencies..."
+echo "[1/9] Installing dependencies..."
 cd "$REPO_DIR"
 npm install --production
 
 # ── 2. Create runtime directories ──
-echo "[2/8] Creating directories..."
+echo "[2/9] Creating directories..."
 mkdir -p "$REPO_DIR/data"
 mkdir -p "$REPO_DIR/logs"
 mkdir -p "$REPO_DIR/cl/instincts/personal"
@@ -29,15 +31,15 @@ mkdir -p "$REPO_DIR/cl/evolved"
 mkdir -p "$REPO_DIR/cl/projects"
 
 # ── 3. Initialize empty DB ──
-echo "[3/8] Initializing database..."
+echo "[3/9] Initializing database..."
 node -e "require('$REPO_DIR/src/db/schema').createDb('$REPO_DIR/open-pulse.db')"
 
 # ── 4. Backfill prompts ──
-echo "[4/8] Backfilling prompts..."
+echo "[4/9] Backfilling prompts..."
 node "$REPO_DIR/scripts/backfill-prompts.js" --repo-dir "$REPO_DIR"
 
 # ── 5. Symlink skills ──
-echo "[5/8] Symlinking skills..."
+echo "[5/9] Symlinking skills..."
 for skill_dir in "$REPO_DIR/claude/skills"/*/; do
   skill_name=$(basename "$skill_dir")
   target="$CLAUDE_DIR/skills/$skill_name"
@@ -54,7 +56,7 @@ for skill_dir in "$REPO_DIR/claude/skills"/*/; do
 done
 
 # ── 6. Symlink agents ──
-echo "[6/8] Symlinking agents..."
+echo "[6/9] Symlinking agents..."
 for agent_file in "$REPO_DIR/claude/agents"/*.md; do
   [ -f "$agent_file" ] || continue
   agent_name=$(basename "$agent_file")
@@ -70,11 +72,11 @@ for agent_file in "$REPO_DIR/claude/agents"/*.md; do
 done
 
 # ── 7. Register hooks in settings.json ──
-echo "[7/8] Registering hooks..."
+echo "[7/9] Registering hooks..."
 node "$REPO_DIR/scripts/register-hooks.js" "$REPO_DIR"
 
 # ── 8. Setup launchd services ──
-echo "[8/8] Setting up launchd services..."
+echo "[8/9] Setting up launchd services..."
 if launchctl list 2>/dev/null | grep -q "$PLIST_NAME"; then
   launchctl bootout "gui/$(id -u)/$PLIST_NAME" 2>/dev/null || true
 fi
@@ -157,6 +159,47 @@ PLIST
 
 launchctl bootstrap "gui/$(id -u)" "$AGENT_PLIST_PATH"
 
+# ── 9. Observer launchd service (runs every hour) ──
+echo "[9/9] Setting up observer launchd service..."
+if launchctl list 2>/dev/null | grep -q "$OBSERVER_PLIST_NAME"; then
+  launchctl bootout "gui/$(id -u)/$OBSERVER_PLIST_NAME" 2>/dev/null || true
+fi
+
+cat > "$OBSERVER_PLIST_PATH" << PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>${OBSERVER_PLIST_NAME}</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>${NODE_PATH}</string>
+    <string>${REPO_DIR}/src/evolve/observer.js</string>
+    <string>--repo-dir</string>
+    <string>${REPO_DIR}</string>
+  </array>
+  <key>WorkingDirectory</key>
+  <string>${REPO_DIR}</string>
+  <key>StartInterval</key>
+  <integer>3600</integer>
+  <key>StandardOutPath</key>
+  <string>${REPO_DIR}/logs/observer-stdout.log</string>
+  <key>StandardErrorPath</key>
+  <string>${REPO_DIR}/logs/observer-stderr.log</string>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>/usr/local/bin:/usr/bin:/bin:$(dirname "${NODE_PATH}")${CLAUDE_BIN_DIR:+:${CLAUDE_BIN_DIR}}</string>
+    <key>OPEN_PULSE_DIR</key>
+    <string>${REPO_DIR}</string>
+  </dict>
+</dict>
+</plist>
+PLIST
+
+launchctl bootstrap "gui/$(id -u)" "$OBSERVER_PLIST_PATH"
+
 echo ""
 echo "=== Open Pulse installed ==="
 echo "Dashboard: http://127.0.0.1:3827"
@@ -165,6 +208,10 @@ echo ""
 echo "Daily review: runs daily at 3:00 AM"
 echo "  Manual:  node $REPO_DIR/src/review/pipeline.js"
 echo "  Logs:    $REPO_DIR/logs/suggestion-agent-stdout.log"
+echo ""
+echo "Observer (auto-evolve): runs every hour"
+echo "  Manual:  node $REPO_DIR/src/evolve/observer.js --repo-dir $REPO_DIR"
+echo "  Logs:    $REPO_DIR/logs/observer-stdout.log"
 echo ""
 echo "Management:"
 echo "  Stop:    launchctl bootout gui/\$(id -u)/$PLIST_NAME"
