@@ -1,4 +1,4 @@
-import { get, put } from './api.js';
+import { get, put, post } from './api.js';
 
 function fmtTime(ts) {
   if (!ts) return '\u2014';
@@ -216,17 +216,36 @@ async function renderDetail(el, id) {
     }
 
     // Action buttons
+    const actions = document.createElement('div');
+    actions.style.cssText = 'display:flex;gap:8px;margin-top:16px';
+
+    if (row.status === 'active') {
+      const promoteBtn = document.createElement('button');
+      promoteBtn.className = 'btn btn-sm btn-success';
+      promoteBtn.textContent = 'Promote now';
+      promoteBtn.onclick = async () => {
+        try {
+          await post('/auto-evolves/' + id + '/promote');
+          renderDetail(el, id);
+        } catch (err) {
+          alert('Promote failed: ' + err.message);
+        }
+      };
+      actions.appendChild(promoteBtn);
+    }
+
     if (row.status === 'promoted') {
-      const actions = document.createElement('div');
-      actions.style.cssText = 'display:flex;gap:8px;margin-top:16px';
-      const btn = document.createElement('button');
-      btn.className = 'btn btn-sm btn-danger';
-      btn.textContent = 'Revert';
-      btn.onclick = async () => {
+      const revertBtn = document.createElement('button');
+      revertBtn.className = 'btn btn-sm btn-danger';
+      revertBtn.textContent = 'Revert';
+      revertBtn.onclick = async () => {
         await put('/auto-evolves/' + id + '/revert');
         renderDetail(el, id);
       };
-      actions.appendChild(btn);
+      actions.appendChild(revertBtn);
+    }
+
+    if (actions.children.length > 0) {
       el.appendChild(actions);
     }
 
