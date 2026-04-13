@@ -303,9 +303,13 @@ open-pulse/
 | `auto_evolve_enabled` | true | Enable auto-evolve promotion timer |
 | `auto_evolve_blacklist` | ["agent","hook"] | Target types blocked from auto-promotion |
 | `auto_evolve_min_confidence` | 0.85 | Confidence threshold for auto-promotion |
-| `observer_enabled` | false | Enable background observer timer |
-| `observer_interval_ms` | 300000 | Observer cycle interval (5 min) |
-| `observer_min_events` | 20 | Minimum events before analysis |
+| `observer_enabled` | true | Enable observer (auto-evolve pattern detection via Haiku) |
+| `observer_interval_seconds` | 3600 | Observer launchd run interval |
+| `observer_model` | "claude-haiku-4-5-20251001" | Model used for observer pattern detection |
+| `observer_max_events_per_project` | 500 | Cap events passed to observer per project per run |
+| `observer_active_project_window_hours` | 24 | Only run observer for projects with events in this window |
+| `observer_max_projects_per_run` | 5 | Hard cap on projects processed per observer cycle |
+| `observer_confidence_cap_on_first_detect` | 0.75 | Warm-up clamp for newly detected instincts |
 | `daily_review_enabled` | true | Enable daily review |
 | `daily_review_model` | "opus" | Model for daily review (opus/sonnet) |
 | `daily_review_timeout_ms` | 300000 | Timeout for daily review Claude invocation |
@@ -323,7 +327,7 @@ open-pulse/
 - **Environment variables for testing**: `OPEN_PULSE_DB`, `OPEN_PULSE_DIR`, `OPEN_PULSE_CLAUDE_DIR` allow tests to use temp directories.
 - **Route plugins**: All API routes are organized into 11 Fastify plugins under `src/routes/`. Each receives `routeOpts` (db, dbPath, repoDir, config, componentETagFn). `src/server.js` is app factory + timer coordinator only.
 - **Prompt linking**: During ingestion, contiguous events sharing the same `user_prompt` are grouped into a `prompts` record. Each event gets a `prompt_id` FK. Enables per-turn cost, token count, duration, and event breakdown without query-time aggregation.
-- **Split feedback loops**: Two independent flows replace the old unified insights system. Flow 1 (auto-evolve): Observer-detected patterns auto-promote to rule/knowledge/skill when confidence >= 0.85 (blacklists agent/hook). Flow 2 (daily review): Comprehensive 3AM analysis reads all component files + work history, invokes Opus for suggestions. Each flow has its own table, routes, and UI — zero shared code.
+- **Split feedback loops**: Two independent flows replace the old unified insights system. Flow 1 (auto-evolve): Observer (`src/evolve/observer.js`) runs hourly via the `com.open-pulse.observer` launchd service, uses Haiku 4.5 to detect patterns from recent events per active project, and writes instinct YAML files with canonical id hash. `syncInstincts` + `runAutoEvolve` then auto-promote rule/knowledge/skill to component files when confidence ≥ 0.85 (rejection_count = 0). Agents are blacklisted from auto-promote and require manual approval via `POST /api/auto-evolves/:id/promote` surfaced as a "Promote now" button in the auto-evolve detail UI. Flow 2 (daily review): Comprehensive 3AM analysis reads all component files + work history, invokes Opus for suggestions. Each flow has its own table, routes, and UI — zero shared code.
 - **Daily review pipeline**: `src/review/pipeline.js` reads full content of all component files (rules, skills, agents, hooks, memory, plugins) + best practices from `claude-code-knowledge` + day's work history. Invokes Opus for comprehensive analysis. Outputs: suggestions in `daily_reviews` table + markdown report in `reports/`.
 - **Knowledge entries architecture**: Replaces KG (`kg_nodes`/`kg_edges`). LLM (Opus) extracts project understanding after each prompt. Entries stored in `knowledge_entries` table, rendered as markdown vault files per category in `<project>/.claude/knowledge/`. Cold-start scan bootstraps knowledge from key project files. No confidence scoring — entries are factual, not behavioral patterns.
 - **`cl_` DB prefix**: The `cl_` prefix on DB tables (e.g., `cl_projects`) and the `cl/` runtime directory stand for the instinct-based observer subsystem. The code itself lives in `src/evolve/`.
@@ -346,6 +350,19 @@ npm run uninstall-service    # Full uninstall
 launchctl print gui/$(id -u)/com.open-pulse       # Status
 launchctl bootout gui/$(id -u)/com.open-pulse      # Stop
 launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.open-pulse.plist  # Start
+```
+
+### Observer (auto-evolve pattern detection)
+
+```bash
+# Manual run (bypass launchd)
+node src/evolve/observer.js --repo-dir $PWD
+
+# Service status
+launchctl print gui/$(id -u)/com.open-pulse.observer
+
+# Logs
+tail -f logs/observer-stdout.log
 ```
 
 ## Event Types
