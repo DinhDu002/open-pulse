@@ -351,4 +351,31 @@ describe('op-auto-evolve', () => {
     assert.equal(row.status, 'reverted');
     assert.ok(!fs.existsSync(promoted.promoted_to));
   });
+
+  // -- exportEventsSince --
+
+  it('exportEventsSince returns rows after cursor timestamp ordered ASC', () => {
+    const { exportEventsSince } = require('../../src/evolve/export-events');
+
+    const projectRoot = '/tmp/test-export-since';
+    db.prepare(`
+      INSERT INTO events (timestamp, session_id, event_type, name, working_directory, tool_input, seq_num)
+      VALUES
+        ('2026-04-12T10:00:00Z', 's1', 'tool_call', 'Read', ?, '{"file_path":"/x"}', 1),
+        ('2026-04-12T10:05:00Z', 's1', 'tool_call', 'Edit', ?, '{"file_path":"/x"}', 2),
+        ('2026-04-12T10:10:00Z', 's1', 'tool_call', 'Bash', ?, '{"command":"ls"}', 3)
+    `).run(projectRoot, projectRoot, projectRoot);
+
+    const rows = exportEventsSince(db, projectRoot, '2026-04-12T10:02:00Z', 10);
+    assert.equal(rows.length, 2);
+    assert.equal(rows[0].name, 'Edit');
+    assert.equal(rows[1].name, 'Bash');
+  });
+
+  it('exportEventsSince respects maxRows limit', () => {
+    const { exportEventsSince } = require('../../src/evolve/export-events');
+    const rows = exportEventsSince(db, '/tmp/test-export-since', '2026-04-12T00:00:00Z', 1);
+    assert.equal(rows.length, 1);
+    assert.equal(rows[0].name, 'Read');
+  });
 });

@@ -114,8 +114,29 @@ function main() {
   process.stdout.write(`${events.length}\t${maxTs}`);
 }
 
+/**
+ * Export events for a project since a cursor timestamp.
+ * Takes an open better-sqlite3 db handle (not a path) so callers can
+ * share a connection. Filters to tool_call / skill_invoke / agent_spawn
+ * events whose working_directory is under projectRoot, ordered ASC by
+ * timestamp, limited to maxRows.
+ */
+function exportEventsSince(db, projectRoot, sinceIso, maxRows) {
+  return db.prepare(`
+    SELECT timestamp, session_id, event_type, name, detail,
+           tool_input, tool_response, user_prompt, seq_num, success,
+           duration_ms, working_directory
+    FROM events
+    WHERE event_type IN ('tool_call', 'skill_invoke', 'agent_spawn')
+      AND working_directory LIKE ?
+      AND timestamp > ?
+    ORDER BY timestamp ASC
+    LIMIT ?
+  `).all(projectRoot + '%', sinceIso, maxRows);
+}
+
 // Allow both CLI and require() usage
-module.exports = { exportEvents, parseArgs };
+module.exports = { exportEvents, parseArgs, exportEventsSince };
 
 if (require.main === module) {
   main();
