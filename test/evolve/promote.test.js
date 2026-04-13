@@ -127,4 +127,25 @@ describe('op-promote', () => {
     const result = promote.runAutoEvolve(db, { min_confidence: 0.85 });
     assert.equal(result.promoted, 0);
   });
+
+  it('promoteOne promotes a single row regardless of confidence/blacklist', () => {
+    const { promoteOne } = require('../../src/evolve/promote');
+    db.prepare(`
+      INSERT OR REPLACE INTO auto_evolves
+        (id, title, description, target_type, confidence, observation_count, rejection_count, status, created_at)
+      VALUES
+        ('test-promote-one-1', 'Force Promoted Rule', 'Force body', 'rule', 0.1, 1, 0, 'active', datetime('now'))
+    `).run();
+    const row = db.prepare('SELECT * FROM auto_evolves WHERE id = ?').get('test-promote-one-1');
+
+    const logDir = fs.mkdtempSync(path.join(os.tmpdir(), 'promote-one-log-'));
+    const result = promoteOne(db, row, { logDir });
+
+    assert.ok(result.filePath, 'result must include filePath');
+    const after = db.prepare('SELECT * FROM auto_evolves WHERE id = ?').get('test-promote-one-1');
+    assert.equal(after.status, 'promoted');
+    assert.ok(after.promoted_to);
+    assert.ok(fs.existsSync(after.promoted_to));
+    fs.unlinkSync(after.promoted_to);
+  });
 });

@@ -55,6 +55,33 @@ function generateComponent(insight) {
 // Auto-promote cycle
 // ---------------------------------------------------------------------------
 
+// Promote a single active row. Bypasses blacklist/threshold checks —
+// caller is responsible for deciding whether the row should be promoted.
+// Returns { filePath } on success; throws on failure.
+function promoteOne(db, row, opts = {}) {
+  const { logDir } = opts;
+
+  const filePath = getComponentPath(row.target_type, row.title);
+  const dir = path.dirname(filePath);
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(filePath, generateComponent(row), 'utf8');
+
+  const now = new Date().toISOString();
+  db.prepare(`
+    UPDATE auto_evolves
+    SET status = 'promoted', promoted_to = ?, promoted_at = ?, updated_at = ?
+    WHERE id = ?
+  `).run(filePath, now, now, row.id);
+
+  if (logDir) {
+    const logPath = path.join(logDir, 'auto-evolve.log');
+    const logLine = `[${now}] PROMOTED ${row.target_type} "${row.title}" -> ${filePath}\n`;
+    fs.appendFileSync(logPath, logLine);
+  }
+
+  return { filePath };
+}
+
 function runAutoEvolve(db, opts = {}) {
   const {
     min_confidence = 0.85,
@@ -78,24 +105,7 @@ function runAutoEvolve(db, opts = {}) {
 
   for (const row of ready) {
     try {
-      const filePath = getComponentPath(row.target_type, row.title);
-      const dir = path.dirname(filePath);
-      fs.mkdirSync(dir, { recursive: true });
-      fs.writeFileSync(filePath, generateComponent(row), 'utf8');
-
-      const now = new Date().toISOString();
-      db.prepare(`
-        UPDATE auto_evolves
-        SET status = 'promoted', promoted_to = ?, promoted_at = ?, updated_at = ?
-        WHERE id = ?
-      `).run(filePath, now, now, row.id);
-
-      if (logDir) {
-        const logPath = path.join(logDir, 'auto-evolve.log');
-        const logLine = `[${now}] PROMOTED ${row.target_type} "${row.title}" -> ${filePath}\n`;
-        fs.appendFileSync(logPath, logLine);
-      }
-
+      promoteOne(db, row, { logDir });
       promoted++;
     } catch { /* skip individual failures */ }
   }
@@ -103,4 +113,4 @@ function runAutoEvolve(db, opts = {}) {
   return { promoted };
 }
 
-module.exports = { generateComponent, runAutoEvolve };
+module.exports = { generateComponent, runAutoEvolve, promoteOne };
