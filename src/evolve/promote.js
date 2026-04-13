@@ -74,6 +74,7 @@ function promoteOne(db, row, opts = {}) {
   `).run(filePath, now, now, row.id);
 
   if (logDir) {
+    fs.mkdirSync(logDir, { recursive: true });
     const logPath = path.join(logDir, 'auto-evolve.log');
     const logLine = `[${now}] PROMOTED ${row.target_type} "${row.title}" -> ${filePath}\n`;
     fs.appendFileSync(logPath, logLine);

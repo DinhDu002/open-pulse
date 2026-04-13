@@ -952,5 +952,52 @@ describe('op-server', () => {
     });
   });
 
+  describe('POST /api/auto-evolves/:id/promote', () => {
+    it('promotes an active entry bypassing threshold', async () => {
+      const id = 'test-force-promote-route';
+      const testDb = require('better-sqlite3')(process.env.OPEN_PULSE_DB);
+      testDb.prepare(`
+        INSERT OR REPLACE INTO auto_evolves
+          (id, title, description, target_type, confidence, observation_count, rejection_count, status, created_at)
+        VALUES
+          (?, 'Route Force Promote', 'body text', 'rule', 0.1, 1, 0, 'active', datetime('now'))
+      `).run(id);
+      testDb.close();
+
+      const res = await app.inject({ method: 'POST', url: `/api/auto-evolves/${id}/promote` });
+      assert.equal(res.statusCode, 200);
+      const body = JSON.parse(res.body);
+      assert.equal(body.ok, true);
+      assert.ok(body.promoted_to);
+
+      const verifyDb = require('better-sqlite3')(process.env.OPEN_PULSE_DB);
+      const row = verifyDb.prepare('SELECT * FROM auto_evolves WHERE id = ?').get(id);
+      verifyDb.close();
+      assert.equal(row.status, 'promoted');
+      assert.ok(fs.existsSync(row.promoted_to));
+      fs.unlinkSync(row.promoted_to);
+    });
+
+    it('rejects non-active entries', async () => {
+      const id = 'test-force-promote-reverted';
+      const testDb = require('better-sqlite3')(process.env.OPEN_PULSE_DB);
+      testDb.prepare(`
+        INSERT OR REPLACE INTO auto_evolves
+          (id, title, description, target_type, confidence, observation_count, rejection_count, status, created_at)
+        VALUES
+          (?, 'Already Reverted', 'body', 'rule', 0.5, 1, 0, 'reverted', datetime('now'))
+      `).run(id);
+      testDb.close();
+
+      const res = await app.inject({ method: 'POST', url: `/api/auto-evolves/${id}/promote` });
+      assert.equal(res.statusCode, 400);
+    });
+
+    it('returns 404 for missing id', async () => {
+      const res = await app.inject({ method: 'POST', url: '/api/auto-evolves/nonexistent-id-xyz/promote' });
+      assert.equal(res.statusCode, 404);
+    });
+  });
+
 });
 
