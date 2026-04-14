@@ -162,6 +162,19 @@ function buildApp(opts = {}) {
   app.register(require('./routes/knowledge'), routeOpts);
   app.register(require('./routes/auto-evolves'), routeOpts);
 
+  // Ollama health check (non-blocking, informational only)
+  if (config.pattern_detect_enabled !== false || config.knowledge_model === 'local') {
+    const ollamaUrl = config.ollama_url || 'http://localhost:11434';
+    fetch(`${ollamaUrl}/api/tags`, { signal: AbortSignal.timeout(3000) })
+      .then(res => {
+        if (res.ok) fastify.log.info(`Ollama available at ${ollamaUrl}`);
+        else fastify.log.warn(`Ollama returned ${res.status} at ${ollamaUrl}`);
+      })
+      .catch(() => {
+        fastify.log.warn(`Ollama not available at ${ollamaUrl} — local extraction will be skipped`);
+      });
+  }
+
   // ── Cleanup on close ───────────────────────────────────────────────────
 
   app.addHook('onClose', async () => {
