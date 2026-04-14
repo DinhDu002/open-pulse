@@ -4,7 +4,8 @@ const fs = require('fs');
 const path = require('path');
 
 const { getExistingTitles } = require('./queries');
-const { callClaude, parseJsonResponse, mergeOrUpdate, loadSkillTemplate } = require('./extract');
+const { callClaude, parseJsonResponse, mergeOrUpdate } = require('./extract');
+const { loadSkillBody } = require('../lib/skill-loader');
 const { renderKnowledgeVault } = require('./vault');
 const { insertPipelineRun } = require('../db/pipeline-runs');
 
@@ -41,7 +42,7 @@ function buildScanPrompt(projectName, files, existingTitles = [], claudeMdConten
     ? `\nExisting knowledge titles (avoid duplicating these — compare case-insensitively):\n${existingTitles.map(t => `- ${t}`).join('\n')}\n`
     : '';
 
-  const skillTemplate = loadSkillTemplate();
+  const skillTemplate = loadSkillBody('knowledge-extractor');
 
   if (skillTemplate) {
     return [

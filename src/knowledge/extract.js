@@ -1,7 +1,5 @@
 'use strict';
 
-const fs = require('fs');
-const path = require('path');
 const { spawn } = require('child_process');
 
 const {
@@ -11,6 +9,8 @@ const {
 } = require('./queries');
 const { insertPipelineRun } = require('../db/pipeline-runs');
 const { formatEventsForLLM } = require('../lib/format-events');
+const { loadSkillBody, loadCompactPrompt } = require('../lib/skill-loader');
+const { callOllama } = require('../lib/ollama');
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -20,27 +20,6 @@ const VALID_CATEGORIES = new Set([
   'domain', 'stack', 'schema', 'api', 'feature', 'architecture',
   'convention', 'decision', 'footgun', 'contract', 'error_pattern',
 ]);
-
-// ---------------------------------------------------------------------------
-// loadSkillTemplate
-// ---------------------------------------------------------------------------
-
-/**
- * Reads the knowledge-extractor skill file as the source of truth for
- * extraction rules. Returns the markdown content (without YAML frontmatter)
- * or null if the file is missing.
- */
-function loadSkillTemplate() {
-  const skillPath = path.join(__dirname, '..', '..', 'claude', 'skills', 'knowledge-extractor', 'SKILL.md');
-  try {
-    const raw = fs.readFileSync(skillPath, 'utf8');
-    // Strip YAML frontmatter (between --- markers)
-    const stripped = raw.replace(/^---[\s\S]*?---\s*/, '');
-    return stripped.trim();
-  } catch {
-    return null;
-  }
-}
 
 // ---------------------------------------------------------------------------
 // buildExistingEntriesBlock — context-aware entry block for extraction prompt
@@ -112,7 +91,7 @@ function buildExtractPrompt(projectName, events, existingEntriesBlock = '') {
 
   const existingBlock = existingEntriesBlock || '';
 
-  const skillTemplate = loadSkillTemplate();
+  const skillTemplate = loadSkillBody('knowledge-extractor');
 
   if (skillTemplate) {
     return [
@@ -158,6 +137,32 @@ function buildExtractPrompt(projectName, events, existingEntriesBlock = '') {
     '- Return [] if nothing genuinely new is found',
     '',
     'Respond with a JSON array only. No explanation.',
+  ].join('\n');
+}
+
+// ---------------------------------------------------------------------------
+// buildCompactExtractPrompt
+// ---------------------------------------------------------------------------
+
+/**
+ * Builds a compact LLM prompt using the skill's compact instructions section.
+ * Used for the Ollama (local) extraction path.
+ *
+ * @param {string} projectName
+ * @param {Array}  events
+ * @returns {string|null} — null if compact prompt not available in the skill file
+ */
+function buildCompactExtractPrompt(projectName, events) {
+  const compact = loadCompactPrompt('knowledge-extractor');
+  if (!compact) return null;
+  const eventLines = formatEventsForLLM(events);
+  return [
+    `Project: ${projectName}`,
+    '',
+    'Events:',
+    eventLines,
+    '',
+    compact,
   ].join('\n');
 }
 
@@ -375,28 +380,68 @@ async function extractKnowledgeFromPrompt(db, promptId, opts = {}) {
   // Build context-aware existing entries block
   const existingEntriesBlock = buildExistingEntriesBlock(db, project.project_id, affectedFiles);
 
-  // Build prompt and call Claude CLI
-  const llmPrompt = buildExtractPrompt(project.name || project.project_id, events, existingEntriesBlock);
+  // Build prompt and call LLM (Claude CLI or local Ollama)
+  const projectName = project.name || project.project_id;
+  const llmPrompt = buildExtractPrompt(projectName, events, existingEntriesBlock);
 
   let claudeResult;
-  try {
-    claudeResult = await callClaude(llmPrompt, model);
-  } catch (err) {
-    insertPipelineRun(db, {
-      pipeline: 'knowledge_extract',
-      project_id: project.project_id,
-      model,
-      status: 'error',
-      error: err.message,
-      duration_ms: err.duration_ms || 0,
-    });
-    throw err;
+  if (opts.model === 'local') {
+    const compactPrompt = buildCompactExtractPrompt(projectName, events);
+    if (!compactPrompt) {
+      insertPipelineRun(db, {
+        pipeline: 'knowledge_extract',
+        project_id: project.project_id,
+        model: opts.ollamaModel || 'qwen2.5:7b',
+        status: 'skipped',
+        error: 'compact prompt unavailable',
+      });
+      return { inserted: 0, updated: 0, skipped: true };
+    }
+    try {
+      const ollamaResult = await callOllama(compactPrompt, opts.ollamaModel || 'qwen2.5:7b', {
+        url: opts.ollamaUrl,
+        timeout: opts.ollamaTimeout,
+      });
+      claudeResult = {
+        output: ollamaResult.output,
+        input_tokens: 0,
+        output_tokens: 0,
+        cost_usd: 0,
+        duration_ms: ollamaResult.duration_ms,
+      };
+    } catch (err) {
+      const status = (err.code === 'ECONNREFUSED' || err.name === 'TimeoutError') ? 'skipped' : 'error';
+      insertPipelineRun(db, {
+        pipeline: 'knowledge_extract',
+        project_id: project.project_id,
+        model: opts.ollamaModel || 'qwen2.5:7b',
+        status,
+        error: err.message,
+        duration_ms: 0,
+      });
+      return { inserted: 0, updated: 0, skipped: true };
+    }
+  } else {
+    try {
+      claudeResult = await callClaude(llmPrompt, model);
+    } catch (err) {
+      insertPipelineRun(db, {
+        pipeline: 'knowledge_extract',
+        project_id: project.project_id,
+        model,
+        status: 'error',
+        error: err.message,
+        duration_ms: err.duration_ms || 0,
+      });
+      throw err;
+    }
   }
 
+  const effectiveModel = opts.model === 'local' ? (opts.ollamaModel || 'qwen2.5:7b') : model;
   insertPipelineRun(db, {
     pipeline: 'knowledge_extract',
     project_id: project.project_id,
-    model,
+    model: effectiveModel,
     status: 'success',
     input_tokens: claudeResult.input_tokens,
     output_tokens: claudeResult.output_tokens,
@@ -419,9 +464,9 @@ async function extractKnowledgeFromPrompt(db, promptId, opts = {}) {
 // ---------------------------------------------------------------------------
 
 module.exports = {
-  loadSkillTemplate,
   buildExistingEntriesBlock,
   buildExtractPrompt,
+  buildCompactExtractPrompt,
   callClaude,
   parseJsonResponse,
   mergeOrUpdate,
