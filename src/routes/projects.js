@@ -8,7 +8,6 @@ const {
 } = require('../db/projects');
 const { queryPipelineRuns, getPipelineRunStats } = require('../db/pipeline-runs');
 const { queryAutoEvolvesByProject } = require('../evolve/queries');
-const { queryDailyReviewsByProject, queryInsightsByProject } = require('../review/queries');
 const { parsePagination, errorReply } = require('../lib/format');
 
 module.exports = async function projectsRoutes(app, opts) {
@@ -115,30 +114,4 @@ module.exports = async function projectsRoutes(app, opts) {
     });
   });
 
-  app.get('/api/projects/:id/daily-reviews', async (request, reply) => {
-    const name = lookupProjectName(request.params.id);
-    if (!name) return errorReply(reply, 404, 'Project not found');
-    const { page, perPage } = parsePagination(request.query);
-    return queryDailyReviewsByProject(db, name, {
-      review_date: request.query.review_date || undefined,
-      status: request.query.status || undefined,
-      category: request.query.category || undefined,
-      page,
-      per_page: perPage,
-    });
-  });
-
-  app.get('/api/projects/:id/daily-review-insights', async (request, reply) => {
-    const name = lookupProjectName(request.params.id);
-    if (!name) return errorReply(reply, 404, 'Project not found');
-    const { page, perPage } = parsePagination(request.query);
-    return queryInsightsByProject(db, name, {
-      review_date: request.query.review_date || undefined,
-      insight_type: request.query.insight_type || undefined,
-      status: request.query.status || undefined,
-      severity: request.query.severity || undefined,
-      page,
-      per_page: perPage,
-    });
-  });
 };

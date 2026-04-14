@@ -125,8 +125,6 @@ function buildApp(opts = {}) {
       try { runRetention(db, retentionOpts); } catch { /* non-critical */ }
     }, ONE_DAY_MS));
 
-    // Daily review: handled by external script (launchd 3 AM daily)
-    // Manual trigger available via POST /api/daily-reviews/run
   }
 
   // Create opts object to pass to all route plugins
@@ -150,7 +148,6 @@ function buildApp(opts = {}) {
   app.register(require('./routes/inventory'), routeOpts);
   app.register(require('./routes/knowledge'), routeOpts);
   app.register(require('./routes/auto-evolves'), routeOpts);
-  app.register(require('./routes/daily-reviews'), routeOpts);
 
   // ── Cleanup on close ───────────────────────────────────────────────────
 
