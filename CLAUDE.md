@@ -2,7 +2,7 @@
 
 @.claude/knowledge/index.md
 
-Local analytics dashboard and expert system for Claude Code. Tracks usage via hooks, extracts project knowledge via LLM post-ingest, and surfaces learning through auto-evolve patterns and daily reviews.
+Local analytics dashboard and expert system for Claude Code. Tracks usage via hooks, extracts project knowledge via LLM post-ingest, and surfaces learning through auto-evolve patterns.
 
 ## Architecture Overview
 
@@ -29,10 +29,6 @@ Hooks (Claude Code)          Server (Fastify)              Frontend (SPA)
                               │  Knowledge   │──→ <project>/.claude/knowledge/*.md
                               │  vault       │    one file per category
                               │              │
-                              │  Daily review│──→ daily_reviews table + reports/*.md
-                              │  (3AM launchd│    Opus 4.6 analysis
-                              │  + API POST) │
-                              │              │
                               │  Retention   │──→ compacts/deletes old events (daily)
                               └──────────────┘
 ```
@@ -51,9 +47,8 @@ Hooks (Claude Code)          Server (Fastify)              Frontend (SPA)
 5. **Auto-Evolve**: Observer patterns → instinct files → `auto_evolves` table → auto-promote when confidence >= 0.85 (no rejections, blacklists agent/hook) → component files written to `~/.claude/`
 6. **Knowledge Extraction**: After each prompt is ingested, `src/knowledge/extract.js` invokes Opus to extract project-specific understanding from recent events. Entries stored in `knowledge_entries` table. Cold-start scan bootstraps from key project files (`README.md`, `package.json`, `CLAUDE.md`)
 7. **Knowledge Vault**: `src/knowledge/vault.js` renders `knowledge_entries` as markdown files in `<project>/.claude/knowledge/` — one file per category. Uses content hashing (`kg_vault_hashes` table) to skip unchanged content
-8. **Daily Review**: 3 AM daily → `src/review/pipeline.js` reads all component files + work history + best practices → Opus analysis → `daily_reviews` table + report `.md` in `reports/`. Triggerable via API
-9. **Retention**: Daily timer compacts tool data after 7 days (NULL tool_input/response), deletes events after 90 days. Configurable via `retention_warm_days` / `retention_cold_days`
-10. **API + Frontend**: Fastify serves REST endpoints on `127.0.0.1:3827`. Vanilla JS SPA with hash-based routing, Chart.js + Cytoscape.js for visualization
+8. **Retention**: Daily timer compacts tool data after 7 days (NULL tool_input/response), deletes events after 90 days. Configurable via `retention_warm_days` / `retention_cold_days`
+9. **API + Frontend**: Fastify serves REST endpoints on `127.0.0.1:3827`. Vanilla JS SPA with hash-based routing, Chart.js + Cytoscape.js for visualization
 
 ## Directory Structure
 
@@ -99,11 +94,6 @@ open-pulse/
 │   │   ├── vault.js            # Entries → markdown files in .claude/knowledge/
 │   │   ├── scan.js             # Cold-start scan from project files
 │   │   └── queries.js          # knowledge_entries + vault hash queries
-│   ├── review/                 # Daily review pipeline
-│   │   ├── pipeline.js         # Orchestrate: context → Opus → save
-│   │   ├── context.js          # Read components + work history
-│   │   ├── prompt.md           # Opus prompt template
-│   │   └── queries.js          # daily_reviews CRUD
 │   └── routes/                 # Fastify route plugins (11 files)
 │       ├── health.js           # /api/health, /api/overview
 │       ├── events.js           # /api/events, /api/sessions
@@ -114,8 +104,7 @@ open-pulse/
 │       ├── config.js           # /api/config, /api/errors, /api/ingest
 │       ├── inventory.js        # /api/inventory/:type
 │       ├── knowledge.js        # /api/knowledge/*
-│       ├── auto-evolves.js     # /api/auto-evolves/*
-│       └── daily-reviews.js    # /api/daily-reviews/*
+│       └── auto-evolves.js     # /api/auto-evolves/*
 ├── scripts/                    # CLI utilities + installation
 │   ├── install.sh              # 8-step installer (npm, dirs, DB, backfill, symlinks, agents, hooks, launchd)
 │   ├── uninstall.sh            # 4-step uninstaller (symlinks, hooks, launchd)
@@ -135,14 +124,12 @@ open-pulse/
 │       ├── learning-projects.js # Projects list + detail (session breakdown)
 │       ├── knowledge.js        # 2-tab: Notes editor (tab 1) + Projects & Sync (tab 2)
 │       ├── auto-evolves.js     # Auto-evolve patterns list + promote/revert UI
-│       ├── daily-reviews.js    # Daily review suggestions list + accept/dismiss UI
 │       └── settings.js         # Config editor, health, manual triggers
 ├── test/                       # Tests mirror src/ structure
 │   ├── db/                     # schema.test.js
 │   ├── ingest/                 # pipeline.test.js, collector.test.js
 │   ├── evolve/                 # sync.test.js, promote.test.js, seed.test.js, etc.
 │   ├── knowledge/              # knowledge.test.js
-│   ├── review/                 # review.test.js
 │   ├── routes/                 # routes.test.js, learning.test.js
 │   └── *.test.js               # retention, helpers, backfill-prompts
 ├── claude/                     # Expert system (symlinked to ~/.claude/ on install)
@@ -156,7 +143,6 @@ open-pulse/
 ├── data/                       # Runtime: JSONL files (gitignored)
 ├── cl/                         # Runtime: instinct YAML files (gitignored)
 ├── logs/                       # Runtime: stdout/stderr logs (gitignored)
-├── reports/                    # Daily review reports (gitignored)
 ├── config.json                 # Server config (port, intervals, thresholds)
 ├── open-pulse.db               # SQLite database (gitignored)
 └── projects.json               # Project registry (gitignored)
@@ -164,7 +150,7 @@ open-pulse/
 
 ## Database Schema
 
-14 tables:
+12 tables:
 
 | Table | Purpose | Key fields |
 |---|---|---|
@@ -176,8 +162,6 @@ open-pulse/
 | `cl_projects` | Registered projects | project_id, name, directory, session_count, last_seen_at |
 | `scan_results` | Setup scanner reports | scanned_at, report (JSON), issue counts by severity |
 | `auto_evolves` | Observer-detected patterns | id, title, target_type, confidence, observation_count, status, promoted_to |
-| `daily_reviews` | Opus analysis suggestions | id, review_date, category, title, target_type, action, confidence, status |
-| `daily_review_insights` | Cross-project insights from daily review | id, review_date, insight_type, title, projects (JSON), target_type, severity, status |
 | `knowledge_entries` | LLM-extracted project knowledge | project_id, category, title, body, source_file, status |
 | `kg_vault_hashes` | Content hashes for vault files | project_id, file_path, content_hash, generated_at |
 | `kg_sync_state` | KV state for graph sync | key, value |
@@ -247,22 +231,6 @@ open-pulse/
 | GET | `/api/auto-evolves/:id` | Single auto-evolve detail |
 | PUT | `/api/auto-evolves/:id/revert` | Revert promoted component |
 
-### Daily Review
-
-| Method | Path | Purpose |
-|---|---|---|
-| GET | `/api/daily-reviews/stats` | Counts by status, category, date |
-| GET | `/api/daily-reviews?review_date=&status=&category=` | List daily reviews |
-| GET | `/api/daily-reviews/:id` | Single daily review detail |
-| PUT | `/api/daily-reviews/:id/accept` | Accept suggestion |
-| PUT | `/api/daily-reviews/:id/dismiss` | Dismiss suggestion |
-| POST | `/api/daily-reviews/run` | Manual trigger daily review |
-| GET | `/api/daily-reviews/insights/stats` | Insight counts by type, severity |
-| GET | `/api/daily-reviews/insights?review_date=&insight_type=&status=&severity=` | List insights |
-| GET | `/api/daily-reviews/insights/:id` | Insight detail |
-| PUT | `/api/daily-reviews/insights/:id/resolve` | Mark insight resolved |
-| PUT | `/api/daily-reviews/insights/:id/dismiss` | Dismiss insight |
-
 ### Scanner
 
 | Method | Path | Purpose |
@@ -310,11 +278,6 @@ open-pulse/
 | `observer_active_project_window_hours` | 24 | Only run observer for projects with events in this window |
 | `observer_max_projects_per_run` | 5 | Hard cap on projects processed per observer cycle |
 | `observer_confidence_cap_on_first_detect` | 0.75 | Warm-up clamp for newly detected instincts |
-| `daily_review_enabled` | true | Enable daily review |
-| `daily_review_model` | "opus" | Model for daily review (opus/sonnet) |
-| `daily_review_timeout_ms` | 300000 | Timeout for daily review Claude invocation |
-| `daily_review_max_suggestions` | 25 | Max suggestions per daily review run |
-| `daily_review_history_days` | 1 | Number of days of work history to include in daily review |
 
 ## Key Design Decisions
 
@@ -327,13 +290,11 @@ open-pulse/
 - **Environment variables for testing**: `OPEN_PULSE_DB`, `OPEN_PULSE_DIR`, `OPEN_PULSE_CLAUDE_DIR` allow tests to use temp directories.
 - **Route plugins**: All API routes are organized into 11 Fastify plugins under `src/routes/`. Each receives `routeOpts` (db, dbPath, repoDir, config, componentETagFn). `src/server.js` is app factory + timer coordinator only.
 - **Prompt linking**: During ingestion, contiguous events sharing the same `user_prompt` are grouped into a `prompts` record. Each event gets a `prompt_id` FK. Enables per-turn cost, token count, duration, and event breakdown without query-time aggregation.
-- **Split feedback loops**: Two independent flows replace the old unified insights system. Flow 1 (auto-evolve): Observer (`src/evolve/observer.js`) runs hourly via the `com.open-pulse.observer` launchd service, uses Haiku 4.5 to detect patterns from recent events per active project, and writes instinct YAML files with canonical id hash. `syncInstincts` + `runAutoEvolve` then auto-promote rule/knowledge/skill to component files when confidence ≥ 0.85 (rejection_count = 0). Agents are blacklisted from auto-promote and require manual approval via `POST /api/auto-evolves/:id/promote` surfaced as a "Promote now" button in the auto-evolve detail UI. Flow 2 (daily review): Comprehensive 3AM analysis reads all component files + work history, invokes Opus for suggestions. Each flow has its own table, routes, and UI — zero shared code.
-- **Daily review pipeline**: `src/review/pipeline.js` reads full content of all component files (rules, skills, agents, hooks, memory, plugins) + best practices from `claude-code-knowledge` + day's work history. Invokes Opus for comprehensive analysis. Outputs: suggestions in `daily_reviews` table + markdown report in `reports/`.
+- **Auto-evolve feedback loop**: Observer (`src/evolve/observer.js`) runs hourly via the `com.open-pulse.observer` launchd service, uses Haiku 4.5 to detect patterns from recent events per active project, and writes instinct YAML files with canonical id hash. `syncInstincts` + `runAutoEvolve` then auto-promote rule/knowledge/skill to component files when confidence ≥ 0.85 (rejection_count = 0). Agents are blacklisted from auto-promote and require manual approval via `POST /api/auto-evolves/:id/promote` surfaced as a "Promote now" button in the auto-evolve detail UI.
 - **Knowledge entries architecture**: Replaces KG (`kg_nodes`/`kg_edges`). LLM (Opus) extracts project understanding after each prompt. Entries stored in `knowledge_entries` table, rendered as markdown vault files per category in `<project>/.claude/knowledge/`. Cold-start scan bootstraps knowledge from key project files. No confidence scoring — entries are factual, not behavioral patterns.
 - **`cl_` DB prefix**: The `cl_` prefix on DB tables (e.g., `cl_projects`) and the `cl/` runtime directory stand for the instinct-based observer subsystem. The code itself lives in `src/evolve/`.
 - **3-tier retention**: hot (0-7d full data), warm (7-90d NULLs tool_input/response), cold (90d+ deleted). Configurable, runs daily. Sessions never deleted.
 - **Cold start seeding**: 10 universal starter instincts + CLAUDE.md rule parser. Idempotent — skips existing files on reinstall.
-- **Cross-project daily review**: Pipeline scans all registered project configs (CLAUDE.md, .claude/rules|skills|agents|knowledge) from `cl_projects` + `projects.json`. Cross-project insights stored in separate `daily_review_insights` table with types: duplicate, conflict, gap, unused, cross_dependency. Uses Opus 1M context with raw content for maximum analysis quality.
 
 ## Commands
 
@@ -401,4 +362,4 @@ Token rates per million tokens (in `src/ingest/collector.js`):
 - **Database**: better-sqlite3 (WAL mode, 3s busy timeout)
 - **Frontend**: Vanilla JS ES modules, Chart.js 4 (CDN), Cytoscape.js 3 (CDN)
 - **Tests**: Node.js built-in test runner (`node --test`)
-- **Service**: macOS launchd (com.open-pulse server + com.open-pulse.daily-review daily 3 AM)
+- **Service**: macOS launchd (com.open-pulse server + com.open-pulse.observer hourly)
