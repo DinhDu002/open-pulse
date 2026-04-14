@@ -10,6 +10,7 @@ const {
   insertEntryHistory,
 } = require('./queries');
 const { insertPipelineRun } = require('../db/pipeline-runs');
+const { formatEventsForLLM } = require('../lib/format-events');
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -25,12 +26,12 @@ const VALID_CATEGORIES = new Set([
 // ---------------------------------------------------------------------------
 
 /**
- * Reads the knowledge-entry-format skill file as the source of truth for
+ * Reads the knowledge-extractor skill file as the source of truth for
  * extraction rules. Returns the markdown content (without YAML frontmatter)
  * or null if the file is missing.
  */
 function loadSkillTemplate() {
-  const skillPath = path.join(__dirname, '..', '..', 'claude', 'skills', 'knowledge-entry-format', 'SKILL.md');
+  const skillPath = path.join(__dirname, '..', '..', 'claude', 'skills', 'knowledge-extractor', 'SKILL.md');
   try {
     const raw = fs.readFileSync(skillPath, 'utf8');
     // Strip YAML frontmatter (between --- markers)
@@ -107,30 +108,7 @@ function buildExistingEntriesBlock(db, projectId, affectedFiles) {
  * @returns {string}
  */
 function buildExtractPrompt(projectName, events, existingEntriesBlock = '') {
-  const eventLines = events.map((ev, i) => {
-    let detail = '';
-
-    // Extract key fields from tool_input JSON
-    if (ev.tool_input) {
-      let input = {};
-      try { input = JSON.parse(ev.tool_input); } catch { /* use empty */ }
-
-      const key = input.file_path || input.command || input.pattern
-        || input.path || input.query || null;
-      if (key) detail += ` [${key}]`;
-    }
-
-    // Truncate tool_response to 300 chars
-    let response = '';
-    if (ev.tool_response) {
-      response = String(ev.tool_response).slice(0, 300);
-      if (ev.tool_response.length > 300) response += '…';
-    }
-
-    const lines = [`${i + 1}. [${ev.event_type}] ${ev.name || ''}${detail}`];
-    if (response) lines.push(`   → ${response}`);
-    return lines.join('\n');
-  }).join('\n');
+  const eventLines = formatEventsForLLM(events);
 
   const existingBlock = existingEntriesBlock || '';
 
