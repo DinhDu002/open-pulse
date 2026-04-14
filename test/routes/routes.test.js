@@ -803,45 +803,12 @@ describe('op-server', () => {
     });
   });
 
-  // -- Daily review run route regression (TC-R1, TC-R2) --
-
-  it('TC-R1: POST /api/daily-reviews/run without body.date does not use yesterday', async () => {
-    const res = await app.inject({
-      method: 'POST',
-      url: '/api/daily-reviews/run',
-      headers: { 'content-type': 'application/json' },
-      payload: {},
-    });
-    // 500 expected (claude not available), but should not be a date error
-    assert.ok([200, 500].includes(res.statusCode));
-    if (res.statusCode === 500) {
-      const body = JSON.parse(res.body);
-      assert.ok(body.error || body.message, 'Should have error message');
-    }
-  });
-
-  it('TC-R2: POST /api/daily-reviews/run with explicit date passes it through', async () => {
-    const res = await app.inject({
-      method: 'POST',
-      url: '/api/daily-reviews/run',
-      headers: { 'content-type': 'application/json' },
-      payload: { date: '2026-04-10' },
-    });
-    // 500 expected (claude not available in test env)
-    assert.ok([200, 500].includes(res.statusCode));
-    if (res.statusCode === 500) {
-      const body = JSON.parse(res.body);
-      assert.ok(body.error || body.message, 'Should have error message');
-    }
-  });
-
   describe('pipeline-runs API', () => {
     before(() => {
       const { insertPipelineRun } = require('../../src/db/pipeline-runs');
       const testDb = require('better-sqlite3')(process.env.OPEN_PULSE_DB);
       insertPipelineRun(testDb, { pipeline: 'knowledge_extract', project_id: 'proj-1', model: 'sonnet', status: 'success', input_tokens: 1200, output_tokens: 380, duration_ms: 4200 });
       insertPipelineRun(testDb, { pipeline: 'knowledge_scan', project_id: 'proj-1', model: 'sonnet', status: 'error', error: 'timeout', input_tokens: 500, output_tokens: 0, duration_ms: 30000 });
-      insertPipelineRun(testDb, { pipeline: 'daily_review', project_id: null, model: 'opus', status: 'success', input_tokens: 8000, output_tokens: 2000, duration_ms: 120000 });
       testDb.close();
     });
 
@@ -863,8 +830,7 @@ describe('op-server', () => {
       const res = await app.inject({ method: 'GET', url: '/api/pipeline-runs/stats' });
       assert.equal(res.statusCode, 200);
       const body = JSON.parse(res.body);
-      // >= 3 because other tests in the suite may insert daily_review pipeline runs
-      assert.ok(body.total_runs >= 3);
+      assert.ok(body.total_runs >= 2);
       assert.ok(body.total_input_tokens > 0);
       assert.ok(Array.isArray(body.by_pipeline));
     });
@@ -876,7 +842,7 @@ describe('op-server', () => {
     });
   });
 
-  describe('project-scoped auto-evolves / daily-reviews API', () => {
+  describe('project-scoped auto-evolves API', () => {
     const PROJ_ID = 'proj-scoped';
     const PROJ_NAME = 'scoped-demo';
 
@@ -897,20 +863,6 @@ describe('op-server', () => {
       aeStmt.run('ae-tagged-1', 'Tagged AE', 'desc', 'rule', 0.5, 2, JSON.stringify([PROJ_NAME]), 'active', '2026-04-11T00:00:00Z', '2026-04-11T00:00:00Z');
       aeStmt.run('ae-global-1', 'Global AE', 'desc', 'rule', 0.5, 2, null, 'active', '2026-04-11T00:00:00Z', '2026-04-11T00:00:00Z');
 
-      // Seed daily_reviews rows
-      const drStmt = testDb.prepare(
-        "INSERT INTO daily_reviews (id, review_date, category, title, description, target_type, action, confidence, reasoning, summary_vi, projects, status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)"
-      );
-      drStmt.run('dr-tagged-1', '2026-04-11', 'cleanup', 'Tagged DR', 'desc', 'rule', 'remove', 0.6, 'r', 'v', JSON.stringify([PROJ_NAME]), '2026-04-11T00:00:00Z');
-      drStmt.run('dr-global-1', '2026-04-11', 'cleanup', 'Global DR', 'desc', 'rule', 'remove', 0.6, 'r', 'v', null, '2026-04-11T00:00:00Z');
-
-      // Seed daily_review_insights row
-      const iStmt = testDb.prepare(
-        "INSERT INTO daily_review_insights (id, review_date, insight_type, title, description, projects, target_type, severity, reasoning, summary_vi, status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)"
-      );
-      iStmt.run('dri-tagged-1', '2026-04-11', 'duplicate', 'Tagged Insight', 'desc', JSON.stringify([PROJ_NAME, 'other']), 'rule', 'warning', 'r', 'v', '2026-04-11T00:00:00Z');
-      iStmt.run('dri-other-1', '2026-04-11', 'gap', 'Other Insight', 'desc', JSON.stringify(['other']), 'rule', 'info', 'r', 'v', '2026-04-11T00:00:00Z');
-
       testDb.close();
     });
 
@@ -923,32 +875,9 @@ describe('op-server', () => {
       assert.equal(body.rows[0].title, 'Tagged AE');
     });
 
-    it('GET /api/projects/:id/daily-reviews returns only project-tagged rows', async () => {
-      const res = await app.inject({ method: 'GET', url: '/api/projects/' + PROJ_ID + '/daily-reviews' });
-      assert.equal(res.statusCode, 200);
-      const body = JSON.parse(res.body);
-      assert.equal(body.total, 1);
-      assert.equal(body.rows[0].title, 'Tagged DR');
-    });
-
-    it('GET /api/projects/:id/daily-review-insights returns insights mentioning project', async () => {
-      const res = await app.inject({ method: 'GET', url: '/api/projects/' + PROJ_ID + '/daily-review-insights' });
-      assert.equal(res.statusCode, 200);
-      const body = JSON.parse(res.body);
-      assert.equal(body.total, 1);
-      assert.equal(body.rows[0].title, 'Tagged Insight');
-    });
-
     it('GET /api/projects/:id/auto-evolves returns 404 for unknown project', async () => {
       const res = await app.inject({ method: 'GET', url: '/api/projects/no-such-project/auto-evolves' });
       assert.equal(res.statusCode, 404);
-    });
-
-    it('GET /api/projects/:id/daily-reviews honors pagination', async () => {
-      const res = await app.inject({ method: 'GET', url: '/api/projects/' + PROJ_ID + '/daily-reviews?page=1&per_page=5' });
-      const body = JSON.parse(res.body);
-      assert.equal(body.page, 1);
-      assert.equal(body.per_page, 5);
     });
   });
 
