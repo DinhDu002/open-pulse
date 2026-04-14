@@ -95,7 +95,7 @@ module.exports = async function projectsRoutes(app, opts) {
     return queryPipelineRuns(db, { projectId, pipeline, status, page, perPage: limit });
   });
 
-  // ── Project-scoped: auto-evolves, daily-reviews, insights ────────────────
+  // ── Project-scoped: auto-evolves ──────────────────────────────────────────
 
   function lookupProjectName(projectId) {
     const row = db.prepare('SELECT name FROM cl_projects WHERE project_id = ?').get(projectId);
