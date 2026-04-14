@@ -144,12 +144,15 @@ open-pulse/
 ├── claude/                     # Expert system (symlinked to ~/.claude/ on install)
 │   ├── agents/
 │   │   └── claude-code-expert.md    # Orchestrator agent using all skills
-│   └── skills/                 # 6 skills (knowledge, config, scanner, creators)
-│       ├── knowledge-extractor/     # Knowledge extraction with 8 reference docs
-│       ├── pattern-detector/        # Pattern detection via Ollama
+│   └── skills/                 # 8 skills (knowledge, patterns, config, scanner, creators)
+│       ├── claude-code-knowledge/   # Knowledge base with 8 reference docs
 │       ├── claude-config-advisor/   # Decision tree for component recommendations
 │       ├── claude-setup-scanner/    # Setup inventory and gap analysis
-│       └── agent-creator/           # Agent scaffolding
+│       ├── knowledge-extractor/     # Knowledge entry extraction rules (Ollama + Opus)
+│       ├── pattern-detector/        # Pattern detection rules (Ollama + Opus)
+│       ├── agent-creator/           # Agent scaffolding
+│       ├── hook-creator/            # Hook configuration generator
+│       └── rule-creator/            # Rule creation with conflict detection
 ├── data/                       # Runtime: JSONL files (gitignored)
 ├── cl/                         # Runtime: instinct YAML files (gitignored)
 ├── logs/                       # Runtime: stdout/stderr logs (gitignored)

@@ -167,11 +167,11 @@ function buildApp(opts = {}) {
     const ollamaUrl = config.ollama_url || 'http://localhost:11434';
     fetch(`${ollamaUrl}/api/tags`, { signal: AbortSignal.timeout(3000) })
       .then(res => {
-        if (res.ok) fastify.log.info(`Ollama available at ${ollamaUrl}`);
-        else fastify.log.warn(`Ollama returned ${res.status} at ${ollamaUrl}`);
+        if (res.ok) app.log.info(`Ollama available at ${ollamaUrl}`);
+        else app.log.warn(`Ollama returned ${res.status} at ${ollamaUrl}`);
       })
       .catch(() => {
-        fastify.log.warn(`Ollama not available at ${ollamaUrl} — local extraction will be skipped`);
+        app.log.warn(`Ollama not available at ${ollamaUrl} — local extraction will be skipped`);
       });
   }
 
