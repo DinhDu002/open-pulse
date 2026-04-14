@@ -174,40 +174,6 @@ CREATE TABLE IF NOT EXISTS auto_evolves (
 CREATE INDEX IF NOT EXISTS idx_auto_evolves_status ON auto_evolves(status);
 CREATE INDEX IF NOT EXISTS idx_auto_evolves_target ON auto_evolves(target_type);
 
-CREATE TABLE IF NOT EXISTS daily_reviews (
-  id                TEXT PRIMARY KEY,
-  review_date       TEXT NOT NULL,
-  category          TEXT,
-  title             TEXT NOT NULL,
-  description       TEXT,
-  target_type       TEXT,
-  action            TEXT,
-  confidence        REAL,
-  reasoning         TEXT,
-  status            TEXT DEFAULT 'pending',
-  created_at        TEXT NOT NULL
-);
-CREATE INDEX IF NOT EXISTS idx_daily_reviews_date ON daily_reviews(review_date);
-CREATE INDEX IF NOT EXISTS idx_daily_reviews_status ON daily_reviews(status);
-
-CREATE TABLE IF NOT EXISTS daily_review_insights (
-  id                TEXT PRIMARY KEY,
-  review_date       TEXT NOT NULL,
-  insight_type      TEXT NOT NULL,
-  title             TEXT NOT NULL,
-  description       TEXT,
-  projects          TEXT,
-  target_type       TEXT,
-  severity          TEXT DEFAULT 'info',
-  reasoning         TEXT,
-  summary_vi        TEXT,
-  status            TEXT DEFAULT 'pending',
-  created_at        TEXT NOT NULL
-);
-CREATE INDEX IF NOT EXISTS idx_dri_date ON daily_review_insights(review_date);
-CREATE INDEX IF NOT EXISTS idx_dri_type ON daily_review_insights(insight_type);
-CREATE INDEX IF NOT EXISTS idx_dri_status ON daily_review_insights(status);
-
 CREATE TABLE IF NOT EXISTS pipeline_runs (
   id            INTEGER PRIMARY KEY AUTOINCREMENT,
   pipeline      TEXT NOT NULL,
@@ -237,6 +203,8 @@ function createDb(dbPath) {
   db.exec('DROP TABLE IF EXISTS cl_instincts');
   db.exec('DROP TABLE IF EXISTS suggestions');
   db.exec('DROP TABLE IF EXISTS kb_notes');
+  db.exec('DROP TABLE IF EXISTS daily_reviews');
+  db.exec('DROP TABLE IF EXISTS daily_review_insights');
   // Migrate existing databases: add columns that may not exist yet
   const migrations = [
     'ALTER TABLE events ADD COLUMN tool_input TEXT',
@@ -378,28 +346,8 @@ function createDb(dbPath) {
     })();
   }
 
-  // Migrate: add summary_vi column to daily_reviews
-  try { db.prepare('ALTER TABLE daily_reviews ADD COLUMN summary_vi TEXT').run(); } catch { /* already exists */ }
-
-  // Migrate: add projects column (JSON array of project names) to auto_evolves and daily_reviews
+  // Migrate: add projects column (JSON array of project names) to auto_evolves
   try { db.prepare('ALTER TABLE auto_evolves ADD COLUMN projects TEXT').run(); } catch { /* already exists */ }
-  try { db.prepare('ALTER TABLE daily_reviews ADD COLUMN projects TEXT').run(); } catch { /* already exists */ }
-
-  // Migrate: add plan generation columns to daily_reviews
-  try { db.prepare('ALTER TABLE daily_reviews ADD COLUMN plan_md TEXT').run(); } catch { /* already exists */ }
-  try { db.prepare('ALTER TABLE daily_reviews ADD COLUMN handoff_prompt TEXT').run(); } catch { /* already exists */ }
-  try { db.prepare('ALTER TABLE daily_reviews ADD COLUMN plan_status TEXT').run(); } catch { /* already exists */ }
-  try { db.prepare('ALTER TABLE daily_reviews ADD COLUMN plan_generated_at TEXT').run(); } catch { /* already exists */ }
-  try { db.prepare('ALTER TABLE daily_reviews ADD COLUMN plan_error TEXT').run(); } catch { /* already exists */ }
-  try { db.prepare('ALTER TABLE daily_reviews ADD COLUMN plan_run_id INTEGER').run(); } catch { /* already exists */ }
-
-  // Cleanup orphan running plans from previous server instance
-  try {
-    db.prepare(`UPDATE daily_reviews
-                SET plan_status = 'error',
-                    plan_error = 'Server restarted during plan generation'
-                WHERE plan_status = 'running'`).run();
-  } catch { /* table may not exist on first boot */ }
 
   return db;
 }
