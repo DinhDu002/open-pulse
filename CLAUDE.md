@@ -29,6 +29,10 @@ Hooks (Claude Code)          Server (Fastify)              Frontend (SPA)
                               │  Knowledge   │──→ <project>/.claude/knowledge/*.md
                               │  vault       │    one file per category
                               │              │
+                              │  Ollama      │──→ knowledge_entries + auto_evolves
+                              │  (per-prompt │    local model extraction
+                              │   extract)   │
+                              │              │
                               │  Retention   │──→ compacts/deletes old events (daily)
                               └──────────────┘
 ```
@@ -46,6 +50,7 @@ Hooks (Claude Code)          Server (Fastify)              Frontend (SPA)
 4. **Filesystem Sync**: Server timer (60s) syncs `projects.json`, instinct files, and components (skills/agents) from disk into DB via `src/ingest/sync.js`
 5. **Auto-Evolve**: Observer patterns → instinct files → `auto_evolves` table → auto-promote when confidence >= 0.85 (no rejections, blacklists agent/hook) → component files written to `~/.claude/`
 6. **Knowledge Extraction**: After each prompt is ingested, `src/knowledge/extract.js` invokes Opus to extract project-specific understanding from recent events. Entries stored in `knowledge_entries` table. Cold-start scan bootstraps from key project files (`README.md`, `package.json`, `CLAUDE.md`)
+6b. **Pattern Detection**: After each prompt is ingested, `src/evolve/detect.js` invokes local Ollama model to detect reusable behavioral patterns from recent events. Entries stored in `auto_evolves` table with status `draft`.
 7. **Knowledge Vault**: `src/knowledge/vault.js` renders `knowledge_entries` as markdown files in `<project>/.claude/knowledge/` — one file per category. Uses content hashing (`kg_vault_hashes` table) to skip unchanged content
 8. **Retention**: Daily timer compacts tool data after 7 days (NULL tool_input/response), deletes events after 90 days. Configurable via `retention_warm_days` / `retention_cold_days`
 9. **API + Frontend**: Fastify serves REST endpoints on `127.0.0.1:3827`. Vanilla JS SPA with hash-based routing, Chart.js + Cytoscape.js for visualization
@@ -63,7 +68,10 @@ open-pulse/
 │   │   ├── paths.js            # getClaudeDir(), getComponentPath()
 │   │   ├── plugins.js          # getInstalledPlugins(), getPluginComponents()
 │   │   ├── projects.js         # getKnownProjectPaths(), getProjectAgents()
-│   │   └── format.js           # parseQualifiedName(), errorReply(), parsePagination()
+│   │   ├── format.js           # parseQualifiedName(), errorReply(), parsePagination()
+│   │   ├── skill-loader.js     # loadSkillBody(), loadCompactPrompt()
+│   │   ├── ollama.js           # callOllama() HTTP client
+│   │   └── format-events.js    # formatEventsForLLM() shared formatter
 │   ├── db/                     # Database layer
 │   │   ├── schema.js           # SQLite schema, migrations, createDb()
 │   │   ├── events.js           # Event insert/batch
@@ -86,6 +94,7 @@ open-pulse/
 │   │   ├── queries.js          # auto_evolves table queries
 │   │   ├── observer.js         # Background observer (Haiku pattern detection)
 │   │   ├── observer-prompt.md  # Haiku prompt template
+│   │   ├── detect.js           # Pattern detection pipeline (Ollama)
 │   │   ├── instinct-updater.js # YAML frontmatter feedback loop
 │   │   ├── seed.js             # Cold-start: 10 starter instincts + CLAUDE.md parser
 │   │   └── export-events.js    # SQLite → JSONL for observer
@@ -136,7 +145,8 @@ open-pulse/
 │   ├── agents/
 │   │   └── claude-code-expert.md    # Orchestrator agent using all skills
 │   └── skills/                 # 6 skills (knowledge, config, scanner, creators)
-│       ├── claude-code-knowledge/   # Knowledge base with 8 reference docs
+│       ├── knowledge-extractor/     # Knowledge extraction with 8 reference docs
+│       ├── pattern-detector/        # Pattern detection via Ollama
 │       ├── claude-config-advisor/   # Decision tree for component recommendations
 │       ├── claude-setup-scanner/    # Setup inventory and gap analysis
 │       └── agent-creator/           # Agent scaffolding
@@ -278,6 +288,10 @@ open-pulse/
 | `observer_active_project_window_hours` | 24 | Only run observer for projects with events in this window |
 | `observer_max_projects_per_run` | 5 | Hard cap on projects processed per observer cycle |
 | `observer_confidence_cap_on_first_detect` | 0.75 | Warm-up clamp for newly detected instincts |
+| `ollama_url` | `"http://localhost:11434"` | Ollama API base URL |
+| `ollama_model` | `"qwen2.5:7b"` | Local model for per-prompt extraction |
+| `ollama_timeout_ms` | 90000 | Ollama HTTP request timeout |
+| `pattern_detect_enabled` | true | Enable per-prompt pattern detection via Ollama |
 
 ## Key Design Decisions
 
