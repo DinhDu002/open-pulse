@@ -7,7 +7,8 @@ const fastifyStatic = require('@fastify/static');
 
 const { createDb } = require('./db/schema');
 const { extractKnowledgeFromPrompt } = require('./knowledge/extract');
-const { ingestAll, setKnowledgeHook } = require('./ingest/pipeline');
+const { detectPatternsFromPrompt } = require('./evolve/detect');
+const { ingestAll, setKnowledgeHook, setPatternHook } = require('./ingest/pipeline');
 const { runRetention } = require('./retention');
 const { parseQualifiedName } = require('./lib/format');
 const { syncInstincts } = require('./evolve/sync');
@@ -64,7 +65,19 @@ function buildApp(opts = {}) {
   if (config.knowledge_enabled !== false) {
     setKnowledgeHook(extractKnowledgeFromPrompt, {
       maxEvents: config.knowledge_max_events_per_prompt ?? 50,
-      model: config.knowledge_model || 'opus',
+      model: config.knowledge_model || 'local',
+      ollamaModel: config.ollama_model || 'qwen2.5:7b',
+      ollamaUrl: config.ollama_url || 'http://localhost:11434',
+      ollamaTimeout: config.ollama_timeout_ms || 90000,
+    });
+  }
+
+  // Pattern detection via Ollama (per-prompt)
+  if (config.pattern_detect_enabled !== false) {
+    setPatternHook(detectPatternsFromPrompt, {
+      model: config.ollama_model || 'qwen2.5:7b',
+      url: config.ollama_url || 'http://localhost:11434',
+      timeout: config.ollama_timeout_ms || 90000,
     });
   }
 

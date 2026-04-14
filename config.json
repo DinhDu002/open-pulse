@@ -6,9 +6,9 @@
   "max_prompt_length": 1000,
   "retention_warm_days": 7,
   "retention_cold_days": 90,
-  "knowledge_enabled": false,
+  "knowledge_enabled": true,
   "knowledge_max_events_per_prompt": 100,
-  "knowledge_model": "haiku",
+  "knowledge_model": "local",
   "knowledge_scan_files": [
     "README.md",
     "package.json",
@@ -27,5 +27,9 @@
   "observer_max_events_per_project": 500,
   "observer_active_project_window_hours": 24,
   "observer_max_projects_per_run": 5,
-  "observer_confidence_cap_on_first_detect": 0.75
+  "observer_confidence_cap_on_first_detect": 0.75,
+  "ollama_url": "http://localhost:11434",
+  "ollama_model": "qwen2.5:7b",
+  "ollama_timeout_ms": 90000,
+  "pattern_detect_enabled": true
 }

@@ -15,6 +15,14 @@ function setKnowledgeHook(extractFn, config) {
   _knowledgeConfig = config;
 }
 
+let _detectPatterns = null;
+let _patternConfig = null;
+
+function setPatternHook(detectFn, config) {
+  _detectPatterns = detectFn;
+  _patternConfig = config;
+}
+
 // ---------------------------------------------------------------------------
 // Project name resolution
 // ---------------------------------------------------------------------------
@@ -148,12 +156,23 @@ function processContent(db, processingPath, type) {
       insertEventBatch(db, events);
       updatePromptStatsAfterInsert(db, events);
 
+      // Collect prompt IDs for post-processing hooks
+      const promptIds = new Set(events.map(e => e.prompt_id).filter(Boolean));
+
       // Trigger knowledge extraction for new prompts (non-blocking)
       if (_extractKnowledge) {
-        const promptIds = new Set(events.map(e => e.prompt_id).filter(Boolean));
         for (const pid of promptIds) {
           setImmediate(() => {
             _extractKnowledge(db, pid, _knowledgeConfig || {}).catch(() => {});
+          });
+        }
+      }
+
+      // Trigger pattern detection for new prompts (non-blocking)
+      if (_detectPatterns) {
+        for (const pid of promptIds) {
+          setImmediate(() => {
+            _detectPatterns(db, pid, _patternConfig || {}).catch(() => {});
           });
         }
       }
@@ -258,4 +277,4 @@ function ingestAll(db, dataDir) {
 // Exports
 // ---------------------------------------------------------------------------
 
-module.exports = { ingestFile, ingestAll, MAX_RETRIES, setKnowledgeHook };
+module.exports = { ingestFile, ingestAll, MAX_RETRIES, setKnowledgeHook, setPatternHook };
