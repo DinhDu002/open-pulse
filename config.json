@@ -27,15 +27,5 @@
   "observer_max_events_per_project": 500,
   "observer_active_project_window_hours": 24,
   "observer_max_projects_per_run": 5,
-  "observer_confidence_cap_on_first_detect": 0.75,
-  "daily_review_enabled": true,
-  "daily_review_model": "claude-opus-4-6[1m]",
-  "daily_review_timeout_ms": 1800000,
-  "daily_review_max_suggestions": 50,
-  "daily_review_history_days": 1,
-  "plan_generation_enabled": true,
-  "plan_generation_model": "opus",
-  "plan_generation_timeout_ms": 1800000,
-  "plan_generation_max_context_kb": 100,
-  "plan_generation_max_concurrent": 3
+  "observer_confidence_cap_on_first_detect": 0.75
 }
