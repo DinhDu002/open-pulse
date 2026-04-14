@@ -7,12 +7,11 @@ const ROUTES = {
   projects: () => import('./projects.js'),
   knowledge: () => import('./knowledge.js'),
   'auto-evolves': () => import('./auto-evolves.js'),
-  'daily-reviews': () => import('./daily-reviews.js'),
   settings: () => import('./settings.js'),
 };
 
 // Pages that hide the period selector
-const NO_PERIOD = new Set(['settings', 'knowledge', 'projects', 'auto-evolves', 'daily-reviews']);
+const NO_PERIOD = new Set(['settings', 'knowledge', 'projects', 'auto-evolves']);
 
 let currentModule = null;
 let currentPeriod = '30d';

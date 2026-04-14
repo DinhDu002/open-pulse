@@ -281,7 +281,6 @@ function renderDetailContent(el, summary, projectId) {
   var PIPELINE_COLORS = {
     knowledge_extract: '#74b9ff',
     knowledge_scan: '#a29bfe',
-    daily_review: '#fdcb6e',
     auto_evolve: '#00b894',
   };
 
@@ -382,10 +381,9 @@ function renderDetailContent(el, summary, projectId) {
       runsTableWrap.appendChild(errEl);
     });
 
-  // ── Project-scoped cards: Auto-evolves, Daily Reviews (with tabs) ─────────
+  // ── Project-scoped cards: Auto-evolves ─────────────────────────────────────
 
   buildAutoEvolvesCard(el, projectId);
-  buildDailyReviewsCard(el, projectId);
 }
 
 // ── Reusable card builders ──────────────────────────────────────────────────
@@ -598,109 +596,3 @@ function buildAutoEvolvesCard(el, projectId) {
     });
 }
 
-// ── Card 2: Daily Reviews (Suggestions + Cross-project Insights in tabs) ────
-
-var DR_CATEGORY_COLORS = {
-  adoption: '#00b894', cleanup: '#e17055', agent_creation: '#6c5ce7',
-  update: '#fdcb6e', optimization: '#74b9ff', integration: '#a29bfe',
-  cost: '#fd79a8', security: '#d63031', refinement: '#00cec9',
-};
-var DR_STATUS_COLORS = { pending: '#fdcb6e', accepted: '#00b894', dismissed: '#e17055' };
-
-var INSIGHT_TYPE_COLORS = {
-  duplicate: '#6c5ce7', conflict: '#d63031', gap: '#e17055',
-  unused: '#8b8fa3', cross_dependency: '#74b9ff',
-};
-var SEVERITY_COLORS = { info: '#74b9ff', warning: '#fdcb6e', critical: '#d63031' };
-
-function buildDailyReviewsCard(el, projectId) {
-  var tabbed = makeTabbedCard('Daily Reviews', [
-    { key: 'suggestions', label: 'Suggestions' },
-    { key: 'insights', label: 'Cross-project Insights' },
-  ]);
-
-  var sugg = makePanelContents(['Total', 'Pending', 'Accepted', 'Dismissed']);
-  tabbed.panels.suggestions.appendChild(sugg.statsRow);
-  tabbed.panels.suggestions.appendChild(sugg.tableWrap);
-
-  var ins = makePanelContents(['Total', 'Info', 'Warning', 'Critical']);
-  tabbed.panels.insights.appendChild(ins.statsRow);
-  tabbed.panels.insights.appendChild(ins.tableWrap);
-
-  el.appendChild(tabbed.card);
-
-  get('/projects/' + encodeURIComponent(projectId) + '/daily-reviews?per_page=100')
-    .then(function(data) {
-      var rows = data.rows || [];
-      var total = data.total || 0;
-      var pending = rows.filter(function(r) { return r.status === 'pending'; }).length;
-      var accepted = rows.filter(function(r) { return r.status === 'accepted'; }).length;
-      var dismissed = rows.filter(function(r) { return r.status === 'dismissed'; }).length;
-      replaceStats(sugg.statsRow, [
-        ['Total', total],
-        ['Pending', pending],
-        ['Accepted', accepted],
-        ['Dismissed', dismissed],
-      ]);
-
-      if (rows.length === 0) {
-        showEmpty(sugg.tableWrap, 'No project-tagged daily review suggestions yet');
-        return;
-      }
-
-      var t = buildTable(['Date', 'Category', 'Title', 'Action', 'Confidence', 'Status']);
-      rows.slice(0, 10).forEach(function(r) {
-        var tr = document.createElement('tr');
-        tr.style.borderBottom = '1px solid var(--border)';
-        tr.appendChild(td(r.review_date || '\u2014', 'color:var(--text-muted)'));
-        tr.appendChild(tdNode(makeBadge(r.category || 'general', DR_CATEGORY_COLORS[r.category] || '#8b8fa3')));
-        tr.appendChild(td(r.title, 'font-weight:600'));
-        tr.appendChild(td(r.action || '\u2014'));
-        tr.appendChild(td(Math.round((r.confidence || 0) * 100) + '%', "font-family:'SF Mono',monospace"));
-        tr.appendChild(tdNode(makeBadge(r.status || 'pending', DR_STATUS_COLORS[r.status] || '#8b8fa3')));
-        t.tbody.appendChild(tr);
-      });
-      sugg.tableWrap.textContent = '';
-      sugg.tableWrap.appendChild(t.table);
-    })
-    .catch(function() {
-      showError(sugg.tableWrap, 'Failed to load daily reviews');
-    });
-
-  get('/projects/' + encodeURIComponent(projectId) + '/daily-review-insights?per_page=100')
-    .then(function(data) {
-      var rows = data.rows || [];
-      var total = data.total || 0;
-      var info = rows.filter(function(r) { return r.severity === 'info'; }).length;
-      var warning = rows.filter(function(r) { return r.severity === 'warning'; }).length;
-      var critical = rows.filter(function(r) { return r.severity === 'critical'; }).length;
-      replaceStats(ins.statsRow, [
-        ['Total', total],
-        ['Info', info],
-        ['Warning', warning],
-        ['Critical', critical],
-      ]);
-
-      if (rows.length === 0) {
-        showEmpty(ins.tableWrap, 'No insights mentioning this project yet');
-        return;
-      }
-
-      var t = buildTable(['Date', 'Type', 'Severity', 'Title', 'Target']);
-      rows.slice(0, 10).forEach(function(r) {
-        var tr = document.createElement('tr');
-        tr.style.borderBottom = '1px solid var(--border)';
-        tr.appendChild(td(r.review_date || '\u2014', 'color:var(--text-muted)'));
-        tr.appendChild(tdNode(makeBadge(r.insight_type || 'unknown', INSIGHT_TYPE_COLORS[r.insight_type] || '#8b8fa3')));
-        tr.appendChild(tdNode(makeBadge(r.severity || 'info', SEVERITY_COLORS[r.severity] || '#8b8fa3')));
-        tr.appendChild(td(r.title, 'font-weight:600'));
-        tr.appendChild(td(r.target_type || '\u2014'));
-        t.tbody.appendChild(tr);
-      });
-      ins.tableWrap.textContent = '';
-      ins.tableWrap.appendChild(t.table);
-    })
-    .catch(function() {
-      showError(ins.tableWrap, 'Failed to load insights');
-    });
-}
