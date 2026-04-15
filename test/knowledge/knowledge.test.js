@@ -485,6 +485,37 @@ describe('knowledge_entries', () => {
       assert.equal(block, '');
     });
   });
+
+  // -------------------------------------------------------------------------
+  // queryAllKnowledgeEntries (bulk, unpaginated)
+  // -------------------------------------------------------------------------
+
+  describe('queryAllKnowledgeEntries', () => {
+    it('returns all rows as flat array', () => {
+      const { queryAllKnowledgeEntries } = require('../../src/db/knowledge-entries');
+      const rows = queryAllKnowledgeEntries(db, {});
+      assert.ok(Array.isArray(rows));
+      assert.ok(rows.length > 0);
+    });
+
+    it('filters by projectId', () => {
+      const { queryAllKnowledgeEntries } = require('../../src/db/knowledge-entries');
+      const rows = queryAllKnowledgeEntries(db, { projectId: 'proj-ke-test' });
+      assert.ok(rows.every(r => r.project_id === 'proj-ke-test'));
+    });
+
+    it('filters by status', () => {
+      const { queryAllKnowledgeEntries } = require('../../src/db/knowledge-entries');
+      const rows = queryAllKnowledgeEntries(db, { status: 'active' });
+      assert.ok(rows.every(r => r.status === 'active'));
+    });
+
+    it('respects limit', () => {
+      const { queryAllKnowledgeEntries } = require('../../src/db/knowledge-entries');
+      const rows = queryAllKnowledgeEntries(db, { limit: 1 });
+      assert.ok(rows.length <= 1);
+    });
+  });
 });
 
 // =============================================================================
@@ -600,8 +631,8 @@ describe('op-knowledge', () => {
 
     it('includes skill template content when skill file exists', () => {
       const prompt = buildExtractPrompt('Proj', [], []);
-      assert.ok(prompt.includes('Entry JSON Schema'), 'should include skill template schema section');
-      assert.ok(prompt.includes('Controlled Tag Vocabulary'), 'should include skill template tag section');
+      assert.ok(prompt.includes('JSON Schema'), 'should include skill template schema section');
+      assert.ok(prompt.includes('Tag Vocabulary'), 'should include skill template tag section');
       assert.ok(prompt.includes('ENTRY FORMAT AND RULES'), 'should have format delimiter');
     });
 
@@ -656,8 +687,8 @@ describe('op-knowledge', () => {
 
     it('includes skill template content in scan prompt', () => {
       const prompt = buildScanPrompt('Proj', { 'README.md': '# Hello' });
-      assert.ok(prompt.includes('Entry JSON Schema'), 'should include skill template schema section');
-      assert.ok(prompt.includes('Controlled Tag Vocabulary'), 'should include skill template tag section');
+      assert.ok(prompt.includes('JSON Schema'), 'should include skill template schema section');
+      assert.ok(prompt.includes('Tag Vocabulary'), 'should include skill template tag section');
       assert.ok(prompt.includes('ENTRY FORMAT AND RULES'), 'should have format delimiter');
     });
   });

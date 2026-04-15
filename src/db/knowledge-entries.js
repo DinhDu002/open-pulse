@@ -241,12 +241,28 @@ function getEntryHistory(db, entryId) {
 // Exports
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// Bulk query (unpaginated, for synthesize)
+// ---------------------------------------------------------------------------
+
+function queryAllKnowledgeEntries(db, opts = {}) {
+  const { projectId, category, status, limit = 500 } = opts;
+  const conditions = [];
+  const params = {};
+  if (projectId) { conditions.push('project_id = @projectId'); params.projectId = projectId; }
+  if (category)  { conditions.push('category = @category'); params.category = category; }
+  if (status)    { conditions.push('status = @status'); params.status = status; }
+  const where = conditions.length ? 'WHERE ' + conditions.join(' AND ') : '';
+  return db.prepare(`SELECT * FROM knowledge_entries ${where} ORDER BY updated_at DESC LIMIT @limit`).all({ ...params, limit });
+}
+
 module.exports = {
   makeId,
   insertKnowledgeEntry,
   upsertKnowledgeEntry,
   getKnowledgeEntry,
   queryKnowledgeEntries,
+  queryAllKnowledgeEntries,
   getKnowledgeStats,
   markKnowledgeEntryOutdated,
   deleteKnowledgeEntry,
