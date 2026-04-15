@@ -10,9 +10,6 @@ const TEST_DIR = path.join(os.tmpdir(), `op-auto-evolve-test-${Date.now()}`);
 const TEST_DB = path.join(TEST_DIR, 'test.db');
 const TEST_CLAUDE_DIR = path.join(TEST_DIR, 'claude');
 const TEST_LOG_DIR = path.join(TEST_DIR, 'logs');
-const TEST_INHERITED_DIR = path.join(TEST_DIR, 'cl', 'instincts', 'inherited');
-const TEST_PERSONAL_DIR = path.join(TEST_DIR, 'cl', 'instincts', 'personal');
-
 describe('op-auto-evolve', () => {
   let db, autoEvolve;
 
@@ -20,16 +17,13 @@ describe('op-auto-evolve', () => {
     process.env.OPEN_PULSE_CLAUDE_DIR = TEST_CLAUDE_DIR;
     fs.mkdirSync(TEST_CLAUDE_DIR, { recursive: true });
     fs.mkdirSync(TEST_LOG_DIR, { recursive: true });
-    fs.mkdirSync(TEST_INHERITED_DIR, { recursive: true });
-    fs.mkdirSync(TEST_PERSONAL_DIR, { recursive: true });
     db = require('../../src/db/schema').createDb(TEST_DB);
-    const { syncInstincts } = require('../../src/evolve/sync');
     const { generateComponent, runAutoEvolve } = require('../../src/evolve/promote');
     const { revertAutoEvolve } = require('../../src/evolve/revert');
     const { slugify } = require('../../src/lib/slugify');
     const { extractBody } = require('../../src/lib/frontmatter');
     const { getComponentPath } = require('../../src/lib/paths');
-    autoEvolve = { syncInstincts, generateComponent, runAutoEvolve, revertAutoEvolve, slugify, extractBody, getComponentPath };
+    autoEvolve = { generateComponent, runAutoEvolve, revertAutoEvolve, slugify, extractBody, getComponentPath };
   });
 
   after(() => {
@@ -106,167 +100,6 @@ describe('op-auto-evolve', () => {
 
     const knowledgePath = autoEvolve.getComponentPath('knowledge', 'facts');
     assert.ok(knowledgePath.endsWith(path.join('knowledge', 'facts.md')));
-  });
-
-  // -- syncInstincts --
-
-  it('syncInstincts upserts new instinct from inherited subdir', () => {
-    const yaml = [
-      '---',
-      'name: always-test',
-      'description: Always run tests before commit',
-      'type: rule',
-      'confidence: 0.1',
-      'seen_count: 3',
-      '---',
-      '',
-      'Always run tests before committing changes.',
-    ].join('\n');
-    fs.writeFileSync(path.join(TEST_INHERITED_DIR, 'always-test.md'), yaml);
-
-    autoEvolve.syncInstincts(db, TEST_DIR);
-
-    const rows = db.prepare('SELECT * FROM auto_evolves').all();
-    assert.equal(rows.length, 1);
-    assert.equal(rows[0].title, 'always-test');
-    assert.equal(rows[0].target_type, 'rule');
-    assert.equal(rows[0].observation_count, 3);
-    assert.equal(rows[0].description, 'Always run tests before committing changes.');
-  });
-
-  it('syncInstincts reads from personal subdir too', () => {
-    const yaml = [
-      '---',
-      'name: personal-pattern',
-      'description: A personal pattern',
-      'type: rule',
-      'confidence: 0.6',
-      '---',
-    ].join('\n');
-    fs.writeFileSync(path.join(TEST_PERSONAL_DIR, 'personal-pattern.md'), yaml);
-
-    autoEvolve.syncInstincts(db, TEST_DIR);
-
-    const row = db.prepare('SELECT * FROM auto_evolves WHERE title = ?').get('personal-pattern');
-    assert.ok(row, 'should find personal instinct in auto_evolves');
-    assert.equal(row.target_type, 'rule');
-  });
-
-  it('syncInstincts uses meta.description as fallback when no body (B2)', () => {
-    const yaml = [
-      '---',
-      'name: fallback-desc-test',
-      'description: Fallback description from frontmatter',
-      'type: rule',
-      'confidence: 0.1',
-      'seen_count: 1',
-      '---',
-    ].join('\n');
-    fs.writeFileSync(path.join(TEST_INHERITED_DIR, 'fallback-desc.md'), yaml);
-
-    autoEvolve.syncInstincts(db, TEST_DIR);
-
-    const row = db.prepare('SELECT * FROM auto_evolves WHERE title = ?').get('fallback-desc-test');
-    assert.ok(row, 'should find row');
-    assert.equal(row.description, 'Fallback description from frontmatter');
-  });
-
-  it('syncInstincts sets empty description when no body and no meta.description (B3)', () => {
-    const yaml = [
-      '---',
-      'name: no-desc-test',
-      'type: rule',
-      'confidence: 0.1',
-      'seen_count: 1',
-      '---',
-    ].join('\n');
-    fs.writeFileSync(path.join(TEST_INHERITED_DIR, 'no-desc.md'), yaml);
-
-    autoEvolve.syncInstincts(db, TEST_DIR);
-
-    const row = db.prepare('SELECT * FROM auto_evolves WHERE title = ?').get('no-desc-test');
-    assert.ok(row, 'should find row');
-    assert.equal(row.description, '');
-  });
-
-  it('syncInstincts increments confidence when observation_count grows', () => {
-    const yaml = [
-      '---',
-      'name: always-test',
-      'description: Always run tests before commit',
-      'type: rule',
-      'confidence: 0.2',
-      'seen_count: 5',
-      '---',
-      '',
-      'Always run tests before committing changes.',
-    ].join('\n');
-    fs.writeFileSync(path.join(TEST_INHERITED_DIR, 'always-test.md'), yaml);
-
-    autoEvolve.syncInstincts(db, TEST_DIR);
-
-    const row = db.prepare('SELECT * FROM auto_evolves WHERE title = ?').get('always-test');
-    assert.equal(row.observation_count, 5);
-    assert.ok(row.confidence > 0.1);
-  });
-
-  it('syncInstincts persists projects JSON array from frontmatter', () => {
-    const yaml = [
-      '---',
-      'name: project-tagged-rule',
-      'description: Only applies to open-pulse',
-      'type: rule',
-      'confidence: 0.3',
-      'seen_count: 2',
-      'projects: ["open-pulse", "carthings"]',
-      '---',
-      '',
-      'Body.',
-    ].join('\n');
-    fs.writeFileSync(path.join(TEST_PERSONAL_DIR, 'project-tagged-rule.md'), yaml);
-
-    autoEvolve.syncInstincts(db, TEST_DIR);
-
-    const row = db.prepare('SELECT * FROM auto_evolves WHERE title = ?').get('project-tagged-rule');
-    assert.ok(row, 'should find row');
-    assert.ok(row.projects, 'projects should be populated');
-    assert.deepEqual(JSON.parse(row.projects), ['open-pulse', 'carthings']);
-  });
-
-  it('syncInstincts leaves projects NULL when frontmatter has no projects field', () => {
-    const row = db.prepare('SELECT * FROM auto_evolves WHERE title = ?').get('always-test');
-    assert.ok(row, 'fixture row should exist');
-    assert.equal(row.projects, null);
-  });
-
-  it('parseProjectsField handles non-string input gracefully', () => {
-    const { parseProjectsField } = require('../../src/evolve/sync');
-    assert.equal(parseProjectsField(null), null);
-    assert.equal(parseProjectsField(undefined), null);
-    assert.equal(parseProjectsField(''), null);
-    assert.equal(parseProjectsField('not-an-array'), null);
-    assert.equal(parseProjectsField('[]'), '[]');
-    assert.equal(parseProjectsField('["a","b"]'), '["a","b"]');
-    assert.equal(parseProjectsField(['a', 'b']), '["a","b"]');
-  });
-
-  it('syncInstincts skips blacklisted target_types', () => {
-    const yaml = [
-      '---',
-      'name: auto-format-hook',
-      'description: Format on save',
-      'type: hook',
-      'confidence: 0.5',
-      'seen_count: 10',
-      '---',
-    ].join('\n');
-    fs.writeFileSync(path.join(TEST_PERSONAL_DIR, 'auto-format-hook.md'), yaml);
-
-    const countBefore = db.prepare('SELECT COUNT(*) as c FROM auto_evolves').get().c;
-    autoEvolve.syncInstincts(db, TEST_DIR, ['hook']);
-    const countAfter = db.prepare('SELECT COUNT(*) as c FROM auto_evolves').get().c;
-
-    assert.equal(countAfter, countBefore);
   });
 
   // -- runAutoEvolve --
@@ -352,30 +185,4 @@ describe('op-auto-evolve', () => {
     assert.ok(!fs.existsSync(promoted.promoted_to));
   });
 
-  // -- exportEventsSince --
-
-  it('exportEventsSince returns rows after cursor timestamp ordered ASC', () => {
-    const { exportEventsSince } = require('../../src/evolve/export-events');
-
-    const projectRoot = '/tmp/test-export-since';
-    db.prepare(`
-      INSERT INTO events (timestamp, session_id, event_type, name, working_directory, tool_input, seq_num)
-      VALUES
-        ('2026-04-12T10:00:00Z', 's1', 'tool_call', 'Read', ?, '{"file_path":"/x"}', 1),
-        ('2026-04-12T10:05:00Z', 's1', 'tool_call', 'Edit', ?, '{"file_path":"/x"}', 2),
-        ('2026-04-12T10:10:00Z', 's1', 'tool_call', 'Bash', ?, '{"command":"ls"}', 3)
-    `).run(projectRoot, projectRoot, projectRoot);
-
-    const rows = exportEventsSince(db, projectRoot, '2026-04-12T10:02:00Z', 10);
-    assert.equal(rows.length, 2);
-    assert.equal(rows[0].name, 'Edit');
-    assert.equal(rows[1].name, 'Bash');
-  });
-
-  it('exportEventsSince respects maxRows limit', () => {
-    const { exportEventsSince } = require('../../src/evolve/export-events');
-    const rows = exportEventsSince(db, '/tmp/test-export-since', '2026-04-12T00:00:00Z', 1);
-    assert.equal(rows.length, 1);
-    assert.equal(rows[0].name, 'Read');
-  });
 });
