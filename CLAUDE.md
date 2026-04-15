@@ -11,7 +11,7 @@ Hooks (Claude Code)          Server (Fastify)              Frontend (SPA)
 ┌──────────────┐     JSONL    ┌──────────────┐    REST     ┌──────────────┐
 │  collector   │ ──────────→  │   server.js  │  ←───────→  │  index.html  │
 │   (3 hooks)  │   data/*.jsonl│  port 3827   │  /api/*    │  + 8 routes  │
-└──────────────┘              │  11 route mods│              └──────────────┘
+└──────────────┘              │  12 route mods│              └──────────────┘
                               │              │
                               │  Ingest      │──→ open-pulse.db (SQLite, 12 tables)
                               │  (timer 10s) │    events + prompt linking
@@ -103,7 +103,7 @@ open-pulse/
 │   │   ├── vault.js            # Entries → markdown files in .claude/knowledge/
 │   │   ├── scan.js             # Cold-start scan from project files
 │   │   └── queries.js          # knowledge_entries + vault hash queries
-│   └── routes/                 # Fastify route plugins (11 files)
+│   └── routes/                 # Fastify route plugins (12 files)
 │       ├── health.js           # /api/health, /api/overview
 │       ├── events.js           # /api/events, /api/sessions
 │       ├── prompts.js          # /api/prompts
@@ -113,7 +113,8 @@ open-pulse/
 │       ├── config.js           # /api/config, /api/errors, /api/ingest
 │       ├── inventory.js        # /api/inventory/:type
 │       ├── knowledge.js        # /api/knowledge/*
-│       └── auto-evolves.js     # /api/auto-evolves/*
+│       ├── auto-evolves.js     # /api/auto-evolves/*
+│       └── synthesize.js       # /api/synthesize/data
 ├── scripts/                    # CLI utilities + installation
 │   ├── install.sh              # 8-step installer (npm, dirs, DB, backfill, symlinks, agents, hooks, launchd)
 │   ├── uninstall.sh            # 4-step uninstaller (symlinks, hooks, launchd)
@@ -144,12 +145,13 @@ open-pulse/
 ├── claude/                     # Expert system (symlinked to ~/.claude/ on install)
 │   ├── agents/
 │   │   └── claude-code-expert.md    # Orchestrator agent using all skills
-│   └── skills/                 # 8 skills (knowledge, patterns, config, scanner, creators)
+│   └── skills/                 # 9 skills (knowledge, patterns, config, scanner, creators, synthesize)
 │       ├── claude-code-knowledge/   # Knowledge base with 8 reference docs
 │       ├── claude-config-advisor/   # Decision tree for component recommendations
 │       ├── claude-setup-scanner/    # Setup inventory and gap analysis
 │       ├── knowledge-extractor/     # Knowledge entry extraction rules (Ollama + Opus)
 │       ├── pattern-detector/        # Pattern detection rules (Ollama + Opus)
+│       ├── synthesize/              # Opus-driven knowledge + pattern consolidation
 │       ├── agent-creator/           # Agent scaffolding
 │       ├── hook-creator/            # Hook configuration generator
 │       └── rule-creator/            # Rule creation with conflict detection
@@ -232,6 +234,7 @@ open-pulse/
 | PUT | `/api/knowledge/entries/:id/outdated` | Mark outdated |
 | DELETE | `/api/knowledge/entries/:id` | Delete entry |
 | POST | `/api/knowledge/scan` | Cold start scan |
+| POST | `/api/knowledge/vault/render` | Trigger vault re-render for project |
 | GET | `/api/knowledge/projects` | Projects with knowledge entry counts |
 | GET | `/api/knowledge/autocomplete?project=&q=` | Entry title suggestions |
 
@@ -242,7 +245,15 @@ open-pulse/
 | GET | `/api/auto-evolves/stats` | Counts by status, target_type |
 | GET | `/api/auto-evolves?status=&target_type=` | List auto-evolves |
 | GET | `/api/auto-evolves/:id` | Single auto-evolve detail |
+| PUT | `/api/auto-evolves/:id` | Update auto-evolve fields |
+| DELETE | `/api/auto-evolves/:id` | Delete auto-evolve |
 | PUT | `/api/auto-evolves/:id/revert` | Revert promoted component |
+
+### Synthesize
+
+| Method | Path | Purpose |
+|---|---|---|
+| GET | `/api/synthesize/data?project=&type=` | Bulk data for Opus consolidation |
 
 ### Scanner
 
