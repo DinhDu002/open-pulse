@@ -43,27 +43,10 @@ module.exports = async function projectsRoutes(app, opts) {
     const project = db.prepare('SELECT * FROM cl_projects WHERE project_id = ?').get(projectId);
     if (!project) return reply.code(404).send({ error: 'Project not found' });
 
-    // Refuse if observer is running
-    let observerRunning = false;
-    try {
-      const pidFile = path.join(repoDir, 'projects', projectId, '.observer.pid');
-      const pid = parseInt(fs.readFileSync(pidFile, 'utf8').trim(), 10);
-      if (pid > 1) {
-        try { process.kill(pid, 0); observerRunning = true; } catch { /* not running */ }
-      }
-    } catch { /* no pid file */ }
-
-    if (observerRunning) {
-      return reply.code(409).send({ error: 'Observer is running. Stop it before deleting.' });
-    }
-
     // DB deletion (transactional)
     deleteProject(db, projectId);
 
     // Filesystem cleanup
-    const clProjectDir = path.join(repoDir, 'cl', 'projects', projectId);
-    try { fs.rmSync(clProjectDir, { recursive: true, force: true }); } catch { /* may not exist */ }
-
     const projectDir = path.join(repoDir, 'projects', projectId);
     try { fs.rmSync(projectDir, { recursive: true, force: true }); } catch { /* may not exist */ }
 

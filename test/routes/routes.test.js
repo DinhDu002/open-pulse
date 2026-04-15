@@ -521,11 +521,8 @@ describe('op-server', () => {
       });
 
       // Create filesystem dirs and projects.json
-      const clDir = path.join(TEST_DIR, 'cl', 'projects', pid);
       const projDir = path.join(TEST_DIR, 'projects', pid);
-      fs.mkdirSync(clDir, { recursive: true });
       fs.mkdirSync(projDir, { recursive: true });
-      fs.writeFileSync(path.join(clDir, 'test.md'), 'test');
       fs.writeFileSync(
         path.join(TEST_DIR, 'projects.json'),
         JSON.stringify({ [pid]: { id: pid, name: 'deleteme', root: '/tmp/deleteme' } })
@@ -543,8 +540,7 @@ describe('op-server', () => {
       const summaryRes = await app.inject({ method: 'GET', url: '/api/projects/' + pid + '/summary' });
       assert.equal(summaryRes.statusCode, 404);
 
-      // Verify filesystem dirs removed
-      assert.equal(fs.existsSync(clDir), false);
+      // Verify filesystem dir removed
       assert.equal(fs.existsSync(projDir), false);
 
       // Verify projects.json entry removed

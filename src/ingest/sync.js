@@ -40,7 +40,7 @@ const {
 } = require('../lib/paths');
 
 // ---------------------------------------------------------------------------
-// CL sync: filesystem → DB (uses <repo>/cl/ paths)
+// Project sync: filesystem → DB
 // ---------------------------------------------------------------------------
 
 function syncProjectsToDb(db) {
@@ -80,24 +80,16 @@ function syncProjectsToDb(db) {
   } catch { /* registry not found or invalid */ }
 }
 
-let _lastSyncMtimes = { projects: 0, instincts: 0 };
+let _lastProjectsMtime = 0;
 
 function syncAll(db) {
   const registryPath = path.join(REPO_DIR, 'projects.json');
-  const instinctsDir = path.join(REPO_DIR, 'cl', 'instincts');
-
   let projectsMtime = 0;
-  let instinctsMtime = 0;
   try { projectsMtime = fs.statSync(registryPath).mtimeMs; } catch { /* missing */ }
-  try { instinctsMtime = fs.statSync(instinctsDir).mtimeMs; } catch { /* missing */ }
-
-  if (projectsMtime === _lastSyncMtimes.projects && instinctsMtime === _lastSyncMtimes.instincts) {
-    return; // No changes
-  }
-
+  if (projectsMtime === _lastProjectsMtime) return;
   try {
     syncProjectsToDb(db);
-    _lastSyncMtimes = { projects: projectsMtime, instincts: instinctsMtime };
+    _lastProjectsMtime = projectsMtime;
   } catch { /* non-critical */ }
 }
 
