@@ -928,5 +928,146 @@ describe('op-server', () => {
     });
   });
 
+  describe('PUT /api/knowledge/entries/:id with status', () => {
+    let entryId;
+    before(() => {
+      const testDb = require('better-sqlite3')(process.env.OPEN_PULSE_DB);
+      const { upsertClProject } = require('../../src/db/projects');
+      upsertClProject(testDb, { project_id: 'ke-stat-proj', name: 'KE Stat', directory: '/tmp/ke-stat',
+        first_seen_at: '2026-01-01T00:00:00Z', last_seen_at: '2026-01-01T00:00:00Z', session_count: 1 });
+      const { insertKnowledgeEntry } = require('../../src/db/knowledge-entries');
+      const entry = insertKnowledgeEntry(testDb, { project_id: 'ke-stat-proj', category: 'convention', title: 'Status Test Entry', body: 'original body', tags: [] });
+      entryId = entry.id;
+      testDb.close();
+    });
+
+    it('accepts status field and updates entry', async () => {
+      const res = await app.inject({ method: 'PUT', url: `/api/knowledge/entries/${entryId}`, payload: { status: 'outdated' } });
+      assert.equal(res.statusCode, 200);
+      assert.equal(JSON.parse(res.body).status, 'outdated');
+    });
+
+    it('accepts status alongside other fields', async () => {
+      const res = await app.inject({ method: 'PUT', url: `/api/knowledge/entries/${entryId}`, payload: { body: 'updated body', status: 'active' } });
+      assert.equal(res.statusCode, 200);
+      const b = JSON.parse(res.body);
+      assert.equal(b.body, 'updated body');
+      assert.equal(b.status, 'active');
+    });
+  });
+
+  describe('POST /api/knowledge/vault/render', () => {
+    before(() => {
+      const testDb = require('better-sqlite3')(process.env.OPEN_PULSE_DB);
+      const { upsertClProject } = require('../../src/db/projects');
+      upsertClProject(testDb, { project_id: 'ke-stat-proj', name: 'KE Stat', directory: '/tmp/ke-stat',
+        first_seen_at: '2026-01-01T00:00:00Z', last_seen_at: '2026-01-01T00:00:00Z', session_count: 1 });
+      testDb.close();
+    });
+
+    it('returns 400 when project_id missing', async () => {
+      const res = await app.inject({ method: 'POST', url: '/api/knowledge/vault/render', payload: {} });
+      assert.equal(res.statusCode, 400);
+    });
+
+    it('returns 404 for unknown project', async () => {
+      const res = await app.inject({ method: 'POST', url: '/api/knowledge/vault/render', payload: { project_id: 'nonexistent-vr' } });
+      assert.equal(res.statusCode, 404);
+    });
+
+    it('returns 200 for valid project', async () => {
+      const res = await app.inject({ method: 'POST', url: '/api/knowledge/vault/render', payload: { project_id: 'ke-stat-proj' } });
+      assert.equal(res.statusCode, 200);
+      const b = JSON.parse(res.body);
+      assert.equal(b.rendered, true);
+      assert.equal(b.project_id, 'ke-stat-proj');
+    });
+  });
+
+  describe('PUT /api/auto-evolves/:id', () => {
+    const AE_ID = 'ae-put-test';
+    before(() => {
+      const testDb = require('better-sqlite3')(process.env.OPEN_PULSE_DB);
+      testDb.prepare(`INSERT OR REPLACE INTO auto_evolves (id, title, description, target_type, confidence, observation_count, status, created_at, updated_at)
+        VALUES (?, 'PUT Test', 'old', 'rule', 0.3, 1, 'draft', datetime('now'), datetime('now'))`).run(AE_ID);
+      testDb.close();
+    });
+
+    it('updates description and confidence', async () => {
+      const res = await app.inject({ method: 'PUT', url: `/api/auto-evolves/${AE_ID}`, payload: { description: 'improved', confidence: 0.9 } });
+      assert.equal(res.statusCode, 200);
+      const body = JSON.parse(res.body);
+      assert.equal(body.description, 'improved');
+      assert.equal(body.confidence, 0.9);
+    });
+
+    it('updates observation_count', async () => {
+      const res = await app.inject({ method: 'PUT', url: `/api/auto-evolves/${AE_ID}`, payload: { observation_count: 5 } });
+      assert.equal(res.statusCode, 200);
+      assert.equal(JSON.parse(res.body).observation_count, 5);
+    });
+
+    it('returns 404 for unknown id', async () => {
+      const res = await app.inject({ method: 'PUT', url: '/api/auto-evolves/nonexistent-xyz', payload: { description: 'x' } });
+      assert.equal(res.statusCode, 404);
+    });
+  });
+
+  describe('DELETE /api/auto-evolves/:id', () => {
+    it('deletes a draft entry', async () => {
+      const testDb = require('better-sqlite3')(process.env.OPEN_PULSE_DB);
+      testDb.prepare(`INSERT OR REPLACE INTO auto_evolves (id, title, target_type, status, created_at) VALUES ('ae-del-route', 'Del Test', 'rule', 'draft', datetime('now'))`).run();
+      testDb.close();
+      const res = await app.inject({ method: 'DELETE', url: '/api/auto-evolves/ae-del-route' });
+      assert.equal(res.statusCode, 200);
+      assert.deepEqual(JSON.parse(res.body), { deleted: true });
+    });
+
+    it('rejects deleting promoted entry', async () => {
+      const testDb = require('better-sqlite3')(process.env.OPEN_PULSE_DB);
+      testDb.prepare(`INSERT OR REPLACE INTO auto_evolves (id, title, target_type, status, created_at) VALUES ('ae-del-prom', 'Promoted', 'rule', 'promoted', datetime('now'))`).run();
+      testDb.close();
+      const res = await app.inject({ method: 'DELETE', url: '/api/auto-evolves/ae-del-prom' });
+      assert.equal(res.statusCode, 400);
+    });
+
+    it('returns 404 for unknown id', async () => {
+      const res = await app.inject({ method: 'DELETE', url: '/api/auto-evolves/nonexistent-del' });
+      assert.equal(res.statusCode, 404);
+    });
+  });
+
+  describe('GET /api/auto-evolves with project filter', () => {
+    before(() => {
+      const testDb = require('better-sqlite3')(process.env.OPEN_PULSE_DB);
+      testDb.prepare(`INSERT OR REPLACE INTO auto_evolves (id, title, target_type, status, projects, created_at, updated_at)
+        VALUES ('ae-proj-filter', 'Proj Filter', 'rule', 'active', '["filter-proj"]', datetime('now'), datetime('now'))`).run();
+      testDb.close();
+    });
+
+    it('filters by project query param', async () => {
+      const res = await app.inject({ method: 'GET', url: '/api/auto-evolves?project=filter-proj' });
+      assert.equal(res.statusCode, 200);
+      const body = JSON.parse(res.body);
+      assert.ok(body.rows.some(r => r.id === 'ae-proj-filter'));
+    });
+  });
+
+  describe('POST /api/auto-evolves/:id/promote allows draft', () => {
+    it('promotes a draft entry', async () => {
+      const testDb = require('better-sqlite3')(process.env.OPEN_PULSE_DB);
+      testDb.prepare(`INSERT OR REPLACE INTO auto_evolves (id, title, description, target_type, status, created_at)
+        VALUES ('ae-draft-promote', 'Draft Promote', 'body text', 'rule', 'draft', datetime('now'))`).run();
+      testDb.close();
+      const res = await app.inject({ method: 'POST', url: '/api/auto-evolves/ae-draft-promote/promote' });
+      assert.equal(res.statusCode, 200);
+      const body = JSON.parse(res.body);
+      assert.equal(body.ok, true);
+      assert.ok(body.promoted_to);
+      // cleanup promoted file
+      if (body.promoted_to && fs.existsSync(body.promoted_to)) fs.unlinkSync(body.promoted_to);
+    });
+  });
+
 });
 

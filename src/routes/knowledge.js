@@ -63,12 +63,13 @@ module.exports = async function knowledgeRoutes(app, opts) {
       change_type: 'updated',
       snapshot: { title: existing.title, body: existing.body, category: existing.category, status: existing.status },
     });
-    const { title, body, tags, category } = req.body || {};
+    const { title, body, tags, category, status } = req.body || {};
     const fields = {};
     if (title !== undefined)    fields.title    = title;
     if (body !== undefined)     fields.body     = body;
     if (tags !== undefined)     fields.tags     = tags;
     if (category !== undefined) fields.category = category;
+    if (status !== undefined)   fields.status   = status;
     updateKnowledgeEntry(db, req.params.id, fields);
     return getKnowledgeEntry(db, req.params.id);
   });
@@ -105,6 +106,18 @@ module.exports = async function knowledgeRoutes(app, opts) {
     if (!existing) return errorReply(reply, 404, 'Entry not found');
     deleteKnowledgeEntry(db, req.params.id);
     return { deleted: true };
+  });
+
+  // ── Vault Render ──────────────────────────────────────────────────────
+
+  app.post('/api/knowledge/vault/render', async (req, reply) => {
+    const { project_id } = req.body || {};
+    if (!project_id) return errorReply(reply, 400, 'project_id required');
+    const project = db.prepare('SELECT * FROM cl_projects WHERE project_id = ?').get(project_id);
+    if (!project) return errorReply(reply, 404, 'Project not found');
+    const { renderKnowledgeVault } = require('../knowledge/vault');
+    renderKnowledgeVault(db, project_id);
+    return { rendered: true, project_id };
   });
 
   // ── Scan ────────────────────────────────────────────────────────────────

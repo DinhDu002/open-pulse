@@ -1,7 +1,7 @@
 'use strict';
 
 const path = require('path');
-const { queryAutoEvolves, getAutoEvolve, getAutoEvolveStats } = require('../evolve/queries');
+const { queryAutoEvolves, queryAutoEvolvesByProject, getAutoEvolve, getAutoEvolveStats, updateAutoEvolve, deleteAutoEvolve } = require('../evolve/queries');
 const { revertAutoEvolve } = require('../evolve/revert');
 const { promoteOne } = require('../evolve/promote');
 
@@ -16,9 +16,13 @@ module.exports = async function autoEvolveRoutes(app, opts) {
 
   // GET /api/auto-evolves
   app.get('/api/auto-evolves', (req, reply) => {
-    const { status, target_type } = req.query;
+    const { status, target_type, project } = req.query;
     const { page, perPage } = parsePagination(req.query);
-    reply.send(queryAutoEvolves(db, { status, target_type, page, per_page: perPage }));
+    if (project) {
+      reply.send(queryAutoEvolvesByProject(db, project, { status, target_type, page, per_page: perPage }));
+    } else {
+      reply.send(queryAutoEvolves(db, { status, target_type, page, per_page: perPage }));
+    }
   });
 
   // GET /api/auto-evolves/:id
@@ -26,6 +30,30 @@ module.exports = async function autoEvolveRoutes(app, opts) {
     const row = getAutoEvolve(db, req.params.id);
     if (!row) return errorReply(reply, 404, 'Auto-evolve not found');
     reply.send(row);
+  });
+
+  // PUT /api/auto-evolves/:id
+  app.put('/api/auto-evolves/:id', (req, reply) => {
+    const row = getAutoEvolve(db, req.params.id);
+    if (!row) return errorReply(reply, 404, 'Auto-evolve not found');
+    const { description, confidence, status, projects, observation_count } = req.body || {};
+    const fields = {};
+    if (description !== undefined) fields.description = description;
+    if (confidence !== undefined)  fields.confidence = confidence;
+    if (status !== undefined)      fields.status = status;
+    if (projects !== undefined)    fields.projects = JSON.stringify(projects);
+    if (observation_count !== undefined) fields.observation_count = observation_count;
+    updateAutoEvolve(db, req.params.id, fields);
+    reply.send(getAutoEvolve(db, req.params.id));
+  });
+
+  // DELETE /api/auto-evolves/:id
+  app.delete('/api/auto-evolves/:id', (req, reply) => {
+    const row = getAutoEvolve(db, req.params.id);
+    if (!row) return errorReply(reply, 404, 'Auto-evolve not found');
+    if (row.status === 'promoted') return errorReply(reply, 400, 'Revert before deleting');
+    deleteAutoEvolve(db, req.params.id);
+    reply.send({ deleted: true });
   });
 
   // PUT /api/auto-evolves/:id/revert
@@ -41,7 +69,7 @@ module.exports = async function autoEvolveRoutes(app, opts) {
   app.post('/api/auto-evolves/:id/promote', (req, reply) => {
     const row = getAutoEvolve(db, req.params.id);
     if (!row) return errorReply(reply, 404, 'Auto-evolve not found');
-    if (row.status !== 'active') {
+    if (row.status !== 'active' && row.status !== 'draft') {
       return errorReply(reply, 400, `Cannot promote: status is ${row.status}`);
     }
     try {
