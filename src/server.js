@@ -11,7 +11,6 @@ const { detectPatternsFromPrompt } = require('./evolve/detect');
 const { ingestAll, setKnowledgeHook, setPatternHook } = require('./ingest/pipeline');
 const { runRetention } = require('./retention');
 const { parseQualifiedName } = require('./lib/format');
-const { syncInstincts } = require('./evolve/sync');
 const { runAutoEvolve } = require('./evolve/promote');
 const {
   syncAll,
@@ -112,12 +111,11 @@ function buildApp(opts = {}) {
       try { componentETag = syncComponentsWithDb(db); } catch { /* non-critical */ }
     }, config.cl_sync_interval_ms || 60000));
 
-    // Auto-evolve timer: sync instincts + auto-promote
+    // Auto-evolve timer: auto-promote patterns (from detect.js/Ollama)
     if (config.auto_evolve_enabled !== false) {
       const logDir = path.join(REPO_DIR, 'logs');
       timers.push(setInterval(() => {
         try {
-          syncInstincts(db, REPO_DIR, config.auto_evolve_blacklist || ['hook']);
           runAutoEvolve(db, {
             min_confidence: config.auto_evolve_min_confidence || 0.85,
             blacklist: config.auto_evolve_blacklist || ['hook'],
