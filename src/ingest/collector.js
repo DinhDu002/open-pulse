@@ -322,7 +322,7 @@ async function main() {
   // Always pass through to stdout for hook chaining
   process.stdout.write(rawInput);
 
-  // Skip collection for automated sessions (e.g. observer's Haiku analysis)
+  // Skip collection for automated sessions
   if (process.env.OP_SKIP_COLLECT === '1') {
     process.exit(0);
   }

@@ -16,7 +16,7 @@ Hooks (Claude Code)          Server (Fastify)              Frontend (SPA)
                               │  Ingest      │──→ open-pulse.db (SQLite, 12 tables)
                               │  (timer 10s) │    events + prompt linking
                               │              │
-                              │  Filesystem  │──→ projects.json, instincts, components
+                              │  Filesystem  │──→ projects.json, components
                               │  sync (60s)  │    disk → DB
                               │              │
                               │  Auto-evolve │──→ auto_evolves table
@@ -46,14 +46,14 @@ Hooks (Claude Code)          Server (Fastify)              Frontend (SPA)
    - Pattern: rename `.jsonl` → `.jsonl.processing` → read → insert → delete
    - On failure: rename back to `.jsonl` for retry (max 3 retries → `.failed`)
    - Links events to `prompts` table — groups contiguous events per user turn with cost/token aggregation
-3. **Observer (optional timer)**: Background observer in `src/evolve/observer.js` reads events from SQLite via `src/evolve/export-events.js`, invokes Haiku to detect patterns, updates instinct YAML files in `cl/instincts/`
-4. **Filesystem Sync**: Server timer (60s) syncs `projects.json`, instinct files, and components (skills/agents) from disk into DB via `src/ingest/sync.js`
-5. **Auto-Evolve**: Observer patterns → instinct files → `auto_evolves` table → auto-promote when confidence >= 0.85 (no rejections, blacklists agent/hook) → component files written to `~/.claude/`
-6. **Knowledge Extraction**: After each prompt is ingested, `src/knowledge/extract.js` invokes Opus to extract project-specific understanding from recent events. Entries stored in `knowledge_entries` table. Cold-start scan bootstraps from key project files (`README.md`, `package.json`, `CLAUDE.md`)
-6b. **Pattern Detection**: After each prompt is ingested, `src/evolve/detect.js` invokes local Ollama model to detect reusable behavioral patterns from recent events. Entries stored in `auto_evolves` table with status `draft`.
-7. **Knowledge Vault**: `src/knowledge/vault.js` renders `knowledge_entries` as markdown files in `<project>/.claude/knowledge/` — one file per category. Uses content hashing (`kg_vault_hashes` table) to skip unchanged content
-8. **Retention**: Daily timer compacts tool data after 7 days (NULL tool_input/response), deletes events after 90 days. Configurable via `retention_warm_days` / `retention_cold_days`
-9. **API + Frontend**: Fastify serves REST endpoints on `127.0.0.1:3827`. Vanilla JS SPA with hash-based routing, Chart.js + Cytoscape.js for visualization
+3. **Filesystem Sync**: Server timer (60s) syncs `projects.json` and components (skills/agents) from disk into DB via `src/ingest/sync.js`
+4. **Auto-Evolve**: Ollama patterns (`detect.js`) → `auto_evolves` table → auto-promote when confidence >= 0.85 (no rejections, blacklists agent/hook) → component files written to `~/.claude/`
+5. **Knowledge Extraction**: After each prompt is ingested, `src/knowledge/extract.js` invokes Opus to extract project-specific understanding from recent events. Entries stored in `knowledge_entries` table. Cold-start scan bootstraps from key project files (`README.md`, `package.json`, `CLAUDE.md`)
+6. **Pattern Detection**: After each prompt is ingested, `src/evolve/detect.js` invokes local Ollama model to detect reusable behavioral patterns from recent events. This is the primary source of auto-evolve patterns. Entries stored in `auto_evolves` table with status `draft`.
+7. **Synthesize**: `/synthesize` skill invokes Opus to consolidate knowledge entries and auto-evolve patterns, enabling manual promotion of high-quality patterns
+8. **Knowledge Vault**: `src/knowledge/vault.js` renders `knowledge_entries` as markdown files in `<project>/.claude/knowledge/` — one file per category. Uses content hashing (`kg_vault_hashes` table) to skip unchanged content
+9. **Retention**: Daily timer compacts tool data after 7 days (NULL tool_input/response), deletes events after 90 days. Configurable via `retention_warm_days` / `retention_cold_days`
+10. **API + Frontend**: Fastify serves REST endpoints on `127.0.0.1:3827`. Vanilla JS SPA with hash-based routing, Chart.js + Cytoscape.js for visualization
 
 ## Directory Structure
 
@@ -87,17 +87,12 @@ open-pulse/
 │   │   ├── pipeline.js         # Atomic JSONL → DB pipeline
 │   │   ├── prompt-linker.js    # Group events into prompt records
 │   │   └── sync.js             # Filesystem → DB sync (projects, components)
-│   ├── evolve/                 # Auto-evolve + instinct ecosystem
-│   │   ├── sync.js             # Instinct YAML files → auto_evolves table
+│   ├── evolve/                 # Auto-evolve pipeline
+│   │   ├── sync.js             # makeId() deterministic hash for pattern IDs
 │   │   ├── promote.js          # Auto-promote + component file generation
 │   │   ├── revert.js           # Revert promoted components
 │   │   ├── queries.js          # auto_evolves table queries
-│   │   ├── observer.js         # Background observer (Haiku pattern detection)
-│   │   ├── observer-prompt.md  # Haiku prompt template
-│   │   ├── detect.js           # Pattern detection pipeline (Ollama)
-│   │   ├── instinct-updater.js # YAML frontmatter feedback loop
-│   │   ├── seed.js             # Cold-start: 10 starter instincts + CLAUDE.md parser
-│   │   └── export-events.js    # SQLite → JSONL for observer
+│   │   └── detect.js           # Pattern detection pipeline (Ollama)
 │   ├── knowledge/              # Knowledge extraction + vault
 │   │   ├── extract.js          # Opus post-ingest extraction
 │   │   ├── vault.js            # Entries → markdown files in .claude/knowledge/
@@ -156,7 +151,6 @@ open-pulse/
 │       ├── hook-creator/            # Hook configuration generator
 │       └── rule-creator/            # Rule creation with conflict detection
 ├── data/                       # Runtime: JSONL files (gitignored)
-├── cl/                         # Runtime: instinct YAML files (gitignored)
 ├── logs/                       # Runtime: stdout/stderr logs (gitignored)
 ├── config.json                 # Server config (port, intervals, thresholds)
 ├── open-pulse.db               # SQLite database (gitignored)
@@ -176,7 +170,7 @@ open-pulse/
 | `components` | Skill/agent inventory from filesystem | type, name, source, plugin, project, file_path, agent_class |
 | `cl_projects` | Registered projects | project_id, name, directory, session_count, last_seen_at |
 | `scan_results` | Setup scanner reports | scanned_at, report (JSON), issue counts by severity |
-| `auto_evolves` | Observer-detected patterns | id, title, target_type, confidence, observation_count, status, promoted_to |
+| `auto_evolves` | Ollama-detected patterns | id, title, target_type, confidence, observation_count, status, promoted_to |
 | `knowledge_entries` | LLM-extracted project knowledge | project_id, category, title, body, source_file, status |
 | `kg_vault_hashes` | Content hashes for vault files | project_id, file_path, content_hash, generated_at |
 | `kg_sync_state` | KV state for graph sync | key, value |
@@ -295,13 +289,6 @@ open-pulse/
 | `auto_evolve_enabled` | true | Enable auto-evolve promotion timer |
 | `auto_evolve_blacklist` | ["agent","hook"] | Target types blocked from auto-promotion |
 | `auto_evolve_min_confidence` | 0.85 | Confidence threshold for auto-promotion |
-| `observer_enabled` | true | Enable observer (auto-evolve pattern detection via Haiku) |
-| `observer_interval_seconds` | 3600 | Observer launchd run interval |
-| `observer_model` | "claude-haiku-4-5-20251001" | Model used for observer pattern detection |
-| `observer_max_events_per_project` | 500 | Cap events passed to observer per project per run |
-| `observer_active_project_window_hours` | 24 | Only run observer for projects with events in this window |
-| `observer_max_projects_per_run` | 5 | Hard cap on projects processed per observer cycle |
-| `observer_confidence_cap_on_first_detect` | 0.75 | Warm-up clamp for newly detected instincts |
 | `ollama_url` | `"http://localhost:11434"` | Ollama API base URL |
 | `ollama_model` | `"qwen2.5:7b"` | Local model for per-prompt extraction |
 | `ollama_timeout_ms` | 90000 | Ollama HTTP request timeout |
@@ -318,11 +305,10 @@ open-pulse/
 - **Environment variables for testing**: `OPEN_PULSE_DB`, `OPEN_PULSE_DIR`, `OPEN_PULSE_CLAUDE_DIR` allow tests to use temp directories.
 - **Route plugins**: All API routes are organized into 11 Fastify plugins under `src/routes/`. Each receives `routeOpts` (db, dbPath, repoDir, config, componentETagFn). `src/server.js` is app factory + timer coordinator only.
 - **Prompt linking**: During ingestion, contiguous events sharing the same `user_prompt` are grouped into a `prompts` record. Each event gets a `prompt_id` FK. Enables per-turn cost, token count, duration, and event breakdown without query-time aggregation.
-- **Auto-evolve feedback loop**: Observer (`src/evolve/observer.js`) runs hourly via the `com.open-pulse.observer` launchd service, uses Haiku 4.5 to detect patterns from recent events per active project, and writes instinct YAML files with canonical id hash. `syncInstincts` + `runAutoEvolve` then auto-promote rule/knowledge/skill to component files when confidence ≥ 0.85 (rejection_count = 0). Agents are blacklisted from auto-promote and require manual approval via `POST /api/auto-evolves/:id/promote` surfaced as a "Promote now" button in the auto-evolve detail UI.
+- **Auto-evolve pipeline**: Per-prompt Ollama extraction (`detect.js`) creates draft patterns in `auto_evolves` table. 60s timer runs `runAutoEvolve` to auto-promote patterns when confidence >= 0.85 (rejection_count = 0). Agents and hooks are blacklisted from auto-promote and require manual approval via `POST /api/auto-evolves/:id/promote`. `/synthesize` skill invokes Opus to consolidate and promote patterns manually.
 - **Knowledge entries architecture**: Replaces KG (`kg_nodes`/`kg_edges`). LLM (Opus) extracts project understanding after each prompt. Entries stored in `knowledge_entries` table, rendered as markdown vault files per category in `<project>/.claude/knowledge/`. Cold-start scan bootstraps knowledge from key project files. No confidence scoring — entries are factual, not behavioral patterns.
-- **`cl_` DB prefix**: The `cl_` prefix on DB tables (e.g., `cl_projects`) and the `cl/` runtime directory stand for the instinct-based observer subsystem. The code itself lives in `src/evolve/`.
+- **`cl_` DB prefix**: The `cl_` prefix on DB tables (e.g., `cl_projects`) is a historical artifact from the earlier instinct-based observer subsystem. The auto-evolve code lives in `src/evolve/`.
 - **3-tier retention**: hot (0-7d full data), warm (7-90d NULLs tool_input/response), cold (90d+ deleted). Configurable, runs daily. Sessions never deleted.
-- **Cold start seeding**: 10 universal starter instincts + CLAUDE.md rule parser. Idempotent — skips existing files on reinstall.
 
 ## Commands
 
@@ -341,19 +327,6 @@ launchctl bootout gui/$(id -u)/com.open-pulse      # Stop
 launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.open-pulse.plist  # Start
 ```
 
-### Observer (auto-evolve pattern detection)
-
-```bash
-# Manual run (bypass launchd)
-node src/evolve/observer.js --repo-dir $PWD
-
-# Service status
-launchctl print gui/$(id -u)/com.open-pulse.observer
-
-# Logs
-tail -f logs/observer-stdout.log
-```
-
 ## Event Types
 
 The collector classifies events into four types based on tool name:
@@ -362,7 +335,7 @@ The collector classifies events into four types based on tool name:
 - `tool_call` — all other tools (Read, Write, Edit, Bash, Grep, Glob, etc.)
 - `session_end` — from Stop hook (includes token counts and cost)
 
-Each tool event includes: `tool_input` (full, 5KB, secrets scrubbed), `tool_response` (full, 5KB, scrubbed), `seq_num` (order within session), `success` (boolean). The observer reads these from SQLite via `src/evolve/export-events.js`.
+Each tool event includes: `tool_input` (full, 5KB, secrets scrubbed), `tool_response` (full, 5KB, scrubbed), `seq_num` (order within session), `success` (boolean). `detect.js` reads recent events from SQLite for pattern extraction.
 
 ## Inventory Enrichment
 
@@ -390,4 +363,4 @@ Token rates per million tokens (in `src/ingest/collector.js`):
 - **Database**: better-sqlite3 (WAL mode, 3s busy timeout)
 - **Frontend**: Vanilla JS ES modules, Chart.js 4 (CDN), Cytoscape.js 3 (CDN)
 - **Tests**: Node.js built-in test runner (`node --test`)
-- **Service**: macOS launchd (com.open-pulse server + com.open-pulse.observer hourly)
+- **Service**: macOS launchd (com.open-pulse server)
