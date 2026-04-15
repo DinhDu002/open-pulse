@@ -21,13 +21,6 @@
     "hook"
   ],
   "auto_evolve_min_confidence": 0.85,
-  "observer_enabled": true,
-  "observer_interval_seconds": 3600,
-  "observer_model": "claude-haiku-4-5-20251001",
-  "observer_max_events_per_project": 500,
-  "observer_active_project_window_hours": 24,
-  "observer_max_projects_per_run": 5,
-  "observer_confidence_cap_on_first_detect": 0.75,
   "ollama_url": "http://localhost:11434",
   "ollama_model": "qwen2.5:7b",
   "ollama_timeout_ms": 90000,
