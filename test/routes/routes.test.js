@@ -1069,5 +1069,69 @@ describe('op-server', () => {
     });
   });
 
+  describe('GET /api/synthesize/data', () => {
+    const SYNTH_PROJ = 'synth-proj';
+    before(() => {
+      const testDb = require('better-sqlite3')(process.env.OPEN_PULSE_DB);
+      const { upsertClProject } = require('../../src/db/projects');
+      upsertClProject(testDb, { project_id: SYNTH_PROJ, name: 'Synth Project', directory: '/tmp/synth',
+        first_seen_at: '2026-01-01T00:00:00Z', last_seen_at: '2026-01-01T00:00:00Z', session_count: 1 });
+      // Seed knowledge entries
+      const { insertKnowledgeEntry } = require('../../src/db/knowledge-entries');
+      insertKnowledgeEntry(testDb, { project_id: SYNTH_PROJ, category: 'convention', title: 'Synth Conv 1', body: 'b1', tags: [] });
+      insertKnowledgeEntry(testDb, { project_id: SYNTH_PROJ, category: 'convention', title: 'Synth Conv 2', body: 'b2', tags: [] });
+      insertKnowledgeEntry(testDb, { project_id: SYNTH_PROJ, category: 'api', title: 'Synth API 1', body: 'b3', tags: [] });
+      // Seed auto_evolves
+      testDb.prepare('INSERT INTO auto_evolves (id, title, target_type, status, projects, created_at, updated_at) VALUES (?,?,?,?,?,?,?)')
+        .run('ae-synth-1', 'Synth Rule 1', 'rule', 'draft', '["Synth Project"]', '2026-04-10T00:00:00Z', '2026-04-10T00:00:00Z');
+      testDb.prepare('INSERT INTO auto_evolves (id, title, target_type, status, projects, created_at, updated_at) VALUES (?,?,?,?,?,?,?)')
+        .run('ae-synth-2', 'Synth Skill 1', 'skill', 'draft', '["Synth Project"]', '2026-04-10T00:00:00Z', '2026-04-10T00:00:00Z');
+      testDb.close();
+    });
+
+    it('returns grouped knowledge data for project', async () => {
+      const res = await app.inject({ method: 'GET', url: '/api/synthesize/data?project=Synth Project&type=knowledge' });
+      assert.equal(res.statusCode, 200);
+      const body = JSON.parse(res.body);
+      assert.equal(body.projects.length, 1);
+      assert.ok(body.projects[0].knowledge_entries.by_category.convention);
+      assert.equal(body.projects[0].knowledge_entries.by_category.convention.length, 2);
+      assert.equal(body.totals.knowledge_entries, 3);
+      // Should not have auto_evolves when type=knowledge
+      assert.equal(body.projects[0].auto_evolves, undefined);
+    });
+
+    it('returns grouped pattern data for project', async () => {
+      const res = await app.inject({ method: 'GET', url: '/api/synthesize/data?project=Synth Project&type=patterns' });
+      assert.equal(res.statusCode, 200);
+      const body = JSON.parse(res.body);
+      assert.ok(body.projects[0].auto_evolves.by_type.rule);
+      assert.ok(body.projects[0].auto_evolves.by_type.skill);
+      assert.equal(body.totals.auto_evolves, 2);
+      assert.equal(body.projects[0].knowledge_entries, undefined);
+    });
+
+    it('returns both types when type omitted', async () => {
+      const res = await app.inject({ method: 'GET', url: '/api/synthesize/data?project=Synth Project' });
+      assert.equal(res.statusCode, 200);
+      const body = JSON.parse(res.body);
+      assert.ok(body.projects[0].knowledge_entries);
+      assert.ok(body.projects[0].auto_evolves);
+    });
+
+    it('returns 400 for invalid type', async () => {
+      const res = await app.inject({ method: 'GET', url: '/api/synthesize/data?type=invalid' });
+      assert.equal(res.statusCode, 400);
+    });
+
+    it('handles unknown project gracefully', async () => {
+      const res = await app.inject({ method: 'GET', url: '/api/synthesize/data?project=nonexistent-synth&type=knowledge' });
+      assert.equal(res.statusCode, 200);
+      const body = JSON.parse(res.body);
+      assert.equal(body.projects.length, 1);
+      assert.equal(body.totals.knowledge_entries, 0);
+    });
+  });
+
 });
 

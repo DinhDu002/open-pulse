@@ -161,6 +161,7 @@ function buildApp(opts = {}) {
   app.register(require('./routes/inventory'), routeOpts);
   app.register(require('./routes/knowledge'), routeOpts);
   app.register(require('./routes/auto-evolves'), routeOpts);
+  app.register(require('./routes/synthesize'), routeOpts);
 
   // Ollama health check (non-blocking, informational only)
   if (config.pattern_detect_enabled !== false || config.knowledge_model === 'local') {
