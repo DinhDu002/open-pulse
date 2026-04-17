@@ -9,6 +9,8 @@ const {
   updateKnowledgeEntry,
   insertEntryHistory,
   getEntryHistory,
+  batchUpdateStatus,
+  batchDeleteEntries,
 } = require('../db/knowledge-entries');
 
 const { scanProject } = require('../knowledge/scan');
@@ -36,6 +38,25 @@ module.exports = async function knowledgeRoutes(app, opts) {
       page,
       perPage,
     });
+  });
+
+  // IMPORTANT: register /batch before /:id to avoid "batch" being captured as :id
+  app.post('/api/knowledge/entries/batch', async (req, reply) => {
+    const { ids, action } = req.body || {};
+    if (!Array.isArray(ids) || ids.length === 0) {
+      return errorReply(reply, 400, 'ids must be a non-empty array');
+    }
+    if (!['outdated', 'active', 'delete'].includes(action)) {
+      return errorReply(reply, 400, 'action must be outdated, active, or delete');
+    }
+    const capped = ids.slice(0, 200);
+    let affected;
+    if (action === 'delete') {
+      affected = batchDeleteEntries(db, capped);
+    } else {
+      affected = batchUpdateStatus(db, capped, action);
+    }
+    return { affected };
   });
 
   app.get('/api/knowledge/entries/:id', async (req, reply) => {

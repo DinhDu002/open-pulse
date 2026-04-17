@@ -20,11 +20,12 @@ let modelChart = null;
 let skillsChart = null;
 let agentsChart = null;
 let toolsChart = null;
+let pipelineChart = null;
 function destroyCharts() {
-  [costChart, modelChart, skillsChart, agentsChart, toolsChart].forEach(c => {
+  [costChart, modelChart, skillsChart, agentsChart, toolsChart, pipelineChart].forEach(c => {
     if (c) c.destroy();
   });
-  costChart = modelChart = skillsChart = agentsChart = toolsChart = null;
+  costChart = modelChart = skillsChart = agentsChart = toolsChart = pipelineChart = null;
 }
 
 // ── Chart defaults ────────────────────────────────────────────────────────────
@@ -143,6 +144,52 @@ function renderRankingChart(canvas, items, labelKey, valueKey, color) {
   });
 }
 
+function renderPipelineTrends(canvas, trends) {
+  const data = trends || [];
+  const ctx = canvas.getContext('2d');
+  pipelineChart = new Chart(ctx, {
+    type: 'bar',
+    data: {
+      labels: data.map(d => d.day),
+      datasets: [
+        {
+          label: 'Success',
+          data: data.map(d => d.success || 0),
+          backgroundColor: 'rgba(0,184,148,0.6)',
+          borderColor: '#00b894',
+          borderWidth: 1,
+          borderRadius: 4,
+        },
+        {
+          label: 'Error',
+          data: data.map(d => d.errors || 0),
+          backgroundColor: 'rgba(225,112,85,0.6)',
+          borderColor: '#e17055',
+          borderWidth: 1,
+          borderRadius: 4,
+        },
+        {
+          label: 'Skipped',
+          data: data.map(d => d.skipped || 0),
+          backgroundColor: 'rgba(253,203,110,0.6)',
+          borderColor: '#fdcb6e',
+          borderWidth: 1,
+          borderRadius: 4,
+        },
+      ],
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: { legend: { position: 'bottom', labels: { font: { size: 11 }, padding: 12 } } },
+      scales: {
+        x: { stacked: true, grid: { color: '#2a2d3a' }, ticks: { maxTicksLimit: 10 } },
+        y: { stacked: true, grid: { color: '#2a2d3a' }, beginAtZero: true },
+      },
+    },
+  });
+}
+
 // ── Learning Widget ───────────────────────────────────────────────────────────
 
 function makeEl(tag, attrs, text) {
@@ -240,15 +287,25 @@ export function mount(el, { period } = {}) {
     <div class="stat-card"><div class="stat-label">&nbsp;</div><div class="stat-value">—</div><div class="stat-sub">&nbsp;</div></div>
   `).join('');
 
+  const pipelineCard = document.createElement('div');
+  pipelineCard.className = 'card';
+  pipelineCard.style.marginBottom = '1.5rem';
+  pipelineCard.innerHTML = `
+    <div class="card-title">Pipeline Success / Failure</div>
+    <div class="chart-wrap tall"><canvas id="op-chart-pipeline"></canvas></div>
+  `;
+
   el.appendChild(statPlaceholder);
   el.appendChild(chartsRow);
+  el.appendChild(pipelineCard);
   el.appendChild(rankingsRow);
 
   // Load data
   Promise.all([
     get('/overview?period=' + p),
     get('/cost?period=' + p),
-  ]).then(([overview, costData]) => {
+    get('/pipeline-runs/trends?days=' + (p === '24h' ? 1 : p === '7d' ? 7 : 30)),
+  ]).then(([overview, costData, pipelineTrends]) => {
     // Replace stat grid
     const newGrid = document.createElement('div');
     renderStatCards(newGrid, overview, costData);
@@ -271,6 +328,9 @@ export function mount(el, { period } = {}) {
     toolsChart = renderRankingChart(
       document.getElementById('op-chart-tools'), topTools, 'name', 'count', '#6c5ce7'
     );
+
+    // Pipeline trends
+    renderPipelineTrends(document.getElementById('op-chart-pipeline'), pipelineTrends);
   }).catch(err => {
     const errDiv = document.createElement('div');
     errDiv.className = 'empty-state';

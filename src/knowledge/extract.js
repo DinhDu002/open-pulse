@@ -7,7 +7,7 @@ const {
   getExistingTitles,
   insertEntryHistory,
 } = require('./queries');
-const { insertPipelineRun } = require('../db/pipeline-runs');
+const { insertPipelineRun, updatePipelineRun } = require('../db/pipeline-runs');
 const { formatEventsForLLM } = require('../lib/format-events');
 const { loadSkillBody, loadCompactPrompt } = require('../lib/skill-loader');
 const { callOllama } = require('../lib/ollama');
@@ -20,6 +20,105 @@ const VALID_CATEGORIES = new Set([
   'domain', 'stack', 'schema', 'api', 'feature', 'architecture',
   'convention', 'decision', 'footgun', 'contract', 'error_pattern',
 ]);
+
+const VALID_TAGS = new Set([
+  'backend', 'frontend', 'database', 'api', 'testing', 'deployment',
+  'config', 'security', 'performance', 'migration', 'cli', 'hooks',
+]);
+
+const MIN_BODY_LENGTH = 50;
+const MAX_TITLE_LENGTH = 80;
+const MIN_TAGS = 1;
+const MAX_TAGS = 3;
+
+// Fallback tag per category when LLM provides no valid tags.
+const CATEGORY_DEFAULT_TAG = {
+  domain: 'backend',
+  stack: 'backend',
+  schema: 'database',
+  api: 'api',
+  feature: 'backend',
+  architecture: 'backend',
+  convention: 'backend',
+  decision: 'backend',
+  footgun: 'backend',
+  contract: 'api',
+  error_pattern: 'backend',
+};
+
+// ---------------------------------------------------------------------------
+// validateKnowledgeEntry
+// ---------------------------------------------------------------------------
+
+/**
+ * Validates and normalizes a single knowledge entry from LLM output.
+ *
+ * Hard rejects (return valid:false):
+ *   - missing/empty title, title > 80 chars
+ *   - missing/empty body, body < 50 chars
+ *   - body missing any of: "[Trigger]:", "[Detail]:", "Consequence"
+ *   - tags field present but not an array
+ *
+ * Soft normalizations (return valid:true with corrected entry):
+ *   - tags filtered to VALID_TAGS subset
+ *   - tags clamped to 1..3 (defaults to category-mapped tag if empty)
+ *   - category fallback happens downstream in mergeOrUpdate
+ *
+ * @param {object} entry
+ * @returns {{ valid: boolean, reason?: string, entry?: object }}
+ */
+function validateKnowledgeEntry(entry) {
+  if (!entry || typeof entry !== 'object') {
+    return { valid: false, reason: 'not an object' };
+  }
+  if (!entry.title || entry.title.length === 0) {
+    return { valid: false, reason: 'empty title' };
+  }
+  if (entry.title.length > MAX_TITLE_LENGTH) {
+    return { valid: false, reason: `title exceeds ${MAX_TITLE_LENGTH} chars` };
+  }
+  if (!entry.body || entry.body.length === 0) {
+    return { valid: false, reason: 'empty body' };
+  }
+  if (entry.body.length < MIN_BODY_LENGTH) {
+    return { valid: false, reason: `body shorter than ${MIN_BODY_LENGTH} chars` };
+  }
+  if (!entry.body.includes('Consequence')) {
+    return { valid: false, reason: 'body missing Consequence' };
+  }
+  if (!entry.body.includes('[Trigger]:')) {
+    return { valid: false, reason: 'body missing [Trigger]:' };
+  }
+  if (!entry.body.includes('[Detail]:')) {
+    return { valid: false, reason: 'body missing [Detail]:' };
+  }
+  if (entry.tags !== undefined && entry.tags !== null && !Array.isArray(entry.tags)) {
+    return { valid: false, reason: 'tags must be an array' };
+  }
+
+  // Normalize tags: filter to valid vocabulary, dedupe, clamp to 1..3.
+  const rawTags = Array.isArray(entry.tags) ? entry.tags : [];
+  const seen = new Set();
+  const filtered = [];
+  for (const t of rawTags) {
+    if (typeof t !== 'string') continue;
+    const norm = t.trim().toLowerCase();
+    if (!VALID_TAGS.has(norm)) continue;
+    if (seen.has(norm)) continue;
+    seen.add(norm);
+    filtered.push(norm);
+    if (filtered.length >= MAX_TAGS) break;
+  }
+  if (filtered.length < MIN_TAGS) {
+    const fallback = CATEGORY_DEFAULT_TAG[entry.category] || 'backend';
+    filtered.push(fallback);
+  }
+
+  return {
+    valid: true,
+    entry: { ...entry, tags: filtered },
+  };
+}
 
 // ---------------------------------------------------------------------------
 // buildExistingEntriesBlock — context-aware entry block for extraction prompt
@@ -84,10 +183,11 @@ function buildExistingEntriesBlock(db, projectId, affectedFiles) {
  * @param {string} projectName
  * @param {Array}  events  — [{name, event_type, tool_input, tool_response}]
  * @param {string} existingEntriesBlock
+ * @param {string} [userPrompt] — user prompt text, prepended to event block
  * @returns {string}
  */
-function buildExtractPrompt(projectName, events, existingEntriesBlock = '') {
-  const eventLines = formatEventsForLLM(events);
+function buildExtractPrompt(projectName, events, existingEntriesBlock = '', userPrompt = '') {
+  const eventLines = formatEventsForLLM(events, { userPrompt });
 
   const existingBlock = existingEntriesBlock || '';
 
@@ -152,18 +252,32 @@ function buildExtractPrompt(projectName, events, existingEntriesBlock = '') {
  * @param {Array}  events
  * @returns {string|null} — null if compact prompt not available in the skill file
  */
-function buildCompactExtractPrompt(projectName, events) {
+function buildCompactExtractPrompt(projectName, events, existingTitles = [], userPrompt = '') {
   const compact = loadCompactPrompt('knowledge-extractor');
   if (!compact) return null;
-  const eventLines = formatEventsForLLM(events);
-  return [
+  const eventLines = formatEventsForLLM(events, { userPrompt });
+
+  const parts = [
     `Project: ${projectName}`,
     '',
+  ];
+
+  if (existingTitles.length > 0) {
+    parts.push(
+      'Existing entries (do NOT duplicate — update only if events contradict):',
+      ...existingTitles.map(t => `- ${t}`),
+      '',
+    );
+  }
+
+  parts.push(
     'Events:',
     eventLines,
     '',
     compact,
-  ].join('\n');
+  );
+
+  return parts.join('\n');
 }
 
 // ---------------------------------------------------------------------------
@@ -253,19 +367,42 @@ function callClaude(prompt, model = 'opus', opts = {}) {
 /**
  * Extracts a JSON array from LLM response text.
  *
+ * Three-tier strategy:
+ *   1. Direct JSON.parse (clean responses)
+ *   2. Extract from fenced code blocks
+ *   3. Non-greedy regex fallback
+ *
  * @param {string} text
  * @returns {Array}
  */
 function parseJsonResponse(text) {
   if (!text) return [];
-  const match = text.match(/\[[\s\S]*\]/);
-  if (!match) return [];
+
+  // Tier 1: direct parse
   try {
-    const arr = JSON.parse(match[0]);
-    return Array.isArray(arr) ? arr : [];
-  } catch {
-    return [];
+    const parsed = JSON.parse(text.trim());
+    if (Array.isArray(parsed)) return parsed;
+  } catch { /* fall through */ }
+
+  // Tier 2: fenced code block
+  const fenced = text.match(/```(?:json)?\s*\n?([\s\S]*?)```/);
+  if (fenced) {
+    try {
+      const arr = JSON.parse(fenced[1].trim());
+      if (Array.isArray(arr)) return arr;
+    } catch { /* fall through */ }
   }
+
+  // Tier 3: non-greedy regex
+  const match = text.match(/\[[\s\S]*?\]/);
+  if (match) {
+    try {
+      const arr = JSON.parse(match[0]);
+      if (Array.isArray(arr)) return arr;
+    } catch { /* fall through */ }
+  }
+
+  return [];
 }
 
 // ---------------------------------------------------------------------------
@@ -287,8 +424,18 @@ function parseJsonResponse(text) {
 function mergeOrUpdate(db, projectId, newEntries) {
   let inserted = 0;
   let updated = 0;
+  let skipped = 0;
+  const rejectReasons = [];
 
-  for (const entry of newEntries) {
+  for (const raw of newEntries) {
+    const check = validateKnowledgeEntry(raw);
+    if (!check.valid) {
+      skipped++;
+      rejectReasons.push(check.reason || 'unknown');
+      continue;
+    }
+
+    const entry = check.entry;
     const category = VALID_CATEGORIES.has(entry.category) ? entry.category : 'domain';
     const title = entry.title || 'Untitled';
 
@@ -325,7 +472,7 @@ function mergeOrUpdate(db, projectId, newEntries) {
     }
   }
 
-  return { inserted, updated };
+  return { inserted, updated, skipped, rejectReasons };
 }
 
 // ---------------------------------------------------------------------------
@@ -341,9 +488,15 @@ function mergeOrUpdate(db, projectId, newEntries) {
  * @param {number} [opts.maxEvents=50]
  * @returns {Promise<{extracted:number, inserted:number, updated:number}|{message:string}>}
  */
+const VALID_EXTRACT_MODELS = new Set(['local', 'haiku', 'sonnet', 'opus']);
+
 async function extractKnowledgeFromPrompt(db, promptId, opts = {}) {
   const maxEvents = opts.maxEvents ?? 50;
-  const model = opts.model || 'opus';
+  const requestedModel = opts.model || 'local';
+  if (!VALID_EXTRACT_MODELS.has(requestedModel)) {
+    console.warn(`[knowledge/extract] unknown model "${requestedModel}", falling back to "opus"`);
+  }
+  const model = VALID_EXTRACT_MODELS.has(requestedModel) ? requestedModel : 'opus';
 
   // Get prompt
   const prompt = db.prepare('SELECT * FROM prompts WHERE id = ?').get(promptId);
@@ -382,11 +535,16 @@ async function extractKnowledgeFromPrompt(db, promptId, opts = {}) {
 
   // Build prompt and call LLM (Claude CLI or local Ollama)
   const projectName = project.name || project.project_id;
-  const llmPrompt = buildExtractPrompt(projectName, events, existingEntriesBlock);
+  const userPromptText = prompt.prompt_text || '';
+  const llmPrompt = buildExtractPrompt(projectName, events, existingEntriesBlock, userPromptText);
 
   let claudeResult;
-  if (opts.model === 'local') {
-    const compactPrompt = buildCompactExtractPrompt(projectName, events);
+  if (model === 'local') {
+    // Get existing titles for dedup context
+    const existingTitles = db.prepare(
+      "SELECT title FROM knowledge_entries WHERE project_id = ? AND status = 'active'"
+    ).all(project.project_id).map(r => r.title);
+    const compactPrompt = buildCompactExtractPrompt(projectName, events, existingTitles, userPromptText);
     if (!compactPrompt) {
       insertPipelineRun(db, {
         pipeline: 'knowledge_extract',
@@ -401,16 +559,17 @@ async function extractKnowledgeFromPrompt(db, promptId, opts = {}) {
       const ollamaResult = await callOllama(compactPrompt, opts.ollamaModel || 'qwen2.5:7b', {
         url: opts.ollamaUrl,
         timeout: opts.ollamaTimeout,
+        ...(opts.ollamaMaxRetries != null && { maxRetries: opts.ollamaMaxRetries }),
       });
       claudeResult = {
         output: ollamaResult.output,
-        input_tokens: 0,
-        output_tokens: 0,
+        input_tokens: ollamaResult.input_tokens || 0,
+        output_tokens: ollamaResult.output_tokens || 0,
         cost_usd: 0,
         duration_ms: ollamaResult.duration_ms,
       };
     } catch (err) {
-      const status = (err.code === 'ECONNREFUSED' || err.name === 'TimeoutError') ? 'skipped' : 'error';
+      const status = (err.code === 'ECONNREFUSED' || err.code === 'CIRCUIT_OPEN' || err.name === 'TimeoutError') ? 'skipped' : 'error';
       insertPipelineRun(db, {
         pipeline: 'knowledge_extract',
         project_id: project.project_id,
@@ -437,8 +596,8 @@ async function extractKnowledgeFromPrompt(db, promptId, opts = {}) {
     }
   }
 
-  const effectiveModel = opts.model === 'local' ? (opts.ollamaModel || 'qwen2.5:7b') : model;
-  insertPipelineRun(db, {
+  const effectiveModel = model === 'local' ? (opts.ollamaModel || 'qwen2.5:7b') : model;
+  const runId = insertPipelineRun(db, {
     pipeline: 'knowledge_extract',
     project_id: project.project_id,
     model: effectiveModel,
@@ -451,12 +610,31 @@ async function extractKnowledgeFromPrompt(db, promptId, opts = {}) {
   const entries = parseJsonResponse(claudeResult.output);
   if (entries.length === 0) return { extracted: 0, inserted: 0, updated: 0 };
 
-  const { inserted, updated } = mergeOrUpdate(db, project.project_id, entries);
+  const { inserted, updated, skipped, rejectReasons } = mergeOrUpdate(db, project.project_id, entries);
+
+  if (rejectReasons && rejectReasons.length > 0) {
+    updatePipelineRun(db, runId, {
+      error: `${skipped}/${entries.length} entries rejected: ${summarizeRejects(rejectReasons)}`,
+    });
+  }
 
   const { renderKnowledgeVault } = require('./vault');
   renderKnowledgeVault(db, project.project_id);
 
-  return { extracted: entries.length, inserted, updated };
+  return { extracted: entries.length, inserted, updated, skipped };
+}
+
+/**
+ * Condenses a list of rejection reasons into "reason1 (x3), reason2 (x1)" form.
+ * Keeps logs concise when an LLM produces many malformed entries.
+ */
+function summarizeRejects(reasons) {
+  const counts = new Map();
+  for (const r of reasons) counts.set(r, (counts.get(r) || 0) + 1);
+  return Array.from(counts.entries())
+    .sort((a, b) => b[1] - a[1])
+    .map(([r, n]) => `${r} (x${n})`)
+    .join(', ');
 }
 
 // ---------------------------------------------------------------------------
@@ -469,6 +647,9 @@ module.exports = {
   buildCompactExtractPrompt,
   callClaude,
   parseJsonResponse,
+  validateKnowledgeEntry,
   mergeOrUpdate,
   extractKnowledgeFromPrompt,
+  VALID_CATEGORIES,
+  VALID_TAGS,
 };

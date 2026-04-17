@@ -23,7 +23,12 @@ const VALID_TARGET_TYPES = new Set(['rule', 'skill', 'agent', 'workflow']);
  * @param {{ title: string, description: string, target_type: string }} entry
  * @returns {{ valid: boolean, reason?: string }}
  */
+const VALID_SCOPES = new Set(['project', 'global']);
+
 function validatePattern(entry) {
+  if (!entry || typeof entry !== 'object') {
+    return { valid: false, reason: 'not an object' };
+  }
   if (!entry.title || entry.title.length === 0) {
     return { valid: false, reason: 'empty title' };
   }
@@ -33,8 +38,11 @@ function validatePattern(entry) {
   if (!VALID_TARGET_TYPES.has(entry.target_type)) {
     return { valid: false, reason: `invalid target_type: ${entry.target_type}` };
   }
-  if (!entry.description || entry.description.length === 0) {
-    return { valid: false, reason: 'empty description' };
+  if (!entry.description || entry.description.length < 20) {
+    return { valid: false, reason: 'description too short (min 20 chars)' };
+  }
+  if (entry.scope && !VALID_SCOPES.has(entry.scope)) {
+    return { valid: false, reason: `invalid scope: ${entry.scope}` };
   }
   return { valid: true };
 }
@@ -98,12 +106,20 @@ function upsertPattern(db, entry) {
     : null;
 
   const existing = db.prepare(
-    'SELECT id, observation_count, confidence FROM auto_evolves WHERE id = ?'
+    'SELECT id, observation_count, confidence, updated_at FROM auto_evolves WHERE id = ?'
   ).get(id);
 
   if (existing) {
     const newCount = existing.observation_count + 1;
-    const newConf = parseFloat(Math.min(0.95, existing.confidence + 0.15).toFixed(2));
+    // Apply decay if not observed for >14 days, then add boost
+    let baseConf = existing.confidence;
+    if (existing.updated_at) {
+      const daysSinceUpdate = (Date.now() - new Date(existing.updated_at).getTime()) / 86_400_000;
+      if (daysSinceUpdate > 14) {
+        baseConf = parseFloat(Math.max(0.1, baseConf - 0.1).toFixed(2));
+      }
+    }
+    const newConf = parseFloat(Math.min(0.95, baseConf + 0.15).toFixed(2));
     db.prepare(`
       UPDATE auto_evolves
       SET observation_count = ?, confidence = ?, description = ?, projects = ?, updated_at = ?
@@ -161,7 +177,7 @@ async function detectPatternsFromPrompt(db, promptId, opts = {}) {
       timeout: opts.timeout,
     });
   } catch (err) {
-    const status = (err.code === 'ECONNREFUSED' || err.name === 'TimeoutError') ? 'skipped' : 'error';
+    const status = (err.code === 'ECONNREFUSED' || err.code === 'CIRCUIT_OPEN' || err.name === 'TimeoutError') ? 'skipped' : 'error';
     insertPipelineRun(db, {
       pipeline: 'pattern_detect',
       project_id: projectId,
@@ -192,6 +208,8 @@ async function detectPatternsFromPrompt(db, promptId, opts = {}) {
     model,
     status: 'success',
     duration_ms: result.duration_ms,
+    input_tokens: result.input_tokens || 0,
+    output_tokens: result.output_tokens || 0,
   });
 
   return { inserted, updated, errors };

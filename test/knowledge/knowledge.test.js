@@ -523,7 +523,7 @@ describe('knowledge_entries', () => {
 // =============================================================================
 
 describe('op-knowledge', () => {
-  const { buildExtractPrompt, mergeOrUpdate, parseJsonResponse } = require('../../src/knowledge/extract');
+  const { buildExtractPrompt, mergeOrUpdate, parseJsonResponse, validateKnowledgeEntry } = require('../../src/knowledge/extract');
   const { buildScanPrompt } = require('../../src/knowledge/scan');
   const { renderKnowledgeVault, renderCategoryPage, renderIndexPage, CATEGORY_FILES, CATEGORY_TITLES } = require('../../src/knowledge/vault');
 
@@ -716,6 +716,143 @@ describe('op-knowledge', () => {
       const result = parseJsonResponse('[{invalid json}]');
       assert.deepEqual(result, []);
     });
+
+    it('parses clean JSON array directly', () => {
+      const result = parseJsonResponse('[{"title":"test"}]');
+      assert.deepEqual(result, [{ title: 'test' }]);
+    });
+
+    it('extracts from fenced code block', () => {
+      const text = 'Here are the results:\n```json\n[{"a":1}]\n```\nDone.';
+      const result = parseJsonResponse(text);
+      assert.deepEqual(result, [{ a: 1 }]);
+    });
+
+    it('extracts from fenced code block without json label', () => {
+      const text = 'Results:\n```\n[{"b":2}]\n```';
+      const result = parseJsonResponse(text);
+      assert.deepEqual(result, [{ b: 2 }]);
+    });
+
+    it('handles text with multiple bracket pairs via non-greedy', () => {
+      const text = 'array 1: [1,2] and array 2: [3,4]';
+      const result = parseJsonResponse(text);
+      assert.deepEqual(result, [1, 2]);
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // validateKnowledgeEntry
+  // ---------------------------------------------------------------------------
+
+  describe('validateKnowledgeEntry', () => {
+    const VALID_BODY = '[Trigger]: When extracting knowledge. [Detail]: Bodies must contain all three sections to pass validation. Consequence: entries are rejected programmatically otherwise.';
+
+    it('accepts a well-formed entry', () => {
+      const entry = { title: 'Valid Title', body: VALID_BODY, category: 'domain', tags: ['backend'] };
+      const result = validateKnowledgeEntry(entry);
+      assert.equal(result.valid, true);
+      assert.deepEqual(result.entry.tags, ['backend']);
+    });
+
+    it('rejects null', () => {
+      assert.equal(validateKnowledgeEntry(null).valid, false);
+    });
+
+    it('rejects empty title', () => {
+      assert.equal(validateKnowledgeEntry({ title: '', body: VALID_BODY }).valid, false);
+    });
+
+    it('rejects title over 80 chars', () => {
+      const result = validateKnowledgeEntry({ title: 'x'.repeat(81), body: VALID_BODY });
+      assert.equal(result.valid, false);
+      assert.match(result.reason, /80/);
+    });
+
+    it('rejects empty body', () => {
+      assert.equal(validateKnowledgeEntry({ title: 'T', body: '' }).valid, false);
+    });
+
+    it('rejects body shorter than 50 chars', () => {
+      const result = validateKnowledgeEntry({ title: 'T', body: '[Trigger]:x [Detail]:y Consequence:z' });
+      assert.equal(result.valid, false);
+      assert.match(result.reason, /50/);
+    });
+
+    it('rejects body missing [Trigger]:', () => {
+      const body = 'Some text. [Detail]: longer content here to exceed 50 chars. Consequence: fails.';
+      const result = validateKnowledgeEntry({ title: 'T', body });
+      assert.equal(result.valid, false);
+      assert.match(result.reason, /Trigger/);
+    });
+
+    it('rejects body missing [Detail]:', () => {
+      const body = '[Trigger]: some trigger text here. Other text here. Consequence: it fails badly and silently.';
+      const result = validateKnowledgeEntry({ title: 'T', body });
+      assert.equal(result.valid, false);
+      assert.match(result.reason, /Detail/);
+    });
+
+    it('rejects body missing Consequence', () => {
+      const body = '[Trigger]: some trigger text. [Detail]: detailed description here that is long enough text.';
+      const result = validateKnowledgeEntry({ title: 'T', body });
+      assert.equal(result.valid, false);
+      assert.match(result.reason, /Consequence/);
+    });
+
+    it('rejects non-array tags', () => {
+      assert.equal(
+        validateKnowledgeEntry({ title: 'T', body: VALID_BODY, tags: 'not-array' }).valid,
+        false
+      );
+    });
+
+    it('defaults missing tags using category mapping', () => {
+      const result = validateKnowledgeEntry({ title: 'T', body: VALID_BODY, category: 'schema' });
+      assert.equal(result.valid, true);
+      assert.deepEqual(result.entry.tags, ['database']);
+    });
+
+    it('drops invalid tags and keeps valid ones', () => {
+      const result = validateKnowledgeEntry({
+        title: 'T', body: VALID_BODY,
+        tags: ['backend', 'not-a-real-tag', 'api'],
+      });
+      assert.equal(result.valid, true);
+      assert.deepEqual(result.entry.tags, ['backend', 'api']);
+    });
+
+    it('falls back to category default when all tags invalid', () => {
+      const result = validateKnowledgeEntry({
+        title: 'T', body: VALID_BODY, category: 'api',
+        tags: ['foo', 'bar'],
+      });
+      assert.equal(result.valid, true);
+      assert.deepEqual(result.entry.tags, ['api']);
+    });
+
+    it('clamps tags to max 3', () => {
+      const result = validateKnowledgeEntry({
+        title: 'T', body: VALID_BODY,
+        tags: ['backend', 'frontend', 'api', 'database', 'testing'],
+      });
+      assert.equal(result.valid, true);
+      assert.equal(result.entry.tags.length, 3);
+    });
+
+    it('dedupes repeated tags', () => {
+      const result = validateKnowledgeEntry({
+        title: 'T', body: VALID_BODY,
+        tags: ['backend', 'backend', 'API'],
+      });
+      assert.equal(result.valid, true);
+      assert.deepEqual(result.entry.tags, ['backend', 'api']);
+    });
+
+    it('accepts entry with unknown category (soft validation)', () => {
+      const result = validateKnowledgeEntry({ title: 'T', body: VALID_BODY, category: 'unknown' });
+      assert.equal(result.valid, true);
+    });
   });
 
   // ---------------------------------------------------------------------------
@@ -723,14 +860,19 @@ describe('op-knowledge', () => {
   // ---------------------------------------------------------------------------
 
   describe('mergeOrUpdate', () => {
+    const VALID_BODY_1 = '[Trigger]: When storing project overview. [Detail]: This is the domain overview with enough length. Consequence: missing context hurts future extractions.';
+    const VALID_BODY_2 = '[Trigger]: When storing stack info. [Detail]: Original stack description with enough length to pass. Consequence: downstream confusion.';
+    const VALID_BODY_2B = '[Trigger]: When storing stack info. [Detail]: Updated stack description with enough length to pass. Consequence: downstream confusion resolved.';
+    const VALID_BODY_3 = '[Trigger]: When category is unknown. [Detail]: Category fallback must still accept the entry. Consequence: soft validation allows domain fallback.';
+
     it('inserts new entries and returns {inserted:1, updated:0}', () => {
       const entries = [
         {
           category:    'domain',
           title:       'Unique Merge Insert Test',
-          body:        'This is the domain overview.',
+          body:        VALID_BODY_1,
           source_file: null,
-          tags:        ['domain'],
+          tags:        ['backend'],
         },
       ];
       const { inserted, updated } = mergeOrUpdate(db, 'proj-km-test', entries);
@@ -741,7 +883,7 @@ describe('op-knowledge', () => {
     it('updates existing entries and returns {inserted:0, updated:1}', () => {
       // First insert
       mergeOrUpdate(db, 'proj-km-test', [
-        { category: 'stack', title: 'Unique MoU Update Test', body: 'Original', tags: [] },
+        { category: 'stack', title: 'Unique MoU Update Test', body: VALID_BODY_2, tags: [] },
       ]);
 
       // Wait 1ms to ensure updated_at will differ from created_at
@@ -750,7 +892,7 @@ describe('op-knowledge', () => {
 
       // Now upsert again with different body
       const { inserted, updated } = mergeOrUpdate(db, 'proj-km-test', [
-        { category: 'stack', title: 'Unique MoU Update Test', body: 'Updated body', tags: [] },
+        { category: 'stack', title: 'Unique MoU Update Test', body: VALID_BODY_2B, tags: [] },
       ]);
 
       assert.equal(inserted, 0, 'should not insert');
@@ -759,7 +901,7 @@ describe('op-knowledge', () => {
 
     it('handles unknown category by falling back to domain', () => {
       const { inserted } = mergeOrUpdate(db, 'proj-km-test', [
-        { category: 'unknown_cat', title: 'Unknown Category Test Entry', body: 'body', tags: [] },
+        { category: 'unknown_cat', title: 'Unknown Category Test Entry', body: VALID_BODY_3, tags: [] },
       ]);
       assert.equal(inserted, 1);
 
@@ -769,6 +911,16 @@ describe('op-knowledge', () => {
       ).get();
       assert.ok(row, 'entry should exist');
       assert.equal(row.category, 'domain', 'should fall back to domain category');
+    });
+
+    it('reports rejectReasons for malformed entries without inserting', () => {
+      const { inserted, skipped, rejectReasons } = mergeOrUpdate(db, 'proj-km-test', [
+        { category: 'domain', title: 'Too Short Body Test', body: 'too short', tags: [] },
+        { category: 'domain', title: 'Missing Consequence Test', body: '[Trigger]: x. [Detail]: y enough chars here to exceed fifty characters.', tags: [] },
+      ]);
+      assert.equal(inserted, 0, 'neither entry should be inserted');
+      assert.equal(skipped, 2, 'both entries should be skipped');
+      assert.ok(Array.isArray(rejectReasons) && rejectReasons.length === 2, 'should return 2 reject reasons');
     });
   });
 

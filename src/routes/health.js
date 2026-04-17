@@ -1,9 +1,10 @@
 'use strict';
 
 const fs = require('fs');
+const { verifyModel, getCircuitState } = require('../lib/ollama');
 
 module.exports = async function healthRoutes(app, opts) {
-  const { db, helpers, dbPath } = opts;
+  const { db, helpers, dbPath, config } = opts;
   const { periodToDate } = helpers;
 
   // ── Health ──────────────────────────────────────────────────────────────
@@ -13,6 +14,32 @@ module.exports = async function healthRoutes(app, opts) {
     let db_size_bytes = 0;
     try { db_size_bytes = fs.statSync(dbPath).size; } catch { /* ignore */ }
     return { status: 'ok', db_size_bytes, total_events };
+  });
+
+  // ── Ollama Health ───────────────────────────────────────────────────────
+
+  app.get('/api/health/ollama', async () => {
+    const ollamaUrl = config.ollama_url || 'http://localhost:11434';
+    const ollamaModel = config.ollama_model || 'qwen2.5:7b';
+
+    let serverOk = false;
+    try {
+      const res = await fetch(`${ollamaUrl}/api/tags`, { signal: AbortSignal.timeout(3000) });
+      serverOk = res.ok;
+    } catch { /* unreachable */ }
+
+    let modelOk = false;
+    if (serverOk) {
+      modelOk = await verifyModel(ollamaModel, { url: ollamaUrl });
+    }
+
+    return {
+      status: serverOk ? 'online' : 'offline',
+      url: ollamaUrl,
+      model: ollamaModel,
+      model_loaded: modelOk,
+      circuit_breaker: getCircuitState(),
+    };
   });
 
   // ── Overview ────────────────────────────────────────────────────────────

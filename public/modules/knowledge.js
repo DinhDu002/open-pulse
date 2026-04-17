@@ -52,7 +52,7 @@ function categoryBadge(cat) {
 
 // ── Tab 1: Entries ────────────────────────────────────────────────────────────
 
-let entriesState = { project: '', category: '', status: 'active', page: 1, perPage: 20 };
+let entriesState = { project: '', category: '', status: 'active', page: 1, perPage: 20, selectedIds: new Set() };
 
 function renderEntriesList(el) {
   el.textContent = '';
@@ -94,9 +94,11 @@ function renderEntriesList(el) {
     btn.addEventListener('click', () => {
       entriesState.status = s;
       entriesState.page = 1;
+      entriesState.selectedIds = new Set();
       statusBar.querySelectorAll('button').forEach(b => {
         b.className = 'btn' + (b.dataset.status === s ? ' btn-primary' : '');
       });
+      if (typeof updateToolbar === 'function') updateToolbar();
       loadList();
     });
     statusBar.appendChild(btn);
@@ -106,6 +108,44 @@ function renderEntriesList(el) {
   filterBar.appendChild(categorySelect);
   filterBar.appendChild(statusBar);
   el.appendChild(filterBar);
+
+  // Batch toolbar (hidden until selection)
+  const toolbar = document.createElement('div');
+  toolbar.style.cssText = 'display:none; align-items:center; gap:10px; margin-bottom:12px; padding:8px 12px; background:var(--surface); border:1px solid var(--border); border-radius:6px;';
+  const toolbarCount = document.createElement('span');
+  toolbarCount.style.cssText = 'font-size:12px; font-weight:600; color:var(--text);';
+  toolbar.appendChild(toolbarCount);
+  function addToolbarBtn(label, action, danger) {
+    const btn = document.createElement('button');
+    btn.className = 'btn' + (danger ? ' btn-danger' : '');
+    btn.style.cssText = 'padding:4px 12px; font-size:12px;';
+    btn.textContent = label;
+    btn.addEventListener('click', async () => {
+      if (action === 'delete' && !confirm('Delete ' + entriesState.selectedIds.size + ' entries?')) return;
+      try {
+        await post('/knowledge/entries/batch', { ids: [...entriesState.selectedIds], action });
+        entriesState.selectedIds = new Set();
+        loadList();
+      } catch (err) { alert('Batch error: ' + err.message); }
+    });
+    toolbar.appendChild(btn);
+  }
+  addToolbarBtn('Mark Outdated', 'outdated', false);
+  addToolbarBtn('Mark Active', 'active', false);
+  addToolbarBtn('Delete', 'delete', true);
+  const clearBtn = document.createElement('button');
+  clearBtn.className = 'btn';
+  clearBtn.style.cssText = 'padding:4px 12px; font-size:12px; margin-left:auto;';
+  clearBtn.textContent = 'Clear';
+  clearBtn.addEventListener('click', () => { entriesState.selectedIds = new Set(); updateToolbar(); loadList(); });
+  toolbar.appendChild(clearBtn);
+  el.appendChild(toolbar);
+
+  function updateToolbar() {
+    const n = entriesState.selectedIds.size;
+    toolbar.style.display = n > 0 ? 'flex' : 'none';
+    toolbarCount.textContent = n + ' selected';
+  }
 
   // Stats row
   const statsRow = document.createElement('div');
@@ -192,7 +232,7 @@ function renderEntriesList(el) {
       }
 
       items.forEach(entry => {
-        renderEntryCard(listEl, entry);
+        renderEntryCard(listEl, entry, updateToolbar);
       });
 
       paginationEl.textContent = '';
@@ -228,19 +268,31 @@ function renderEntriesList(el) {
     });
   }
 
-  projectSelect.addEventListener('change', () => { entriesState.project = projectSelect.value; entriesState.page = 1; loadList(); });
-  categorySelect.addEventListener('change', () => { entriesState.category = categorySelect.value; entriesState.page = 1; loadList(); });
+  projectSelect.addEventListener('change', () => { entriesState.project = projectSelect.value; entriesState.page = 1; entriesState.selectedIds = new Set(); updateToolbar(); loadList(); });
+  categorySelect.addEventListener('change', () => { entriesState.category = categorySelect.value; entriesState.page = 1; entriesState.selectedIds = new Set(); updateToolbar(); loadList(); });
 
   loadList();
 }
 
-function renderEntryCard(container, entry) {
+function renderEntryCard(container, entry, onSelectionChange) {
   const card = document.createElement('div');
   card.className = 'card';
   card.style.cssText = 'margin-bottom:10px; cursor:pointer; transition:border-color 0.15s;';
 
   const titleRow = document.createElement('div');
   titleRow.style.cssText = 'display:flex; align-items:center; gap:8px; margin-bottom:6px; flex-wrap:wrap;';
+
+  const cb = document.createElement('input');
+  cb.type = 'checkbox';
+  cb.checked = entriesState.selectedIds.has(entry.id);
+  cb.style.cssText = 'cursor:pointer; flex-shrink:0;';
+  cb.addEventListener('click', (e) => e.stopPropagation());
+  cb.addEventListener('change', () => {
+    if (cb.checked) entriesState.selectedIds.add(entry.id);
+    else entriesState.selectedIds.delete(entry.id);
+    if (onSelectionChange) onSelectionChange();
+  });
+  titleRow.appendChild(cb);
 
   const titleEl = document.createElement('span');
   titleEl.style.cssText = 'font-size:14px; font-weight:600; color:var(--text);';

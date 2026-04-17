@@ -2,10 +2,15 @@
 
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
 
 const { insertEventBatch } = require('../db/events');
 const { upsertSessionBatch, updateSessionEnd } = require('../db/sessions');
 const { linkEventsToPrompts, updatePromptStatsAfterInsert, distributeTokensToPrompts } = require('./prompt-linker');
+const { logError } = require('../db/components');
+const { upsertClProject } = require('../db/projects');
+const { loadConfig } = require('../lib/config');
+const { isGitRepo } = require('../lib/format');
 
 let _extractKnowledge = null;
 let _knowledgeConfig = null;
@@ -23,16 +28,62 @@ function setPatternHook(detectFn, config) {
   _patternConfig = config;
 }
 
+let _scoreQuality = null;
+let _qualityConfig = null;
+
+function setQualityHook(scoreFn, config) {
+  _scoreQuality = scoreFn;
+  _qualityConfig = config;
+}
+
+let _generateReview = null;
+let _reviewConfig = null;
+
+function setReviewHook(reviewFn, config) {
+  _generateReview = reviewFn;
+  _reviewConfig = config;
+}
+
 // ---------------------------------------------------------------------------
 // Project name resolution
 // ---------------------------------------------------------------------------
 
-function resolveProjectName(db, workDir) {
-  if (!workDir) return null;
-  const row = db.prepare(
-    'SELECT name FROM cl_projects WHERE directory = ?'
-  ).get(workDir);
-  return row ? row.name : path.basename(workDir);
+function projectIdFromDir(workDir) {
+  const hash = crypto.createHash('sha256').update(workDir).digest('hex').substring(0, 12);
+  return `proj-${hash}`;
+}
+
+function resolveProjectNames(db, events) {
+  const seen = new Map();
+  for (const evt of events) {
+    if (evt.project_name || !evt.working_directory) continue;
+    const workDir = evt.working_directory;
+    if (seen.has(workDir)) { evt.project_name = seen.get(workDir); continue; }
+
+    const row = db.prepare('SELECT name FROM cl_projects WHERE directory = ?').get(workDir);
+    let name;
+    if (row) {
+      name = row.name;
+    } else {
+      name = path.basename(workDir);
+      // Auto-register project if workDir is a git repo. Non-git dirs still
+      // get a project_name for event traceability, but are excluded from
+      // the projects list (only cl_projects is shown).
+      if (isGitRepo(workDir)) {
+        const now = new Date().toISOString();
+        upsertClProject(db, {
+          project_id: projectIdFromDir(workDir),
+          name,
+          directory: workDir,
+          first_seen_at: now,
+          last_seen_at: now,
+          session_count: 0,
+        });
+      }
+    }
+    seen.set(workDir, name);
+    evt.project_name = name;
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -111,12 +162,8 @@ function processContent(db, processingPath, type) {
     if (type === 'events') {
       const events = rows.map(normaliseEvent);
 
-      // Derive project_name from working_directory
-      for (const evt of events) {
-        if (!evt.project_name && evt.working_directory) {
-          evt.project_name = resolveProjectName(db, evt.working_directory);
-        }
-      }
+      // Derive project_name from working_directory (auto-registers git repos)
+      resolveProjectNames(db, events);
 
       // Upsert sessions from events (so prompt linking can find them)
       const sessionMap = new Map();
@@ -159,20 +206,56 @@ function processContent(db, processingPath, type) {
       // Collect prompt IDs for post-processing hooks
       const promptIds = new Set(events.map(e => e.prompt_id).filter(Boolean));
 
+      // Fresh-read config per batch so runtime toggles take effect without restart
+      const cfg = loadConfig();
+
       // Trigger knowledge extraction for new prompts (non-blocking)
-      if (_extractKnowledge) {
+      if (cfg.knowledge_enabled !== false && _extractKnowledge) {
         for (const pid of promptIds) {
           setImmediate(() => {
-            _extractKnowledge(db, pid, _knowledgeConfig || {}).catch(() => {});
+            _extractKnowledge(db, pid, _knowledgeConfig || {}).catch(err => {
+              try {
+                logError(db, {
+                  hook_type: 'pipeline:knowledge_extract',
+                  error_message: `prompt_id=${pid}: ${err.message || String(err)}`,
+                  raw_input: null,
+                });
+              } catch { /* DB write failed — nothing more we can do */ }
+            });
           });
         }
       }
 
       // Trigger pattern detection for new prompts (non-blocking)
-      if (_detectPatterns) {
+      if (cfg.pattern_detect_enabled !== false && _detectPatterns) {
         for (const pid of promptIds) {
           setImmediate(() => {
-            _detectPatterns(db, pid, _patternConfig || {}).catch(() => {});
+            _detectPatterns(db, pid, _patternConfig || {}).catch(err => {
+              try {
+                logError(db, {
+                  hook_type: 'pipeline:pattern_detect',
+                  error_message: `prompt_id=${pid}: ${err.message || String(err)}`,
+                  raw_input: null,
+                });
+              } catch { /* DB write failed — nothing more we can do */ }
+            });
+          });
+        }
+      }
+
+      // Trigger quality scoring for new prompts (non-blocking)
+      if (cfg.quality_scoring_enabled !== false && _scoreQuality) {
+        for (const pid of promptIds) {
+          setImmediate(() => {
+            _scoreQuality(db, pid, _qualityConfig || {}).catch(err => {
+              try {
+                logError(db, {
+                  hook_type: 'pipeline:quality_score',
+                  error_message: `prompt_id=${pid}: ${err.message || String(err)}`,
+                  raw_input: null,
+                });
+              } catch { /* DB write failed — nothing more we can do */ }
+            });
           });
         }
       }
@@ -184,6 +267,26 @@ function processContent(db, processingPath, type) {
           if (sessionTokens > 0) {
             distributeTokensToPrompts(db, evt.session_id, sessionTokens);
           }
+        }
+      }
+
+      // Trigger session retrospective for ended sessions (delayed to allow scoring to complete)
+      if (cfg.quality_review_enabled !== false && _generateReview) {
+        const endedSessionIds = new Set(
+          events.filter(e => e.event_type === 'session_end' && e.session_id).map(e => e.session_id)
+        );
+        for (const sid of endedSessionIds) {
+          setTimeout(() => {
+            _generateReview(db, sid, _reviewConfig || {}).catch(err => {
+              try {
+                logError(db, {
+                  hook_type: 'pipeline:session_review',
+                  error_message: `session_id=${sid}: ${err.message || String(err)}`,
+                  raw_input: null,
+                });
+              } catch { /* DB write failed — nothing more we can do */ }
+            });
+          }, 60_000); // 60s delay: gives quality scoring time to complete for all prompts
         }
       }
     }
@@ -277,4 +380,4 @@ function ingestAll(db, dataDir) {
 // Exports
 // ---------------------------------------------------------------------------
 
-module.exports = { ingestFile, ingestAll, MAX_RETRIES, setKnowledgeHook, setPatternHook };
+module.exports = { ingestFile, ingestAll, MAX_RETRIES, setKnowledgeHook, setPatternHook, setQualityHook, setReviewHook };

@@ -94,12 +94,15 @@ function runAutoEvolve(db, opts = {}) {
   const allowed = allTypes.filter(t => !blacklist.includes(t));
   const placeholders = allowed.map(() => '?').join(',');
 
+  // Require at least 3 days between first observation (created_at) and last (updated_at)
+  // to prevent burst-promotion from rapid repeated detections
   const ready = db.prepare(`
     SELECT * FROM auto_evolves
     WHERE status = 'active'
       AND confidence >= ?
       AND rejection_count = 0
       AND target_type IN (${placeholders})
+      AND (julianday(updated_at) - julianday(created_at)) >= 3
   `).all(min_confidence, ...allowed);
 
   let promoted = 0;

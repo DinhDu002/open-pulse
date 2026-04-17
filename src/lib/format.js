@@ -90,6 +90,46 @@ function isGitRepo(dir) {
   catch { return false; }
 }
 
+const SKIP_DIRS = new Set([
+  'node_modules', '.git', 'dist', 'build',
+  '.venv', 'venv', 'vendor', 'target',
+  '.next', 'coverage', '__pycache__',
+]);
+
+/**
+ * Walk `roots` recursively and collect folders that contain a `.git` dir.
+ * Stops descending once a git repo is found (no nested repos) and prunes
+ * common build/vendor directories.
+ */
+function scanGitRepos(roots, opts = {}) {
+  const maxDepth = opts.maxDepth ?? 6;
+  const found = [];
+
+  for (const root of roots) {
+    walk(root, 0);
+  }
+  return found;
+
+  function walk(dir, depth) {
+    if (depth > maxDepth) return;
+    let entries;
+    try {
+      entries = fs.readdirSync(dir, { withFileTypes: true });
+    } catch { return; }
+
+    if (entries.some(e => e.isDirectory() && e.name === '.git')) {
+      found.push(dir);
+      return;
+    }
+    for (const entry of entries) {
+      if (!entry.isDirectory()) continue;
+      if (SKIP_DIRS.has(entry.name)) continue;
+      if (entry.name.startsWith('.')) continue;
+      walk(path.join(dir, entry.name), depth + 1);
+    }
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Keyword extraction
 // ---------------------------------------------------------------------------
@@ -154,6 +194,7 @@ module.exports = {
   getKnownSkills,
   getKnownAgents,
   isGitRepo,
+  scanGitRepos,
   STOP_WORDS,
   extractKeywordsFromPrompts,
   errorReply,

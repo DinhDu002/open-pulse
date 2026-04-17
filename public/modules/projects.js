@@ -1,5 +1,5 @@
 // Projects sub-module
-import { get, del } from './api.js';
+import { get, del, post } from './api.js';
 import { fmtDate, escHtml } from './utils.js';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -49,23 +49,152 @@ export function mount(el, { params } = {}) {
 
 // ── List View ─────────────────────────────────────────────────────────────────
 
+function buildTabs(active, onSelect) {
+  var row = document.createElement('div');
+  row.style.cssText = 'display:flex;gap:4px;border-bottom:1px solid var(--border);margin-bottom:16px';
+
+  var tabs = [
+    { key: 'git', label: 'Git projects' },
+    { key: 'other', label: 'Other folders' },
+  ];
+
+  tabs.forEach(function(t) {
+    var btn = document.createElement('button');
+    btn.type = 'button';
+    btn.textContent = t.label;
+    var isActive = t.key === active;
+    btn.style.cssText = 'background:none;border:none;padding:10px 16px;cursor:pointer;font-size:13px;font-weight:600;border-bottom:2px solid ' + (isActive ? '#6c5ce7' : 'transparent') + ';margin-bottom:-1px;color:' + (isActive ? 'var(--text)' : 'var(--text-muted)');
+    btn.addEventListener('click', function() { onSelect(t.key); });
+    row.appendChild(btn);
+  });
+
+  return row;
+}
+
+function buildRefreshButton(onDone) {
+  var bar = document.createElement('div');
+  bar.style.cssText = 'display:flex;justify-content:flex-end;margin-bottom:12px';
+
+  var btn = document.createElement('button');
+  btn.className = 'btn';
+  btn.type = 'button';
+  btn.textContent = 'Refresh';
+  btn.title = 'Scan project_scan_roots for .git folders — add new repos, drop missing ones';
+  btn.addEventListener('click', function() {
+    btn.disabled = true;
+    var originalLabel = btn.textContent;
+    btn.textContent = 'Refreshing\u2026';
+    post('/projects/refresh')
+      .then(function(result) {
+        onDone(result);
+      })
+      .catch(function(err) {
+        alert('Refresh failed: ' + err.message);
+      })
+      .finally(function() {
+        btn.disabled = false;
+        btn.textContent = originalLabel;
+      });
+  });
+
+  bar.appendChild(btn);
+  return bar;
+}
+
 function renderList(el) {
-  el.innerHTML = '<div class="empty-state"><span class="spinner"></span></div>';
+  var activeTab = sessionStorage.getItem('op-projects-tab') || 'git';
+  renderTab(el, activeTab);
+}
+
+function renderTab(el, tab) {
+  sessionStorage.setItem('op-projects-tab', tab);
+  el.innerHTML = '';
+  el.appendChild(buildTabs(tab, function(next) { renderTab(el, next); }));
+
+  if (tab === 'git') {
+    el.appendChild(buildRefreshButton(function(result) {
+      renderTab(el, 'git');
+      if (result) {
+        // eslint-disable-next-line no-console
+        console.log('Refreshed: +' + (result.added || 0) + ' added, -' + (result.removed || 0) + ' removed');
+      }
+    }));
+    renderGitProjects(el);
+  } else {
+    renderOtherFolders(el);
+  }
+}
+
+function renderGitProjects(el) {
+  var container = document.createElement('div');
+  container.innerHTML = '<div class="empty-state"><span class="spinner"></span></div>';
+  el.appendChild(container);
 
   get('/projects').then(function(projects) {
-    el.innerHTML = '';
-
+    container.innerHTML = '';
     if (!projects || projects.length === 0) {
-      el.innerHTML = '<div class="empty-state">No projects found. Start using Claude Code to collect data.</div>';
+      container.innerHTML = '<div class="empty-state">No git projects registered yet. Click Refresh to scan your project_scan_roots.</div>';
       return;
     }
-
     projects.forEach(function(proj) {
-      el.appendChild(buildProjectCard(proj, el));
+      container.appendChild(buildProjectCard(proj, el));
     });
   }).catch(function(err) {
-    el.innerHTML = '<p style="color:var(--danger);padding:20px">Error: ' + escHtml(err.message) + '</p>';
+    container.innerHTML = '<p style="color:var(--danger);padding:20px">Error: ' + escHtml(err.message) + '</p>';
   });
+}
+
+function renderOtherFolders(el) {
+  var container = document.createElement('div');
+  container.innerHTML = '<div class="empty-state"><span class="spinner"></span></div>';
+  el.appendChild(container);
+
+  get('/projects/non-git').then(function(rows) {
+    container.innerHTML = '';
+    if (!rows || rows.length === 0) {
+      container.innerHTML = '<div class="empty-state">No non-git working directories seen in events.</div>';
+      return;
+    }
+    rows.forEach(function(r) {
+      container.appendChild(buildOtherCard(r));
+    });
+  }).catch(function(err) {
+    container.innerHTML = '<p style="color:var(--danger);padding:20px">Error: ' + escHtml(err.message) + '</p>';
+  });
+}
+
+function buildOtherCard(row) {
+  var card = document.createElement('div');
+  card.className = 'card';
+  card.style.cssText = 'margin-bottom:12px';
+
+  var dirDiv = document.createElement('div');
+  dirDiv.style.cssText = 'font-size:13px;color:var(--text);font-family:"SF Mono",monospace;margin-bottom:8px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap';
+  dirDiv.title = row.directory || '';
+  dirDiv.textContent = row.directory || '\u2014';
+  card.appendChild(dirDiv);
+
+  var stats = document.createElement('div');
+  stats.style.cssText = 'display:flex;gap:16px;font-size:13px;color:var(--text-muted)';
+
+  var sess = document.createElement('span');
+  sess.textContent = 'Sessions: ';
+  var sessVal = document.createElement('strong');
+  sessVal.style.color = 'var(--text)';
+  sessVal.textContent = row.session_count || 0;
+  sess.appendChild(sessVal);
+  stats.appendChild(sess);
+
+  var seen = document.createElement('span');
+  seen.textContent = 'Last seen: ';
+  var seenVal = document.createElement('strong');
+  seenVal.style.color = 'var(--text)';
+  seenVal.textContent = fmtDate(row.last_seen_at);
+  seen.appendChild(seenVal);
+  stats.appendChild(seen);
+
+  card.appendChild(stats);
+  return card;
 }
 
 function buildProjectCard(proj, listEl) {

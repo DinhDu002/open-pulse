@@ -52,6 +52,8 @@ You are extracting project knowledge from Claude Code session events. Follow the
 
 Return a JSON array only. No explanation.
 
+**Programmatic validation**: bodies missing `[Trigger]:`, `[Detail]:`, or `Consequence:`, or shorter than 50 characters, will be rejected before insertion. Tags outside the vocabulary are dropped (entry kept if ≥1 valid tag remains, else a category-default tag is assigned). Do not skip the three labels.
+
 ## Title Rules
 
 - Short noun phrase, sentence case, max 80 characters

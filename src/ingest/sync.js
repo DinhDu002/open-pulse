@@ -1,15 +1,7 @@
 'use strict';
 
 const path = require('path');
-const fs = require('fs');
 const crypto = require('crypto');
-
-const REPO_DIR = process.env.OPEN_PULSE_DIR || path.join(__dirname, '../..');
-
-const {
-  upsertClProject,
-  deleteProject,
-} = require('../db/projects');
 
 const {
   upsertComponent,
@@ -24,7 +16,6 @@ const {
   getKnownSkills,
   getKnownAgents,
   readItemMetaFromFile,
-  isGitRepo,
 } = require('../lib/format');
 
 const {
@@ -33,65 +24,12 @@ const {
 
 const {
   getProjectAgents,
+  getProjectSkills,
 } = require('../lib/projects');
 
 const {
   getClaudeDir,
 } = require('../lib/paths');
-
-// ---------------------------------------------------------------------------
-// Project sync: filesystem → DB
-// ---------------------------------------------------------------------------
-
-function syncProjectsToDb(db) {
-  const registryPath = path.join(REPO_DIR, 'projects.json');
-  try {
-    const registry = JSON.parse(fs.readFileSync(registryPath, 'utf8'));
-    const validIds = new Set();
-
-    // Pre-compute real session counts from events table
-    const sessionCounts = {};
-    const rows = db.prepare(
-      'SELECT project_name, COUNT(DISTINCT session_id) AS cnt FROM events WHERE project_name IS NOT NULL GROUP BY project_name'
-    ).all();
-    for (const r of rows) sessionCounts[r.project_name] = r.cnt;
-
-    for (const [id, meta] of Object.entries(registry)) {
-      if (!meta.root || !isGitRepo(meta.root)) continue;
-      validIds.add(id);
-      const name = meta.name || id;
-      upsertClProject(db, {
-        project_id: id,
-        name,
-        directory: meta.root || null,
-        first_seen_at: meta.created_at || new Date().toISOString(),
-        last_seen_at: meta.last_seen || new Date().toISOString(),
-        session_count: sessionCounts[name] || 0,
-      });
-    }
-
-    // Cleanup: remove orphaned projects (not in registry or not a git repo)
-    const dbProjects = db.prepare('SELECT project_id FROM cl_projects').all();
-    for (const { project_id } of dbProjects) {
-      if (!validIds.has(project_id)) {
-        deleteProject(db, project_id);
-      }
-    }
-  } catch { /* registry not found or invalid */ }
-}
-
-let _lastProjectsMtime = 0;
-
-function syncAll(db) {
-  const registryPath = path.join(REPO_DIR, 'projects.json');
-  let projectsMtime = 0;
-  try { projectsMtime = fs.statSync(registryPath).mtimeMs; } catch { /* missing */ }
-  if (projectsMtime === _lastProjectsMtime) return;
-  try {
-    syncProjectsToDb(db);
-    _lastProjectsMtime = projectsMtime;
-  } catch { /* non-critical */ }
-}
 
 // ---------------------------------------------------------------------------
 // Component sync: filesystem → components table
@@ -141,12 +79,22 @@ function syncComponentsWithDb(db) {
   }
 
   // Project agents
-  for (const projAgent of getProjectAgents()) {
+  for (const projAgent of getProjectAgents(db)) {
     const meta = readItemMetaFromFile(projAgent.filePath);
     diskItems.push({
       type: 'agent', name: projAgent.name, source: 'project',
       plugin: null, project: projAgent.project,
       file_path: projAgent.filePath, description: meta.description, agent_class: 'configured',
+    });
+  }
+
+  // Project skills
+  for (const projSkill of getProjectSkills(db)) {
+    const meta = readItemMetaFromFile(projSkill.filePath);
+    diskItems.push({
+      type: 'skill', name: projSkill.name, source: 'project',
+      plugin: null, project: projSkill.project,
+      file_path: projSkill.filePath, description: meta.description, agent_class: null,
     });
   }
 
@@ -159,13 +107,16 @@ function syncComponentsWithDb(db) {
   });
   syncTx();
 
-  // COMPUTE ETag and return it
-  const stats = db.prepare(
-    'SELECT COUNT(*) AS cnt, MAX(last_seen_at) AS latest FROM components'
-  ).get();
+  // COMPUTE ETag and return it — content-hash over all component rows so that
+  // identical disk state yields the same ETag across sync calls.
+  const rows = db.prepare(`
+    SELECT type, name, source, plugin, project, file_path, description, agent_class
+    FROM components
+    ORDER BY type, name, source, COALESCE(plugin, ''), COALESCE(project, '')
+  `).all();
   return crypto
     .createHash('md5')
-    .update(`${stats.cnt}:${stats.latest || ''}`)
+    .update(JSON.stringify(rows))
     .digest('hex');
 }
 
@@ -227,8 +178,6 @@ function runScan(db) {
 }
 
 module.exports = {
-  syncProjectsToDb,
-  syncAll,
   syncComponentsWithDb,
   runScan,
 };

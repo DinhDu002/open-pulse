@@ -13,7 +13,7 @@ Hooks (Claude Code)          Server (Fastify)              Frontend (SPA)
 │   (3 hooks)  │   data/*.jsonl│  port 3827   │  /api/*    │  + 8 routes  │
 └──────────────┘              │  12 route mods│              └──────────────┘
                               │              │
-                              │  Ingest      │──→ open-pulse.db (SQLite, 12 tables)
+                              │  Ingest      │──→ open-pulse.db (SQLite, 14 tables)
                               │  (timer 10s) │    events + prompt linking
                               │              │
                               │  Filesystem  │──→ projects.json, components
@@ -33,6 +33,15 @@ Hooks (Claude Code)          Server (Fastify)              Frontend (SPA)
                               │  (per-prompt │    local model extraction
                               │   extract)   │
                               │              │
+                              │  Quality     │──→ prompt_scores table
+                              │  scoring     │    per-prompt Ollama evaluation
+                              │  (post-ingest│    4 dimensions: efficiency, accuracy,
+                              │   per-prompt)│    cost, approach (0-100)
+                              │              │
+                              │  Session     │──→ session_reviews table
+                              │  retro       │    Ollama narrative review on session_end
+                              │  (on end)    │    strengths, improvements, suggestions
+                              │              │
                               │  Retention   │──→ compacts/deletes old events (daily)
                               └──────────────┘
 ```
@@ -44,7 +53,7 @@ Hooks (Claude Code)          Server (Fastify)              Frontend (SPA)
    - Captures full `tool_input` and `tool_response` (5KB, secrets scrubbed) for analysis
 2. **Ingestion**: Server timer (10s) atomically processes JSONL → SQLite
    - Pattern: rename `.jsonl` → `.jsonl.processing` → read → insert → delete
-   - On failure: rename back to `.jsonl` for retry (max 3 retries → `.failed`)
+   - On failure: file stays at `.processing`; retry counter tracked in sidecar `.retries` file; after 3 failed retries → rename to `.failed`
    - Links events to `prompts` table — groups contiguous events per user turn with cost/token aggregation
 3. **Filesystem Sync**: Server timer (60s) syncs `projects.json` and components (skills/agents) from disk into DB via `src/ingest/sync.js`
 4. **Auto-Evolve**: Ollama patterns (`detect.js`) → `auto_evolves` table → auto-promote when confidence >= 0.85 (no rejections, blacklists agent/hook) → component files written to `~/.claude/`
@@ -52,8 +61,10 @@ Hooks (Claude Code)          Server (Fastify)              Frontend (SPA)
 6. **Pattern Detection**: After each prompt is ingested, `src/evolve/detect.js` invokes local Ollama model to detect reusable behavioral patterns from recent events. This is the primary source of auto-evolve patterns. Entries stored in `auto_evolves` table with status `draft`.
 7. **Synthesize**: `/synthesize` skill invokes Opus to consolidate knowledge entries and auto-evolve patterns, enabling manual promotion of high-quality patterns
 8. **Knowledge Vault**: `src/knowledge/vault.js` renders `knowledge_entries` as markdown files in `<project>/.claude/knowledge/` — one file per category. Uses content hashing (`kg_vault_hashes` table) to skip unchanged content
-9. **Retention**: Daily timer compacts tool data after 7 days (NULL tool_input/response), deletes events after 90 days. Configurable via `retention_warm_days` / `retention_cold_days`
-10. **API + Frontend**: Fastify serves REST endpoints on `127.0.0.1:3827`. Vanilla JS SPA with hash-based routing, Chart.js + Cytoscape.js for visualization
+9. **Quality Scoring**: After each prompt is ingested (alongside knowledge + pattern extraction), `src/quality/score.js` invokes Ollama to score the interaction on 4 dimensions (efficiency, accuracy, cost, approach) 0-100. Scores stored in `prompt_scores` table. Skips prompts with < 3 events.
+10. **Session Retrospective**: When a `session_end` event is processed, `src/quality/review.js` aggregates prompt scores + notable events and invokes Ollama to generate a narrative review (summary, strengths, improvements, suggestions). Stored in `session_reviews` table.
+11. **Retention**: Daily timer compacts tool data after 7 days (NULL tool_input/response), deletes events after 90 days. Configurable via `retention_warm_days` / `retention_cold_days`
+12. **API + Frontend**: Fastify serves REST endpoints on `127.0.0.1:3827`. Vanilla JS SPA with hash-based routing, Chart.js + Cytoscape.js for visualization
 
 ## Directory Structure
 
@@ -98,7 +109,11 @@ open-pulse/
 │   │   ├── vault.js            # Entries → markdown files in .claude/knowledge/
 │   │   ├── scan.js             # Cold-start scan from project files
 │   │   └── queries.js          # knowledge_entries + vault hash queries
-│   └── routes/                 # Fastify route plugins (12 files)
+│   ├── quality/                # Quality evaluation pipelines
+│   │   ├── score.js            # Per-prompt quality scoring (Ollama)
+│   │   ├── review.js           # Session retrospective generation (Ollama)
+│   │   └── queries.js          # prompt_scores + session_reviews queries
+│   └── routes/                 # Fastify route plugins (13 files)
 │       ├── health.js           # /api/health, /api/overview
 │       ├── events.js           # /api/events, /api/sessions
 │       ├── prompts.js          # /api/prompts
@@ -109,7 +124,8 @@ open-pulse/
 │       ├── inventory.js        # /api/inventory/:type
 │       ├── knowledge.js        # /api/knowledge/*
 │       ├── auto-evolves.js     # /api/auto-evolves/*
-│       └── synthesize.js       # /api/synthesize/data
+│       ├── synthesize.js       # /api/synthesize/data
+│       └── quality.js          # /api/quality/*
 ├── scripts/                    # CLI utilities + installation
 │   ├── install.sh              # 8-step installer (npm, dirs, DB, backfill, symlinks, agents, hooks, launchd)
 │   ├── uninstall.sh            # 4-step uninstaller (symlinks, hooks, launchd)
@@ -149,7 +165,8 @@ open-pulse/
 │       ├── synthesize/              # Opus-driven knowledge + pattern consolidation
 │       ├── agent-creator/           # Agent scaffolding
 │       ├── hook-creator/            # Hook configuration generator
-│       └── rule-creator/            # Rule creation with conflict detection
+│       ├── rule-creator/            # Rule creation with conflict detection
+│       └── quality-evaluator/       # Quality scoring rubric + retrospective instructions
 ├── data/                       # Runtime: JSONL files (gitignored)
 ├── logs/                       # Runtime: stdout/stderr logs (gitignored)
 ├── config.json                 # Server config (port, intervals, thresholds)
@@ -159,7 +176,7 @@ open-pulse/
 
 ## Database Schema
 
-12 tables:
+14 tables:
 
 | Table | Purpose | Key fields |
 |---|---|---|
@@ -175,6 +192,8 @@ open-pulse/
 | `kg_vault_hashes` | Content hashes for vault files | project_id, file_path, content_hash, generated_at |
 | `kg_sync_state` | KV state for graph sync | key, value |
 | `pipeline_runs` | Internal Claude CLI invocation log | pipeline, project_id, model, status, error, input_tokens, output_tokens, duration_ms |
+| `prompt_scores` | Per-prompt quality scores (Ollama) | prompt_id, session_id, project_id, efficiency, accuracy, cost_score, approach, overall, reasoning |
+| `session_reviews` | Session retrospective reviews (Ollama) | session_id, project_id, overall_score, summary, strengths, improvements, suggestions, prompt_count, duration_mins |
 
 ## API Endpoints
 
@@ -264,6 +283,15 @@ open-pulse/
 | GET | `/api/pipeline-runs/stats?project_id=&days=` | Aggregated run stats |
 | GET | `/api/projects/:id/pipeline-runs?pipeline=&status=&limit=&page=` | Project pipeline run history |
 
+### Quality
+
+| Method | Path | Purpose |
+|---|---|---|
+| GET | `/api/quality/prompts/:promptId` | Single prompt quality score |
+| GET | `/api/quality/sessions/:sessionId` | Session retrospective review |
+| GET | `/api/quality/stats?project=&period=` | Aggregated quality stats (avg scores, trends) |
+| GET | `/api/quality/trends?project=&days=` | Daily quality score averages for charts |
+
 ### Learning (legacy, returns empty)
 
 | Method | Path | Purpose |
@@ -283,16 +311,24 @@ open-pulse/
 | `retention_warm_days` | 7 | Days before NULLing tool_input/tool_response |
 | `retention_cold_days` | 90 | Days before deleting events |
 | `knowledge_enabled` | true | Enable knowledge extraction post-ingest |
-| `knowledge_max_events_per_prompt` | 200 | Max events fed to Opus per extraction run |
+| `knowledge_max_events_per_prompt` | 100 | Max events fed to LLM per extraction run |
+| `knowledge_model` | `"local"` | Legacy alias for `knowledge_extract_model` — read as fallback |
+| `knowledge_extract_model` | `"local"` | Extraction model: `"local"` (Ollama) \| `"haiku"` \| `"sonnet"` \| `"opus"` |
+| `knowledge_session_extract_enabled` | false | Run session-level extraction after session_end (Phase B.1, not wired yet) |
 | `knowledge_scan_files` | ["README.md","package.json","CLAUDE.md"] | Files read during cold-start scan |
 | `knowledge_scan_patterns` | [] | Additional glob patterns for cold-start scan |
+| `synthesize_enabled` | false | Enable scheduled auto-synthesize (Phase B.2, not wired yet) |
+| `synthesize_interval_hours` | 24 | Interval for auto-synthesize runs |
 | `auto_evolve_enabled` | true | Enable auto-evolve promotion timer |
 | `auto_evolve_blacklist` | ["agent","hook"] | Target types blocked from auto-promotion |
 | `auto_evolve_min_confidence` | 0.85 | Confidence threshold for auto-promotion |
 | `ollama_url` | `"http://localhost:11434"` | Ollama API base URL |
-| `ollama_model` | `"qwen2.5:7b"` | Local model for per-prompt extraction |
-| `ollama_timeout_ms` | 90000 | Ollama HTTP request timeout |
+| `ollama_model` | `"qwen3.5:9b"` | Local model for per-prompt extraction |
+| `ollama_timeout_ms` | 120000 | Ollama HTTP request timeout |
 | `pattern_detect_enabled` | true | Enable per-prompt pattern detection via Ollama |
+| `quality_scoring_enabled` | true | Enable per-prompt quality scoring via Ollama |
+| `quality_review_enabled` | true | Enable session retrospective generation via Ollama |
+| `quality_min_events` | 3 | Minimum events per prompt to trigger quality scoring |
 
 ## Key Design Decisions
 

@@ -107,4 +107,20 @@ function updatePipelineRun(db, id, fields) {
   db.prepare(`UPDATE pipeline_runs SET ${sets.join(', ')} WHERE id = @id`).run(params);
 }
 
-module.exports = { insertPipelineRun, updatePipelineRun, queryPipelineRuns, getPipelineRunStats };
+function getPipelineRunTrends(db, opts = {}) {
+  const { days = 30 } = opts;
+  return db.prepare(`
+    SELECT
+      date(created_at) AS day,
+      COUNT(*) AS total,
+      SUM(CASE WHEN status = 'success' THEN 1 ELSE 0 END) AS success,
+      SUM(CASE WHEN status = 'error' THEN 1 ELSE 0 END) AS errors,
+      SUM(CASE WHEN status = 'skipped' THEN 1 ELSE 0 END) AS skipped
+    FROM pipeline_runs
+    WHERE created_at >= datetime('now', '-' || @days || ' days')
+    GROUP BY date(created_at)
+    ORDER BY day ASC
+  `).all({ days });
+}
+
+module.exports = { insertPipelineRun, updatePipelineRun, queryPipelineRuns, getPipelineRunStats, getPipelineRunTrends };

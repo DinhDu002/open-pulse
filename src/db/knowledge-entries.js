@@ -242,6 +242,37 @@ function getEntryHistory(db, entryId) {
 // ---------------------------------------------------------------------------
 
 // ---------------------------------------------------------------------------
+// Batch operations
+// ---------------------------------------------------------------------------
+
+function batchUpdateStatus(db, ids, status) {
+  const now = new Date().toISOString();
+  const stmt = db.prepare(
+    'UPDATE knowledge_entries SET status = @status, updated_at = @updated_at WHERE id = @id'
+  );
+  const run = db.transaction((items) => {
+    let affected = 0;
+    for (const id of items) {
+      affected += stmt.run({ id, status, updated_at: now }).changes;
+    }
+    return affected;
+  });
+  return run(ids);
+}
+
+function batchDeleteEntries(db, ids) {
+  const stmt = db.prepare('DELETE FROM knowledge_entries WHERE id = ?');
+  const run = db.transaction((items) => {
+    let affected = 0;
+    for (const id of items) {
+      affected += stmt.run(id).changes;
+    }
+    return affected;
+  });
+  return run(ids);
+}
+
+// ---------------------------------------------------------------------------
 // Bulk query (unpaginated, for synthesize)
 // ---------------------------------------------------------------------------
 
@@ -271,4 +302,6 @@ module.exports = {
   updateKnowledgeEntry,
   insertEntryHistory,
   getEntryHistory,
+  batchUpdateStatus,
+  batchDeleteEntries,
 };

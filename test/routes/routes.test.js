@@ -107,6 +107,30 @@ describe('op-server', () => {
     assert.equal(res.statusCode, 200);
   });
 
+  it('POST /api/sync returns success', async () => {
+    const res = await app.inject({ method: 'POST', url: '/api/sync' });
+    assert.equal(res.statusCode, 200);
+    const body = JSON.parse(res.body);
+    assert.equal(body.success, true);
+  });
+
+  it('POST /api/sync triggers component sync without reducing component count', async () => {
+    const testDb = require('better-sqlite3')(process.env.OPEN_PULSE_DB);
+    const initialCount = testDb.prepare('SELECT COUNT(*) AS c FROM components').get().c;
+    testDb.close();
+
+    const res = await app.inject({ method: 'POST', url: '/api/sync' });
+    assert.equal(res.statusCode, 200);
+    const body = JSON.parse(res.body);
+    assert.equal(body.success, true);
+
+    const testDb2 = require('better-sqlite3')(process.env.OPEN_PULSE_DB);
+    const afterCount = testDb2.prepare('SELECT COUNT(*) AS c FROM components').get().c;
+    testDb2.close();
+
+    assert.ok(afterCount >= initialCount, `expected afterCount (${afterCount}) >= initialCount (${initialCount})`);
+  });
+
   it('GET /api/config returns config object', async () => {
     const res = await app.inject({ method: 'GET', url: '/api/config' });
     assert.equal(res.statusCode, 200);
@@ -478,7 +502,7 @@ describe('op-server', () => {
   });
 
   describe('GET /api/projects', () => {
-    it('includes event-only projects', async () => {
+    it('excludes non-git event-only projects', async () => {
       const dbMod = { ...require('../../src/db/schema'), ...require('../../src/db/events'), ...require('../../src/db/sessions'), ...require('../../src/db/components'), ...require('../../src/db/scan'), ...require('../../src/db/prompts'), ...require('../../src/db/projects'), ...require('../../src/db/knowledge-entries'), ...require('../../src/db/knowledge-sync') };
       const testDb = require('better-sqlite3')(process.env.OPEN_PULSE_DB);
 
@@ -492,9 +516,136 @@ describe('op-server', () => {
       const res = await app.inject({ method: 'GET', url: '/api/projects' });
       assert.equal(res.statusCode, 200);
       const projects = JSON.parse(res.body);
+      assert.equal(
+        projects.find(p => p.name === 'event-only-proj'),
+        undefined,
+        'non-git event-only projects must not appear'
+      );
+    });
 
-      const eventOnly = projects.find(p => p.name === 'event-only-proj');
-      assert.ok(eventOnly, 'should include project known only from events');
+    it('only lists cl_projects (git repos)', async () => {
+      const dbMod = { ...require('../../src/db/projects') };
+      const testDb = require('better-sqlite3')(process.env.OPEN_PULSE_DB);
+      dbMod.upsertClProject(testDb, {
+        project_id: 'git-listed', name: 'git-listed', directory: '/tmp/git-listed',
+        first_seen_at: '2026-04-10T06:00:00Z', last_seen_at: '2026-04-10T06:00:00Z',
+        session_count: 0,
+      });
+      testDb.close();
+
+      const res = await app.inject({ method: 'GET', url: '/api/projects' });
+      assert.equal(res.statusCode, 200);
+      const projects = JSON.parse(res.body);
+      assert.ok(projects.find(p => p.name === 'git-listed'), 'registered project must appear');
+    });
+  });
+
+  describe('POST /api/projects/refresh', () => {
+    let scanRoot;
+    before(() => {
+      scanRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'op-scan-root-'));
+      fs.writeFileSync(
+        path.join(TEST_DIR, 'config.json'),
+        JSON.stringify({ project_scan_roots: [scanRoot] })
+      );
+    });
+    after(() => {
+      fs.rmSync(scanRoot, { recursive: true, force: true });
+      try { fs.unlinkSync(path.join(TEST_DIR, 'config.json')); } catch { /* ignore */ }
+    });
+
+    it('drops projects whose .git is missing', async () => {
+      const { upsertClProject } = require('../../src/db/projects');
+      const testDb = require('better-sqlite3')(process.env.OPEN_PULSE_DB);
+
+      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'op-refresh-'));
+      upsertClProject(testDb, {
+        project_id: 'ghost', name: 'ghost', directory: tmpDir,
+        first_seen_at: '2026-04-10T06:00:00Z', last_seen_at: '2026-04-10T06:00:00Z',
+        session_count: 0,
+      });
+      testDb.close();
+
+      const res = await app.inject({ method: 'POST', url: '/api/projects/refresh' });
+      assert.equal(res.statusCode, 200);
+      const body = JSON.parse(res.body);
+      assert.ok(body.removed >= 1, 'non-git project must be removed');
+
+      const listRes = await app.inject({ method: 'GET', url: '/api/projects' });
+      const projects = JSON.parse(listRes.body);
+      assert.equal(projects.find(p => p.project_id === 'ghost'), undefined);
+
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    });
+
+    it('registers git repos discovered under project_scan_roots', async () => {
+      const gitDir = path.join(scanRoot, 'sub', 'my-repo');
+      fs.mkdirSync(path.join(gitDir, '.git'), { recursive: true });
+
+      const res = await app.inject({ method: 'POST', url: '/api/projects/refresh' });
+      assert.equal(res.statusCode, 200);
+      const body = JSON.parse(res.body);
+      assert.ok(body.added >= 1, 'new git repo must be added');
+
+      const listRes = await app.inject({ method: 'GET', url: '/api/projects' });
+      const projects = JSON.parse(listRes.body);
+      assert.ok(projects.find(p => p.directory === gitDir), 'scanned repo must appear in list');
+    });
+
+    it('skips blacklisted folders like node_modules', async () => {
+      const deepDir = path.join(scanRoot, 'node_modules', 'some-pkg');
+      fs.mkdirSync(path.join(deepDir, '.git'), { recursive: true });
+
+      const res = await app.inject({ method: 'POST', url: '/api/projects/refresh' });
+      assert.equal(res.statusCode, 200);
+      const listRes = await app.inject({ method: 'GET', url: '/api/projects' });
+      const projects = JSON.parse(listRes.body);
+      assert.equal(projects.find(p => p.directory === deepDir), undefined);
+    });
+  });
+
+  describe('GET /api/projects/non-git', () => {
+    it('lists workdirs from events that are not git repos', async () => {
+      const { insertEvent } = require('../../src/db/events');
+      const testDb = require('better-sqlite3')(process.env.OPEN_PULSE_DB);
+
+      const nonGitDir = fs.mkdtempSync(path.join(os.tmpdir(), 'op-nongit-'));
+      insertEvent(testDb, {
+        timestamp: '2026-04-11T06:00:00Z', session_id: 'nongit-1',
+        event_type: 'tool_call', name: 'Read',
+        working_directory: nonGitDir, project_name: path.basename(nonGitDir),
+      });
+      testDb.close();
+
+      const res = await app.inject({ method: 'GET', url: '/api/projects/non-git' });
+      assert.equal(res.statusCode, 200);
+      const rows = JSON.parse(res.body);
+      const match = rows.find(r => r.directory === nonGitDir);
+      assert.ok(match, 'non-git dir must appear');
+      assert.equal(match.session_count, 1);
+
+      fs.rmSync(nonGitDir, { recursive: true, force: true });
+    });
+
+    it('excludes git repos', async () => {
+      const { insertEvent } = require('../../src/db/events');
+      const testDb = require('better-sqlite3')(process.env.OPEN_PULSE_DB);
+
+      const gitDir = fs.mkdtempSync(path.join(os.tmpdir(), 'op-nongit-git-'));
+      fs.mkdirSync(path.join(gitDir, '.git'));
+      insertEvent(testDb, {
+        timestamp: '2026-04-11T07:00:00Z', session_id: 'nongit-2',
+        event_type: 'tool_call', name: 'Read',
+        working_directory: gitDir, project_name: path.basename(gitDir),
+      });
+      testDb.close();
+
+      const res = await app.inject({ method: 'GET', url: '/api/projects/non-git' });
+      assert.equal(res.statusCode, 200);
+      const rows = JSON.parse(res.body);
+      assert.equal(rows.find(r => r.directory === gitDir), undefined);
+
+      fs.rmSync(gitDir, { recursive: true, force: true });
     });
   });
 
@@ -686,11 +837,12 @@ describe('op-server', () => {
       assert.ok(Array.isArray(body.rows));
     });
 
-    it('GET /api/errors returns array', async () => {
+    it('GET /api/errors returns collector and pipeline errors', async () => {
       const res = await app.inject({ method: 'GET', url: '/api/errors' });
       assert.equal(res.statusCode, 200);
       const body = JSON.parse(res.payload);
-      assert.ok(Array.isArray(body));
+      assert.ok(Array.isArray(body.collector_errors));
+      assert.ok(Array.isArray(body.pipeline_errors));
     });
 
     it('GET /api/config returns config object', async () => {
@@ -1126,6 +1278,204 @@ describe('op-server', () => {
       const body = JSON.parse(res.body);
       assert.equal(body.projects.length, 1);
       assert.equal(body.totals.knowledge_entries, 0);
+    });
+  });
+
+  // ── Cost API ──────────────────────────────────────────────────────────────
+
+  describe('cost API', () => {
+    before(() => {
+      const testDb = require('better-sqlite3')(process.env.OPEN_PULSE_DB);
+      const dbMod = require('../../src/db/sessions');
+      dbMod.upsertSession(testDb, {
+        session_id: 'sess-cost-opus',
+        started_at: '2026-04-01T11:00:00Z',
+        working_directory: '/tmp',
+        model: 'claude-opus-4',
+      });
+      testDb.prepare('UPDATE sessions SET total_cost_usd = 0.50 WHERE session_id = ?').run('sess-prompt-api');
+      testDb.prepare('UPDATE sessions SET total_cost_usd = 1.25 WHERE session_id = ?').run('sess-cost-opus');
+      testDb.close();
+    });
+
+    it('GET /api/cost?group_by=model returns model breakdown', async () => {
+      const res = await app.inject({ method: 'GET', url: '/api/cost?group_by=model&period=all' });
+      assert.equal(res.statusCode, 200);
+      const body = JSON.parse(res.body);
+      assert.ok(Array.isArray(body.rows));
+      assert.ok(body.rows.length >= 2);
+      assert.ok(body.rows.some(r => r.model === 'claude-opus-4'));
+      assert.ok(body.rows.every(r => 'cost' in r && 'model' in r));
+    });
+
+    it('GET /api/cost?group_by=session returns per-session costs', async () => {
+      const res = await app.inject({ method: 'GET', url: '/api/cost?group_by=session&period=all' });
+      assert.equal(res.statusCode, 200);
+      const body = JSON.parse(res.body);
+      assert.ok(Array.isArray(body.rows));
+      assert.ok(body.rows.some(r => r.session_id === 'sess-cost-opus'));
+      assert.ok(body.rows.every(r => 'session_id' in r && 'cost' in r));
+    });
+
+    it('GET /api/cost?period=1d filters by period', async () => {
+      const allRes = await app.inject({ method: 'GET', url: '/api/cost?group_by=day&period=all' });
+      const dayRes = await app.inject({ method: 'GET', url: '/api/cost?group_by=day&period=1d' });
+      const allBody = JSON.parse(allRes.body);
+      const dayBody = JSON.parse(dayRes.body);
+      // 1d period should return equal or fewer rows than all
+      assert.ok(dayBody.rows.length <= allBody.rows.length);
+    });
+  });
+
+  // ── Rankings API ──────────────────────────────────────────────────────────
+
+  describe('rankings API', () => {
+    it('GET /api/rankings/agents returns agent rankings', async () => {
+      const res = await app.inject({ method: 'GET', url: '/api/rankings/agents?period=all' });
+      assert.equal(res.statusCode, 200);
+      const body = JSON.parse(res.body);
+      assert.ok(Array.isArray(body));
+      assert.ok(body.some(r => r.name === 'Explore'));
+    });
+
+    it('GET /api/rankings/tools returns tool rankings', async () => {
+      const res = await app.inject({ method: 'GET', url: '/api/rankings/tools?period=all' });
+      assert.equal(res.statusCode, 200);
+      const body = JSON.parse(res.body);
+      assert.ok(Array.isArray(body));
+      assert.ok(body.some(r => r.name === 'Read'));
+      assert.ok(body.some(r => r.name === 'Bash'));
+    });
+
+    it('GET /api/rankings/invalid returns empty array', async () => {
+      const res = await app.inject({ method: 'GET', url: '/api/rankings/invalid?period=all' });
+      assert.equal(res.statusCode, 200);
+      const body = JSON.parse(res.body);
+      assert.ok(Array.isArray(body));
+      assert.equal(body.length, 0);
+    });
+  });
+
+  // ── Inventory detail pagination ───────────────────────────────────────────
+
+  describe('inventory detail pagination', () => {
+    before(() => {
+      const testDb = require('better-sqlite3')(process.env.OPEN_PULSE_DB);
+      const dbMod = require('../../src/db/events');
+      const sessMod = require('../../src/db/sessions');
+      sessMod.upsertSession(testDb, {
+        session_id: 'sess-pagination',
+        started_at: '2026-04-09T10:00:00Z',
+        working_directory: '/tmp',
+        model: 'claude-sonnet-4-6',
+      });
+      for (let i = 0; i < 15; i++) {
+        dbMod.insertEvent(testDb, {
+          timestamp: `2026-04-09T10:${String(i).padStart(2, '0')}:00Z`,
+          session_id: 'sess-pagination',
+          event_type: 'skill_invoke',
+          name: 'paginated-skill',
+          seq_num: i + 1,
+        });
+      }
+      testDb.close();
+    });
+
+    it('returns first page with default per_page=10', async () => {
+      const res = await app.inject({ method: 'GET', url: '/api/inventory/skills/paginated-skill?period=all' });
+      assert.equal(res.statusCode, 200);
+      const body = JSON.parse(res.body);
+      assert.equal(body.total, 15);
+      assert.equal(body.page, 1);
+      assert.equal(body.per_page, 10);
+      assert.equal(body.invocations.length, 10);
+    });
+
+    it('returns second page with remaining items', async () => {
+      const res = await app.inject({ method: 'GET', url: '/api/inventory/skills/paginated-skill?period=all&page=2' });
+      assert.equal(res.statusCode, 200);
+      const body = JSON.parse(res.body);
+      assert.equal(body.page, 2);
+      assert.equal(body.invocations.length, 5);
+    });
+
+    it('respects custom per_page parameter', async () => {
+      const res = await app.inject({ method: 'GET', url: '/api/inventory/skills/paginated-skill?period=all&per_page=5' });
+      assert.equal(res.statusCode, 200);
+      const body = JSON.parse(res.body);
+      assert.equal(body.per_page, 5);
+      assert.equal(body.invocations.length, 5);
+      assert.equal(body.total, 15);
+    });
+  });
+
+  // ── Batch knowledge entries ───────────────────────────────────────────────
+
+  describe('batch knowledge entries', () => {
+    let entryIds = [];
+
+    before(() => {
+      const testDb = require('better-sqlite3')(process.env.OPEN_PULSE_DB);
+      const keMod = require('../../src/db/knowledge-entries');
+      for (let i = 0; i < 3; i++) {
+        const entry = keMod.insertKnowledgeEntry(testDb, {
+          project_id: 'batch-test-proj',
+          category: 'domain',
+          title: `batch-entry-${i}`,
+          body: `Body ${i}`,
+        });
+        entryIds.push(entry.id);
+      }
+      testDb.close();
+    });
+
+    it('POST batch outdated marks entries', async () => {
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/knowledge/entries/batch',
+        payload: { ids: [entryIds[0], entryIds[1]], action: 'outdated' },
+      });
+      assert.equal(res.statusCode, 200);
+      const body = JSON.parse(res.body);
+      assert.equal(body.affected, 2);
+    });
+
+    it('POST batch active restores entries', async () => {
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/knowledge/entries/batch',
+        payload: { ids: [entryIds[0]], action: 'active' },
+      });
+      assert.equal(res.statusCode, 200);
+      assert.equal(JSON.parse(res.body).affected, 1);
+    });
+
+    it('POST batch delete removes entries', async () => {
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/knowledge/entries/batch',
+        payload: { ids: [entryIds[2]], action: 'delete' },
+      });
+      assert.equal(res.statusCode, 200);
+      assert.equal(JSON.parse(res.body).affected, 1);
+    });
+
+    it('rejects empty ids', async () => {
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/knowledge/entries/batch',
+        payload: { ids: [], action: 'outdated' },
+      });
+      assert.equal(res.statusCode, 400);
+    });
+
+    it('rejects invalid action', async () => {
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/knowledge/entries/batch',
+        payload: { ids: ['x'], action: 'nope' },
+      });
+      assert.equal(res.statusCode, 400);
     });
   });
 

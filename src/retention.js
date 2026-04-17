@@ -42,9 +42,21 @@ function runRetention(db, opts = {}) {
     WHERE created_at < datetime('now', '-' || @coldDays || ' days')
   `).run({ coldDays });
 
+  // Tier 3: Delete cold prompt_scores
+  const scoresDeleteResult = db.prepare(`
+    DELETE FROM prompt_scores
+    WHERE created_at < datetime('now', '-' || @coldDays || ' days')
+  `).run({ coldDays });
+
+  // Tier 3: Delete cold session_reviews
+  const reviewsDeleteResult = db.prepare(`
+    DELETE FROM session_reviews
+    WHERE created_at < datetime('now', '-' || @coldDays || ' days')
+  `).run({ coldDays });
+
   return {
     compacted: compactResult.changes,
-    deleted: deleteResult.changes + pipelineDeleteResult.changes,
+    deleted: deleteResult.changes + pipelineDeleteResult.changes + scoresDeleteResult.changes + reviewsDeleteResult.changes,
   };
 }
 

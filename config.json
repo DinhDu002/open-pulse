@@ -9,12 +9,16 @@
   "knowledge_enabled": true,
   "knowledge_max_events_per_prompt": 100,
   "knowledge_model": "local",
+  "knowledge_extract_model": "local",
+  "knowledge_session_extract_enabled": false,
   "knowledge_scan_files": [
     "README.md",
     "package.json",
     "CLAUDE.md"
   ],
   "knowledge_scan_patterns": [],
+  "synthesize_enabled": false,
+  "synthesize_interval_hours": 24,
   "auto_evolve_enabled": true,
   "auto_evolve_blacklist": [
     "agent",
@@ -22,7 +26,13 @@
   ],
   "auto_evolve_min_confidence": 0.85,
   "ollama_url": "http://localhost:11434",
-  "ollama_model": "qwen2.5:7b",
-  "ollama_timeout_ms": 90000,
-  "pattern_detect_enabled": true
+  "ollama_model": "qwen3.5:9b",
+  "ollama_timeout_ms": 120000,
+  "pattern_detect_enabled": true,
+  "quality_scoring_enabled": true,
+  "quality_review_enabled": true,
+  "quality_min_events": 3,
+  "project_scan_roots": [
+    "~/Workspace"
+  ]
 }

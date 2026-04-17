@@ -107,9 +107,9 @@ describe('op-auto-evolve', () => {
   it('runAutoEvolve promotes when confidence >= threshold', () => {
     db.prepare(`
       INSERT OR REPLACE INTO auto_evolves
-        (id, title, description, target_type, confidence, observation_count, rejection_count, status, created_at)
+        (id, title, description, target_type, confidence, observation_count, rejection_count, status, created_at, updated_at)
       VALUES
-        ('test-promote-1', 'Use strict mode', 'Always use strict', 'rule', 0.90, 20, 0, 'active', datetime('now'))
+        ('test-promote-1', 'Use strict mode', 'Always use strict', 'rule', 0.90, 20, 0, 'active', datetime('now', '-5 days'), datetime('now'))
     `).run();
 
     const result = autoEvolve.runAutoEvolve(db, {

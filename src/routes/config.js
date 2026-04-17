@@ -3,6 +3,7 @@
 const path = require('path');
 const fs = require('fs');
 const { ingestAll } = require('../ingest/pipeline');
+const { loadConfig } = require('../lib/config');
 const {
   queryLearningActivity,
   queryLearningRecent,
@@ -14,29 +15,14 @@ module.exports = async function configRoutes(app, opts) {
 
   const CONFIG_PATH = path.join(repoDir, 'config.json');
 
-  const DEFAULT_CONFIG = {
-    port: 3827,
-    ingest_interval_ms: 10000,
-    cl_sync_interval_ms: 60000,
-  };
-
-  function loadConfig() {
-    try {
-      const raw = fs.readFileSync(CONFIG_PATH, 'utf8');
-      return { ...DEFAULT_CONFIG, ...JSON.parse(raw) };
-    } catch {
-      return { ...DEFAULT_CONFIG };
-    }
-  }
-
   // ── Config ──────────────────────────────────────────────────────────────
 
   app.get('/api/config', async () => {
-    return loadConfig();
+    return loadConfig(repoDir);
   });
 
   app.put('/api/config', async (request) => {
-    const current = loadConfig();
+    const current = loadConfig(repoDir);
     const merged = { ...current, ...request.body };
     fs.writeFileSync(CONFIG_PATH, JSON.stringify(merged, null, 2), 'utf8');
     return merged;
@@ -46,7 +32,14 @@ module.exports = async function configRoutes(app, opts) {
 
   app.get('/api/errors', async (request) => {
     const { limit = 50 } = request.query;
-    return db.prepare('SELECT * FROM collector_errors ORDER BY occurred_at DESC LIMIT ?').all(parseInt(limit, 10));
+    const lim = parseInt(limit, 10);
+    const collector_errors = db.prepare(
+      'SELECT * FROM collector_errors ORDER BY occurred_at DESC LIMIT ?'
+    ).all(lim);
+    const pipeline_errors = db.prepare(
+      "SELECT id, pipeline, project_id, model, error, created_at FROM pipeline_runs WHERE status = 'error' ORDER BY created_at DESC LIMIT ?"
+    ).all(lim);
+    return { collector_errors, pipeline_errors };
   });
 
   // ── Unused ──────────────────────────────────────────────────────────────
@@ -87,6 +80,19 @@ module.exports = async function configRoutes(app, opts) {
     try {
       const results = ingestAll(db, dataDir);
       return { success: true, results };
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
+  });
+
+  // ── Manual sync ─────────────────────────────────────────────────────────
+
+  app.post('/api/sync', async () => {
+    try {
+      if (typeof opts.syncFn === 'function') {
+        opts.syncFn();
+      }
+      return { success: true };
     } catch (err) {
       return { success: false, error: err.message };
     }

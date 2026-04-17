@@ -21,7 +21,10 @@ function revertAutoEvolve(db, id) {
 
   db.prepare(`
     UPDATE auto_evolves
-    SET status = 'reverted', updated_at = ?
+    SET status = 'reverted',
+        rejection_count = rejection_count + 1,
+        confidence = MIN(confidence, 0.5),
+        updated_at = ?
     WHERE id = ?
   `).run(new Date().toISOString(), id);
 }

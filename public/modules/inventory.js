@@ -1,4 +1,4 @@
-import { get, getWithETag } from './api.js';
+import { get, getWithETag, post } from './api.js';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -232,7 +232,7 @@ function renderPagination(container, page, totalPages, onPageChange) {
   container.appendChild(pager);
 }
 
-function renderItemDetail(el, item, type, onBack, { onPageChange, onProjectChange, detailProject } = {}) {
+function renderItemDetail(el, item, type, onBack, { onPageChange, onProjectChange, detailProject, onRefresh } = {}) {
   el.textContent = '';
 
   const header = document.createElement('div');
@@ -249,6 +249,27 @@ function renderItemDetail(el, item, type, onBack, { onPageChange, onProjectChang
 
   header.appendChild(back);
   header.appendChild(title);
+
+  if (typeof onRefresh === 'function') {
+    const refreshBtn = document.createElement('button');
+    refreshBtn.className = 'btn';
+    refreshBtn.textContent = 'Refresh';
+    refreshBtn.style.marginLeft = 'auto';
+    refreshBtn.addEventListener('click', () => {
+      refreshBtn.disabled = true;
+      const originalText = refreshBtn.textContent;
+      refreshBtn.textContent = 'Refreshing…';
+      Promise.resolve(onRefresh()).catch(err => {
+        console.error('Detail refresh failed:', err);
+      }).finally(() => {
+        // Button may be gone after re-render, but guard anyway
+        refreshBtn.disabled = false;
+        refreshBtn.textContent = originalText;
+      });
+    });
+    header.appendChild(refreshBtn);
+  }
+
   el.appendChild(header);
 
   // Keywords (used for inline highlighting in user prompts, not displayed separately)
@@ -370,6 +391,27 @@ export function mount(el, { period } = {}) {
     tabsEl.appendChild(btn);
   });
 
+  const syncBtn = document.createElement('button');
+  syncBtn.className = 'btn';
+  syncBtn.textContent = 'Sync now';
+  syncBtn.style.marginLeft = 'auto';
+  syncBtn.addEventListener('click', async () => {
+    syncBtn.disabled = true;
+    const originalText = syncBtn.textContent;
+    syncBtn.textContent = 'Syncing…';
+    try {
+      await post('/sync', {});
+      currentETag = null;
+      if (!inDetailView) loadTab(activeTab);
+    } catch (err) {
+      console.error('Sync failed:', err);
+    } finally {
+      syncBtn.disabled = false;
+      syncBtn.textContent = originalText;
+    }
+  });
+  tabsEl.appendChild(syncBtn);
+
   el.appendChild(tabsEl);
   el.appendChild(content);
 
@@ -404,15 +446,18 @@ export function mount(el, { period } = {}) {
         renderSkillsTab(content, items, item => {
           inDetailView = true;
           let detailProject = '';
+          let currentPage = 1;
           function loadDetail(pg, proj) {
             if (proj !== undefined) detailProject = proj;
+            currentPage = pg;
             const projParam = detailProject ? '&project=' + encodeURIComponent(detailProject) : '';
             const url = '/inventory/skills/' + encodeURIComponent(item.name) + '?period=' + p + '&page=' + pg + projParam;
-            get(url).then(detail => {
+            return get(url).then(detail => {
               renderItemDetail(content, detail, 'skill', () => { inDetailView = false; loadTab('skills'); }, {
                 onPageChange: pg => loadDetail(pg),
                 onProjectChange: proj => loadDetail(1, proj),
                 detailProject,
+                onRefresh: () => loadDetail(currentPage),
               });
             });
           }
@@ -422,15 +467,18 @@ export function mount(el, { period } = {}) {
         renderAgentsTab(content, items, item => {
           inDetailView = true;
           let detailProject = '';
+          let currentPage = 1;
           function loadDetail(pg, proj) {
             if (proj !== undefined) detailProject = proj;
+            currentPage = pg;
             const projParam = detailProject ? '&project=' + encodeURIComponent(detailProject) : '';
             const url = '/inventory/agents/' + encodeURIComponent(item.name) + '?period=' + p + '&page=' + pg + projParam;
-            get(url).then(detail => {
+            return get(url).then(detail => {
               renderItemDetail(content, detail, 'agent', () => { inDetailView = false; loadTab('agents'); }, {
                 onPageChange: pg => loadDetail(pg),
                 onProjectChange: proj => loadDetail(1, proj),
                 detailProject,
+                onRefresh: () => loadDetail(currentPage),
               });
             });
           }

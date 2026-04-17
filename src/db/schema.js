@@ -188,6 +188,42 @@ CREATE TABLE IF NOT EXISTS pipeline_runs (
 );
 CREATE INDEX IF NOT EXISTS idx_pr_project ON pipeline_runs(project_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_pr_pipeline ON pipeline_runs(pipeline, created_at);
+
+CREATE TABLE IF NOT EXISTS prompt_scores (
+  id              INTEGER PRIMARY KEY AUTOINCREMENT,
+  prompt_id       INTEGER NOT NULL UNIQUE,
+  session_id      TEXT NOT NULL,
+  project_id      TEXT,
+  efficiency      INTEGER NOT NULL,
+  accuracy        INTEGER NOT NULL,
+  cost_score      INTEGER NOT NULL,
+  approach        INTEGER NOT NULL,
+  overall         INTEGER NOT NULL,
+  reasoning       TEXT,
+  event_count     INTEGER,
+  created_at      TEXT NOT NULL,
+  FOREIGN KEY (prompt_id) REFERENCES prompts(id)
+);
+CREATE INDEX IF NOT EXISTS idx_ps_session ON prompt_scores(session_id);
+CREATE INDEX IF NOT EXISTS idx_ps_project ON prompt_scores(project_id, created_at);
+
+CREATE TABLE IF NOT EXISTS session_reviews (
+  id              INTEGER PRIMARY KEY AUTOINCREMENT,
+  session_id      TEXT NOT NULL UNIQUE,
+  project_id      TEXT,
+  overall_score   INTEGER,
+  summary         TEXT NOT NULL,
+  strengths       TEXT,
+  improvements    TEXT,
+  suggestions     TEXT,
+  prompt_count    INTEGER,
+  scored_count    INTEGER,
+  total_cost_usd  REAL,
+  total_events    INTEGER,
+  duration_mins   REAL,
+  created_at      TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_sr_project ON session_reviews(project_id, created_at);
 `;
 
 // ---------------------------------------------------------------------------
@@ -348,6 +384,10 @@ function createDb(dbPath) {
 
   // Migrate: add projects column (JSON array of project names) to auto_evolves
   try { db.prepare('ALTER TABLE auto_evolves ADD COLUMN projects TEXT').run(); } catch { /* already exists */ }
+
+  // Performance indexes
+  db.exec('CREATE INDEX IF NOT EXISTS idx_ae_confidence ON auto_evolves(confidence)');
+  db.exec('CREATE INDEX IF NOT EXISTS idx_events_type_ts ON events(event_type, timestamp)');
 
   return db;
 }

@@ -8,12 +8,14 @@ const fastifyStatic = require('@fastify/static');
 const { createDb } = require('./db/schema');
 const { extractKnowledgeFromPrompt } = require('./knowledge/extract');
 const { detectPatternsFromPrompt } = require('./evolve/detect');
-const { ingestAll, setKnowledgeHook, setPatternHook } = require('./ingest/pipeline');
+const { scorePrompt } = require('./quality/score');
+const { generateRetrospective } = require('./quality/review');
+const { ingestAll, setKnowledgeHook, setPatternHook, setQualityHook, setReviewHook } = require('./ingest/pipeline');
 const { runRetention } = require('./retention');
 const { parseQualifiedName } = require('./lib/format');
+const { loadConfig } = require('./lib/config');
 const { runAutoEvolve } = require('./evolve/promote');
 const {
-  syncAll,
   syncComponentsWithDb,
 } = require('./ingest/sync');
 
@@ -23,32 +25,12 @@ const {
 
 const REPO_DIR   = process.env.OPEN_PULSE_DIR       || path.join(__dirname, '..');
 const DB_PATH    = process.env.OPEN_PULSE_DB         || path.join(REPO_DIR, 'open-pulse.db');
-const CONFIG_PATH = path.join(REPO_DIR, 'config.json');
 
 let componentETag = '';
 let _syncDb = null;
 
 function syncComponents() {
   if (_syncDb) componentETag = syncComponentsWithDb(_syncDb);
-}
-
-// ---------------------------------------------------------------------------
-// Config
-// ---------------------------------------------------------------------------
-
-const DEFAULT_CONFIG = {
-  port: 3827,
-  ingest_interval_ms: 10000,
-  cl_sync_interval_ms: 60000,
-};
-
-function loadConfig() {
-  try {
-    const raw = fs.readFileSync(CONFIG_PATH, 'utf8');
-    return { ...DEFAULT_CONFIG, ...JSON.parse(raw) };
-  } catch {
-    return { ...DEFAULT_CONFIG };
-  }
 }
 
 // ---------------------------------------------------------------------------
@@ -61,27 +43,36 @@ function buildApp(opts = {}) {
   const db = createDb(DB_PATH);
   const config = loadConfig();
 
-  if (config.knowledge_enabled !== false) {
-    setKnowledgeHook(extractKnowledgeFromPrompt, {
-      maxEvents: config.knowledge_max_events_per_prompt ?? 50,
-      model: config.knowledge_model || 'local',
-      ollamaModel: config.ollama_model || 'qwen2.5:7b',
-      ollamaUrl: config.ollama_url || 'http://localhost:11434',
-      ollamaTimeout: config.ollama_timeout_ms || 90000,
-    });
-  }
+  // Hooks are always registered; runtime enable/disable is gated in pipeline.js
+  // via fresh config reads so toggles take effect without restart.
+  setKnowledgeHook(extractKnowledgeFromPrompt, {
+    maxEvents: config.knowledge_max_events_per_prompt ?? 50,
+    model: config.knowledge_extract_model || config.knowledge_model || 'local',
+    ollamaModel: config.ollama_model || 'qwen2.5:7b',
+    ollamaUrl: config.ollama_url || 'http://localhost:11434',
+    ollamaTimeout: config.ollama_timeout_ms || 90000,
+  });
 
-  // Pattern detection via Ollama (per-prompt)
-  if (config.pattern_detect_enabled !== false) {
-    setPatternHook(detectPatternsFromPrompt, {
-      model: config.ollama_model || 'qwen2.5:7b',
-      url: config.ollama_url || 'http://localhost:11434',
-      timeout: config.ollama_timeout_ms || 90000,
-    });
-  }
+  setPatternHook(detectPatternsFromPrompt, {
+    model: config.ollama_model || 'qwen2.5:7b',
+    url: config.ollama_url || 'http://localhost:11434',
+    timeout: config.ollama_timeout_ms || 90000,
+  });
 
-  // Initial sync
-  syncAll(db);
+  setQualityHook(scorePrompt, {
+    model: config.ollama_model || 'qwen2.5:7b',
+    url: config.ollama_url || 'http://localhost:11434',
+    timeout: config.ollama_timeout_ms || 90000,
+    minEvents: config.quality_min_events ?? 3,
+  });
+
+  setReviewHook(generateRetrospective, {
+    model: config.ollama_model || 'qwen2.5:7b',
+    url: config.ollama_url || 'http://localhost:11434',
+    timeout: config.ollama_timeout_ms || 90000,
+  });
+
+  // Initial sync (components only — projects are auto-registered during ingest)
   _syncDb = db;
   try { componentETag = syncComponentsWithDb(db); } catch { /* non-critical */ }
 
@@ -107,7 +98,6 @@ function buildApp(opts = {}) {
     }, config.ingest_interval_ms || 10000));
 
     timers.push(setInterval(() => {
-      syncAll(db);
       try { componentETag = syncComponentsWithDb(db); } catch { /* non-critical */ }
     }, config.cl_sync_interval_ms || 60000));
 
@@ -146,6 +136,7 @@ function buildApp(opts = {}) {
     repoDir: REPO_DIR,
     config,
     componentETagFn: () => componentETag,
+    syncFn: syncComponents,
   };
 
   // Register route plugins
@@ -160,14 +151,26 @@ function buildApp(opts = {}) {
   app.register(require('./routes/knowledge'), routeOpts);
   app.register(require('./routes/auto-evolves'), routeOpts);
   app.register(require('./routes/synthesize'), routeOpts);
+  app.register(require('./routes/quality'), routeOpts);
 
-  // Ollama health check (non-blocking, informational only)
+  // Ollama health check + model verification (non-blocking, informational only)
   if (config.pattern_detect_enabled !== false || config.knowledge_model === 'local') {
     const ollamaUrl = config.ollama_url || 'http://localhost:11434';
+    const ollamaModel = config.ollama_model || 'qwen2.5:7b';
+    const { verifyModel } = require('./lib/ollama');
     fetch(`${ollamaUrl}/api/tags`, { signal: AbortSignal.timeout(3000) })
-      .then(res => {
-        if (res.ok) app.log.info(`Ollama available at ${ollamaUrl}`);
-        else app.log.warn(`Ollama returned ${res.status} at ${ollamaUrl}`);
+      .then(async res => {
+        if (res.ok) {
+          app.log.info(`Ollama available at ${ollamaUrl}`);
+          const modelOk = await verifyModel(ollamaModel, { url: ollamaUrl });
+          if (modelOk) {
+            app.log.info(`Ollama model "${ollamaModel}" loaded`);
+          } else {
+            app.log.warn(`Ollama model "${ollamaModel}" not found — run: ollama pull ${ollamaModel}`);
+          }
+        } else {
+          app.log.warn(`Ollama returned ${res.status} at ${ollamaUrl}`);
+        }
       })
       .catch(() => {
         app.log.warn(`Ollama not available at ${ollamaUrl} — local extraction will be skipped`);
@@ -185,6 +188,29 @@ function buildApp(opts = {}) {
 }
 
 // ---------------------------------------------------------------------------
+// Graceful shutdown
+// ---------------------------------------------------------------------------
+
+function gracefulShutdown(app, signal) {
+  if (app._shuttingDown) return;
+  app._shuttingDown = true;
+  console.log(`[${new Date().toISOString()}] ${signal} received, shutting down…`);
+  const forceTimer = setTimeout(() => {
+    console.error('Graceful shutdown timed out, forcing exit');
+    process.exit(1);
+  }, 10000);
+  forceTimer.unref();
+  app.close().then(() => {
+    clearTimeout(forceTimer);
+    console.log('Shutdown complete');
+    process.exit(0);
+  }).catch(err => {
+    console.error('Shutdown error:', err);
+    process.exit(1);
+  });
+}
+
+// ---------------------------------------------------------------------------
 // Main
 // ---------------------------------------------------------------------------
 
@@ -195,6 +221,8 @@ if (require.main === module) {
     if (err) { console.error(err); process.exit(1); }
     console.log(`Open Pulse running at ${address}`);
   });
+  process.on('SIGTERM', () => gracefulShutdown(app, 'SIGTERM'));
+  process.on('SIGINT', () => gracefulShutdown(app, 'SIGINT'));
 }
 
-module.exports = { buildApp, parseQualifiedName, syncComponents };
+module.exports = { buildApp, parseQualifiedName, syncComponents, gracefulShutdown };

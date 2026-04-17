@@ -186,31 +186,42 @@ export function mount(el) {
   // Load errors
   get('/errors').then(data => {
     errorsContent.removeChild(errSpinner);
-    const errors = Array.isArray(data) ? data : (data.errors || []);
 
-    if (errors.length === 0) {
+    // Handle both old (array) and new ({ collector_errors, pipeline_errors }) format
+    const collectorErrs = Array.isArray(data) ? data : (data.collector_errors || []);
+    const pipelineErrs = Array.isArray(data) ? [] : (data.pipeline_errors || []);
+
+    if (collectorErrs.length === 0 && pipelineErrs.length === 0) {
       const empty = document.createElement('div');
       empty.className = 'empty-state';
       empty.style.color = 'var(--success)';
       empty.textContent = 'No recent errors';
       errorsContent.appendChild(empty);
-    } else {
-      errors.forEach(err => {
-        const row = document.createElement('div');
-        row.style.cssText = 'padding:10px 0; border-bottom:1px solid var(--border);';
+      return;
+    }
 
-        const time = document.createElement('div');
-        time.style.cssText = 'font-size:11px; color:var(--text-muted); margin-bottom:4px;';
-        time.textContent = fmtTime(err.timestamp || err.at);
+    if (collectorErrs.length > 0) {
+      const sectionTitle = document.createElement('div');
+      sectionTitle.style.cssText = 'font-size:12px;color:var(--text-muted);font-weight:600;margin-bottom:8px;';
+      sectionTitle.textContent = 'Hook Errors';
+      errorsContent.appendChild(sectionTitle);
+      renderErrorList(errorsContent, collectorErrs, err => ({
+        time: err.occurred_at || err.timestamp || err.at,
+        msg: err.error_message || err.message || err.error || JSON.stringify(err),
+        label: err.hook_type || null,
+      }));
+    }
 
-        const msg = document.createElement('div');
-        msg.style.cssText = 'font-size:13px; color:var(--danger); font-family:monospace;';
-        msg.textContent = err.message || err.error || JSON.stringify(err);
-
-        row.appendChild(time);
-        row.appendChild(msg);
-        errorsContent.appendChild(row);
-      });
+    if (pipelineErrs.length > 0) {
+      const sectionTitle = document.createElement('div');
+      sectionTitle.style.cssText = 'font-size:12px;color:var(--text-muted);font-weight:600;margin:16px 0 8px;';
+      sectionTitle.textContent = 'Pipeline Errors';
+      errorsContent.appendChild(sectionTitle);
+      renderErrorList(errorsContent, pipelineErrs, err => ({
+        time: err.created_at,
+        msg: err.error || 'Unknown error',
+        label: err.pipeline || null,
+      }));
     }
   }).catch(() => {
     errorsContent.removeChild(errSpinner);
@@ -226,6 +237,32 @@ export function unmount() {
 }
 
 // ── Internal ──────────────────────────────────────────────────────────────────
+
+function renderErrorList(container, errors, mapFn) {
+  for (const err of errors) {
+    const { time, msg, label } = mapFn(err);
+    const row = document.createElement('div');
+    row.style.cssText = 'padding:10px 0; border-bottom:1px solid var(--border);';
+
+    const meta = document.createElement('div');
+    meta.style.cssText = 'font-size:11px; color:var(--text-muted); margin-bottom:4px;';
+    meta.textContent = fmtTime(time);
+    if (label) {
+      const badge = document.createElement('span');
+      badge.style.cssText = 'margin-left:8px;padding:1px 6px;border-radius:4px;background:var(--border);font-size:10px;';
+      badge.textContent = label;
+      meta.appendChild(badge);
+    }
+
+    const msgEl = document.createElement('div');
+    msgEl.style.cssText = 'font-size:13px; color:var(--danger); font-family:monospace;';
+    msgEl.textContent = msg;
+
+    row.appendChild(meta);
+    row.appendChild(msgEl);
+    container.appendChild(row);
+  }
+}
 
 function createStatCard(label, initial) {
   const card = document.createElement('div');

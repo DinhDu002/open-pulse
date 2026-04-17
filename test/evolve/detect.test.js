@@ -27,7 +27,7 @@ describe('validatePattern', () => {
   it('rejects empty title', () => {
     const result = validatePattern({
       title: '',
-      description: 'Some description.',
+      description: 'User consistently runs test suite after modifications.',
       target_type: 'rule',
     });
     assert.equal(result.valid, false);
@@ -37,7 +37,7 @@ describe('validatePattern', () => {
   it('rejects title over 80 chars', () => {
     const result = validatePattern({
       title: 'a'.repeat(81),
-      description: 'Some description.',
+      description: 'User consistently runs test suite after modifications.',
       target_type: 'rule',
     });
     assert.equal(result.valid, false);
@@ -47,7 +47,7 @@ describe('validatePattern', () => {
   it('rejects invalid target_type', () => {
     const result = validatePattern({
       title: 'Valid title',
-      description: 'Some description.',
+      description: 'User consistently runs test suite after modifications.',
       target_type: 'hook',
     });
     assert.equal(result.valid, false);
@@ -73,6 +73,52 @@ describe('validatePattern', () => {
       });
       assert.deepEqual(result, { valid: true }, `expected valid for target_type=${type}`);
     }
+  });
+
+  it('rejects null input', () => {
+    assert.equal(validatePattern(null).valid, false);
+  });
+
+  it('rejects description shorter than 20 chars', () => {
+    const result = validatePattern({
+      title: 'Valid title',
+      description: 'Too short.',
+      target_type: 'rule',
+    });
+    assert.equal(result.valid, false);
+    assert.ok(result.reason.includes('description'));
+  });
+
+  it('rejects invalid scope', () => {
+    const result = validatePattern({
+      title: 'Valid title',
+      description: 'A sufficiently long description for the test.',
+      target_type: 'rule',
+      scope: 'invalid',
+    });
+    assert.equal(result.valid, false);
+    assert.ok(result.reason.includes('scope'));
+  });
+
+  it('accepts valid scope values', () => {
+    for (const scope of ['project', 'global']) {
+      const result = validatePattern({
+        title: 'Valid title',
+        description: 'A sufficiently long description for the test.',
+        target_type: 'rule',
+        scope,
+      });
+      assert.deepEqual(result, { valid: true });
+    }
+  });
+
+  it('accepts entry without scope (optional)', () => {
+    const result = validatePattern({
+      title: 'Valid title',
+      description: 'A sufficiently long description for the test.',
+      target_type: 'rule',
+    });
+    assert.deepEqual(result, { valid: true });
   });
 });
 
