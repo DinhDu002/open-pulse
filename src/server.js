@@ -6,11 +6,11 @@ const Fastify = require('fastify');
 const fastifyStatic = require('@fastify/static');
 
 const { createDb } = require('./db/schema');
-const { extractKnowledgeFromPrompt } = require('./knowledge/extract');
+const { extractKnowledgeFromPrompt, extractKnowledgeFromSession } = require('./knowledge/extract');
 const { detectPatternsFromPrompt } = require('./evolve/detect');
 const { scorePrompt } = require('./quality/score');
 const { generateRetrospective } = require('./quality/review');
-const { ingestAll, setKnowledgeHook, setPatternHook, setQualityHook, setReviewHook } = require('./ingest/pipeline');
+const { ingestAll, setKnowledgeHook, setPatternHook, setQualityHook, setReviewHook, setSessionKnowledgeHook } = require('./ingest/pipeline');
 const { runRetention } = require('./retention');
 const { parseQualifiedName } = require('./lib/format');
 const { loadConfig } = require('./lib/config');
@@ -70,6 +70,14 @@ function buildApp(opts = {}) {
     model: config.ollama_model || 'qwen2.5:7b',
     url: config.ollama_url || 'http://localhost:11434',
     timeout: config.ollama_timeout_ms || 90000,
+  });
+
+  setSessionKnowledgeHook(extractKnowledgeFromSession, {
+    maxEvents: config.knowledge_session_max_events ?? 150,
+    model: config.knowledge_extract_model || config.knowledge_model || 'local',
+    ollamaModel: config.ollama_model || 'qwen2.5:7b',
+    ollamaUrl: config.ollama_url || 'http://localhost:11434',
+    ollamaTimeout: config.ollama_timeout_ms || 90000,
   });
 
   // Initial sync (components only — projects are auto-registered during ingest)

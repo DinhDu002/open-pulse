@@ -63,8 +63,9 @@ Hooks (Claude Code)          Server (Fastify)              Frontend (SPA)
 8. **Knowledge Vault**: `src/knowledge/vault.js` renders `knowledge_entries` as markdown files in `<project>/.claude/knowledge/` — one file per category. Uses content hashing (`kg_vault_hashes` table) to skip unchanged content
 9. **Quality Scoring**: After each prompt is ingested (alongside knowledge + pattern extraction), `src/quality/score.js` invokes Ollama to score the interaction on 4 dimensions (efficiency, accuracy, cost, approach) 0-100. Scores stored in `prompt_scores` table. Skips prompts with < 3 events.
 10. **Session Retrospective**: When a `session_end` event is processed, `src/quality/review.js` aggregates prompt scores + notable events and invokes Ollama to generate a narrative review (summary, strengths, improvements, suggestions). Stored in `session_reviews` table.
-11. **Retention**: Daily timer compacts tool data after 7 days (NULL tool_input/response), deletes events after 90 days. Configurable via `retention_warm_days` / `retention_cold_days`
-12. **API + Frontend**: Fastify serves REST endpoints on `127.0.0.1:3827`. Vanilla JS SPA with hash-based routing, Chart.js + Cytoscape.js for visualization
+11. **Session Knowledge Extraction** (opt-in): 120s after `session_end` (post-review), `extractKnowledgeFromSession` in `src/knowledge/extract.js` runs a second extraction pass over the full session arc, enriched with the retrospective summary + top scored prompts as context. Title-based upsert merges with per-prompt entries. Gated by `knowledge_session_extract_enabled` (default `false`).
+12. **Retention**: Daily timer compacts tool data after 7 days (NULL tool_input/response), deletes events after 90 days. Configurable via `retention_warm_days` / `retention_cold_days`
+13. **API + Frontend**: Fastify serves REST endpoints on `127.0.0.1:3827`. Vanilla JS SPA with hash-based routing, Chart.js + Cytoscape.js for visualization
 
 ## Directory Structure
 
@@ -314,7 +315,8 @@ open-pulse/
 | `knowledge_max_events_per_prompt` | 100 | Max events fed to LLM per extraction run |
 | `knowledge_model` | `"local"` | Legacy alias for `knowledge_extract_model` — read as fallback |
 | `knowledge_extract_model` | `"local"` | Extraction model: `"local"` (Ollama) \| `"haiku"` \| `"sonnet"` \| `"opus"` |
-| `knowledge_session_extract_enabled` | false | Run session-level extraction after session_end (Phase B.1, not wired yet) |
+| `knowledge_session_extract_enabled` | false | Opt-in: run end-of-session extraction 120s after session_end, using full session arc + retrospective context. Complements per-prompt extract via title-match upsert |
+| `knowledge_session_max_events` | 150 | Max events fed to session-level extract |
 | `knowledge_scan_files` | ["README.md","package.json","CLAUDE.md"] | Files read during cold-start scan |
 | `knowledge_scan_patterns` | [] | Additional glob patterns for cold-start scan |
 | `synthesize_enabled` | false | Enable scheduled auto-synthesize (Phase B.2, not wired yet) |

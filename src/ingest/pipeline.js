@@ -44,6 +44,14 @@ function setReviewHook(reviewFn, config) {
   _reviewConfig = config;
 }
 
+let _extractSessionKnowledge = null;
+let _sessionKnowledgeConfig = null;
+
+function setSessionKnowledgeHook(extractFn, config) {
+  _extractSessionKnowledge = extractFn;
+  _sessionKnowledgeConfig = config;
+}
+
 // ---------------------------------------------------------------------------
 // Project name resolution
 // ---------------------------------------------------------------------------
@@ -270,11 +278,13 @@ function processContent(db, processingPath, type) {
         }
       }
 
+      // Compute ended sessions once (shared by review + session-extract hooks)
+      const endedSessionIds = new Set(
+        events.filter(e => e.event_type === 'session_end' && e.session_id).map(e => e.session_id)
+      );
+
       // Trigger session retrospective for ended sessions (delayed to allow scoring to complete)
       if (cfg.quality_review_enabled !== false && _generateReview) {
-        const endedSessionIds = new Set(
-          events.filter(e => e.event_type === 'session_end' && e.session_id).map(e => e.session_id)
-        );
         for (const sid of endedSessionIds) {
           setTimeout(() => {
             _generateReview(db, sid, _reviewConfig || {}).catch(err => {
@@ -287,6 +297,26 @@ function processContent(db, processingPath, type) {
               } catch { /* DB write failed — nothing more we can do */ }
             });
           }, 60_000); // 60s delay: gives quality scoring time to complete for all prompts
+        }
+      }
+
+      // Trigger session-level knowledge extraction after retrospective completes.
+      // Opt-in (default off): config.knowledge_session_extract_enabled === true.
+      // Timer is fire-and-forget — lost on server restart by design (per-prompt
+      // extract already covered this session's prompts, so retry isn't needed).
+      if (cfg.knowledge_session_extract_enabled === true && _extractSessionKnowledge) {
+        for (const sid of endedSessionIds) {
+          setTimeout(() => {
+            _extractSessionKnowledge(db, sid, _sessionKnowledgeConfig || {}).catch(err => {
+              try {
+                logError(db, {
+                  hook_type: 'pipeline:session_knowledge_extract',
+                  error_message: `session_id=${sid}: ${err.message || String(err)}`,
+                  raw_input: null,
+                });
+              } catch { /* DB write failed */ }
+            });
+          }, 120_000); // 120s: runs after review (60s) completes
         }
       }
     }
@@ -380,4 +410,4 @@ function ingestAll(db, dataDir) {
 // Exports
 // ---------------------------------------------------------------------------
 
-module.exports = { ingestFile, ingestAll, MAX_RETRIES, setKnowledgeHook, setPatternHook, setQualityHook, setReviewHook };
+module.exports = { ingestFile, ingestAll, MAX_RETRIES, setKnowledgeHook, setPatternHook, setQualityHook, setReviewHook, setSessionKnowledgeHook };

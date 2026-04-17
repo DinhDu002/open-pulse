@@ -193,37 +193,32 @@ function buildExtractPrompt(projectName, events, existingEntriesBlock = '', user
 
   const skillTemplate = loadSkillBody('knowledge-extractor');
 
+  // Order: stable prefix (skill template + static instructions) → semi-stable
+  // (project/existing) → variable (events). Enables Claude prompt caching on
+  // the common prefix across calls.
   if (skillTemplate) {
     return [
-      `Project: ${projectName}`,
-      '',
-      'Analyze the following tool usage events from a Claude Code session and extract',
-      'reusable project knowledge that would help future sessions.',
-      existingBlock,
-      'Events:',
-      eventLines,
-      '',
       '--- ENTRY FORMAT AND RULES ---',
       '',
       skillTemplate,
       '',
       '--- END FORMAT AND RULES ---',
       '',
+      'Analyze the following tool usage events from a Claude Code session and extract',
+      'reusable project knowledge that would help future sessions.',
+      '',
+      `Project: ${projectName}`,
+      existingBlock,
+      'Events:',
+      eventLines,
+      '',
       'Extract knowledge entries as a JSON array following the format above.',
       'Respond with a JSON array only. No explanation.',
     ].join('\n');
   }
 
-  // Fallback if skill file is missing — minimal hardcoded rules
+  // Fallback if skill file is missing — minimal hardcoded rules (static first)
   return [
-    `Project: ${projectName}`,
-    '',
-    'Analyze the following tool usage events from a Claude Code session and extract',
-    'reusable project knowledge that would help future sessions.',
-    existingBlock,
-    'Events:',
-    eventLines,
-    '',
     'Extract knowledge entries as a JSON array. Each entry:',
     '  { "category": "<category>", "title": "<short title>", "body": "<detailed explanation>",',
     '    "source_file": "<file path if relevant, else null>", "tags": ["<tag>", ...] }',
@@ -235,6 +230,14 @@ function buildExtractPrompt(projectName, events, existingEntriesBlock = '', user
     '- Only extract knowledge that CANNOT be derived by reading the source code directly',
     '- Each entry must be ACTIONABLE',
     '- Return [] if nothing genuinely new is found',
+    '',
+    'Analyze the following tool usage events from a Claude Code session and extract',
+    'reusable project knowledge that would help future sessions.',
+    '',
+    `Project: ${projectName}`,
+    existingBlock,
+    'Events:',
+    eventLines,
     '',
     'Respond with a JSON array only. No explanation.',
   ].join('\n');
@@ -257,7 +260,10 @@ function buildCompactExtractPrompt(projectName, events, existingTitles = [], use
   if (!compact) return null;
   const eventLines = formatEventsForLLM(events, { userPrompt });
 
+  // Stable-first: compact rules → project → existing titles → events.
   const parts = [
+    compact,
+    '',
     `Project: ${projectName}`,
     '',
   ];
@@ -273,8 +279,6 @@ function buildCompactExtractPrompt(projectName, events, existingTitles = [], use
   parts.push(
     'Events:',
     eventLines,
-    '',
-    compact,
   );
 
   return parts.join('\n');
@@ -475,6 +479,315 @@ function mergeOrUpdate(db, projectId, newEntries) {
   return { inserted, updated, skipped, rejectReasons };
 }
 
+const VALID_EXTRACT_MODELS = new Set(['local', 'haiku', 'sonnet', 'opus']);
+
+// ---------------------------------------------------------------------------
+// Session extract helpers
+// ---------------------------------------------------------------------------
+
+/**
+ * Reads per-session context used to enrich the session-level extract prompt:
+ * the session retrospective (if any) and the top 3 scored prompts.
+ *
+ * @param {import('better-sqlite3').Database} db
+ * @param {string} sessionId
+ * @returns {{review: object|null, topScores: Array}}
+ */
+function getSessionContext(db, sessionId) {
+  let review = null;
+  try {
+    review = db.prepare(
+      'SELECT summary, strengths, improvements, suggestions, overall_score FROM session_reviews WHERE session_id = ?'
+    ).get(sessionId) || null;
+  } catch { /* table may not exist in very old DBs */ }
+
+  let topScores = [];
+  try {
+    topScores = db.prepare(`
+      SELECT ps.overall, ps.reasoning, p.prompt_text
+      FROM prompt_scores ps
+      JOIN prompts p ON p.id = ps.prompt_id
+      WHERE ps.session_id = ?
+      ORDER BY ps.overall DESC
+      LIMIT 3
+    `).all(sessionId);
+  } catch { /* table may not exist */ }
+
+  return { review, topScores };
+}
+
+/**
+ * Renders session context (review summary + top prompt insights) as a compact
+ * block that goes in front of the events. Returns empty string if no context.
+ */
+function buildSessionContextBlock(ctx) {
+  if (!ctx) return '';
+  const hasReview = ctx.review && (ctx.review.summary || ctx.review.improvements);
+  const hasScores = Array.isArray(ctx.topScores) && ctx.topScores.length > 0;
+  if (!hasReview && !hasScores) return '';
+
+  const lines = ['Session context:'];
+
+  if (hasReview) {
+    if (ctx.review.summary) lines.push(`  Summary: ${String(ctx.review.summary).slice(0, 400)}`);
+    if (ctx.review.improvements) lines.push(`  Improvements: ${String(ctx.review.improvements).slice(0, 400)}`);
+  }
+
+  if (hasScores) {
+    lines.push('  Notable prompts (highest quality):');
+    for (const s of ctx.topScores) {
+      const text = (s.prompt_text || '').slice(0, 100);
+      lines.push(`    - "${text}" (score ${s.overall})`);
+      if (s.reasoning) {
+        let parsed = null;
+        try {
+          parsed = typeof s.reasoning === 'string' ? JSON.parse(s.reasoning) : s.reasoning;
+        } catch { /* leave null */ }
+        if (parsed && parsed.approach) {
+          lines.push(`      Approach: ${String(parsed.approach).slice(0, 200)}`);
+        }
+      }
+    }
+  }
+
+  lines.push('');
+  return lines.join('\n');
+}
+
+/**
+ * Builds LLM prompt for session-level extraction. Same stable-first ordering
+ * as buildExtractPrompt, with a session-context block between existing entries
+ * and events.
+ */
+function buildSessionExtractPrompt(projectName, events, existingEntriesBlock, sessionContext) {
+  const eventLines = formatEventsForLLM(events);
+  const existingBlock = existingEntriesBlock || '';
+  const contextBlock = buildSessionContextBlock(sessionContext);
+  const skillTemplate = loadSkillBody('knowledge-extractor');
+
+  if (skillTemplate) {
+    return [
+      '--- ENTRY FORMAT AND RULES ---',
+      '',
+      skillTemplate,
+      '',
+      '--- END FORMAT AND RULES ---',
+      '',
+      'Analyze the following end-of-session events and extract reusable project',
+      'knowledge. You have the full session arc plus a quality retrospective —',
+      'prefer cross-prompt patterns that per-prompt extraction would miss.',
+      '',
+      `Project: ${projectName}`,
+      existingBlock,
+      contextBlock,
+      'Events:',
+      eventLines,
+      '',
+      'Extract knowledge entries as a JSON array following the format above.',
+      'Respond with a JSON array only. No explanation.',
+    ].join('\n');
+  }
+
+  return [
+    'Extract knowledge entries as a JSON array. Each entry:',
+    '  { "category": "<category>", "title": "<short title>", "body": "<detailed explanation>",',
+    '    "source_file": "<file path if relevant, else null>", "tags": ["<tag>", ...] }',
+    '',
+    'Valid categories: domain, stack, schema, api, feature, architecture, convention,',
+    '                  decision, footgun, contract, error_pattern',
+    '',
+    'Analyze the following end-of-session events and extract reusable project knowledge.',
+    '',
+    `Project: ${projectName}`,
+    existingBlock,
+    contextBlock,
+    'Events:',
+    eventLines,
+    '',
+    'Respond with a JSON array only. No explanation.',
+  ].join('\n');
+}
+
+/**
+ * Compact variant for the Ollama (local) path. Same stable-first layout as
+ * buildCompactExtractPrompt, with the session-context block before events.
+ */
+function buildSessionCompactExtractPrompt(projectName, events, existingTitles, sessionContext) {
+  const compact = loadCompactPrompt('knowledge-extractor');
+  if (!compact) return null;
+  const eventLines = formatEventsForLLM(events);
+  const contextBlock = buildSessionContextBlock(sessionContext);
+
+  const parts = [
+    compact,
+    '',
+    `Project: ${projectName}`,
+    '',
+  ];
+
+  if (existingTitles.length > 0) {
+    parts.push(
+      'Existing entries (do NOT duplicate — update only if events contradict):',
+      ...existingTitles.map(t => `- ${t}`),
+      '',
+    );
+  }
+
+  if (contextBlock) {
+    parts.push(contextBlock);
+  }
+
+  parts.push('Events:', eventLines);
+  return parts.join('\n');
+}
+
+/**
+ * Dispatches the extraction LLM call. For `model === 'local'`, uses the
+ * compact prompt against Ollama; otherwise uses the full prompt against the
+ * Claude CLI. Returns a normalized result; throws on error.
+ */
+async function dispatchExtractLLM(model, llmPrompt, compactPrompt, opts = {}) {
+  const m = VALID_EXTRACT_MODELS.has(model) ? model : 'opus';
+  if (m === 'local') {
+    if (!compactPrompt) {
+      const err = new Error('compact prompt unavailable');
+      err.code = 'NO_COMPACT_PROMPT';
+      throw err;
+    }
+    const ollamaResult = await callOllama(compactPrompt, opts.ollamaModel || 'qwen2.5:7b', {
+      url: opts.ollamaUrl,
+      timeout: opts.ollamaTimeout,
+      ...(opts.ollamaMaxRetries != null && { maxRetries: opts.ollamaMaxRetries }),
+    });
+    return {
+      output: ollamaResult.output,
+      input_tokens: ollamaResult.input_tokens || 0,
+      output_tokens: ollamaResult.output_tokens || 0,
+      cost_usd: 0,
+      duration_ms: ollamaResult.duration_ms,
+      effectiveModel: opts.ollamaModel || 'qwen2.5:7b',
+    };
+  }
+  const result = await callClaude(llmPrompt, m);
+  return { ...result, effectiveModel: m };
+}
+
+// ---------------------------------------------------------------------------
+// extractKnowledgeFromSession
+// ---------------------------------------------------------------------------
+
+/**
+ * End-of-session extraction pipeline. Fires after session retrospective is
+ * generated and sees the full session arc (all prompts, review summary, top
+ * scored prompts). Complements per-prompt extraction — upsert-by-title means
+ * overlapping entries get merged naturally.
+ *
+ * Opt-in via `config.knowledge_session_extract_enabled = true`.
+ *
+ * @param {import('better-sqlite3').Database} db
+ * @param {string} sessionId
+ * @param {object} [opts]
+ * @param {string} [opts.model='local']      — 'local' | 'haiku' | 'sonnet' | 'opus'
+ * @param {number} [opts.maxEvents=150]
+ * @param {string} [opts.ollamaModel]
+ * @param {string} [opts.ollamaUrl]
+ * @param {number} [opts.ollamaTimeout]
+ * @param {Function} [opts.dispatch]         — test seam, override LLM dispatch
+ * @returns {Promise<{extracted:number, inserted:number, updated:number, skipped?:number}|{message:string}>}
+ */
+async function extractKnowledgeFromSession(db, sessionId, opts = {}) {
+  const maxEvents = opts.maxEvents ?? 150;
+  const requestedModel = opts.model || 'local';
+  if (!VALID_EXTRACT_MODELS.has(requestedModel)) {
+    console.warn(`[knowledge/session-extract] unknown model "${requestedModel}", falling back to "opus"`);
+  }
+  const model = VALID_EXTRACT_MODELS.has(requestedModel) ? requestedModel : 'opus';
+
+  const session = db.prepare('SELECT * FROM sessions WHERE session_id = ?').get(sessionId);
+  if (!session) return { message: `Session ${sessionId} not found` };
+
+  const project = db.prepare(
+    'SELECT * FROM cl_projects WHERE directory = ?'
+  ).get(session.working_directory);
+  if (!project) return { message: `No project found for directory: ${session.working_directory}` };
+
+  const events = db.prepare(
+    'SELECT name, event_type, tool_input, tool_response FROM events WHERE session_id = ? ORDER BY seq_num ASC LIMIT ?'
+  ).all(sessionId, maxEvents);
+  if (events.length === 0) return { message: 'No events for this session' };
+
+  const affectedFiles = [];
+  for (const ev of events) {
+    if (!ev.tool_input) continue;
+    try {
+      const input = JSON.parse(ev.tool_input);
+      const fp = input.file_path || input.path;
+      if (fp) affectedFiles.push(fp);
+    } catch { /* ignore */ }
+  }
+
+  const sessionContext = getSessionContext(db, sessionId);
+  const existingEntriesBlock = buildExistingEntriesBlock(db, project.project_id, affectedFiles);
+  const projectName = project.name || project.project_id;
+
+  const llmPrompt = buildSessionExtractPrompt(projectName, events, existingEntriesBlock, sessionContext);
+
+  // Local path needs compact prompt + existing titles
+  let compactPrompt = null;
+  if (model === 'local') {
+    const existingTitles = db.prepare(
+      "SELECT title FROM knowledge_entries WHERE project_id = ? AND status = 'active'"
+    ).all(project.project_id).map(r => r.title);
+    compactPrompt = buildSessionCompactExtractPrompt(projectName, events, existingTitles, sessionContext);
+  }
+
+  const dispatch = opts.dispatch || dispatchExtractLLM;
+  let llmResult;
+  try {
+    llmResult = await dispatch(model, llmPrompt, compactPrompt, opts);
+  } catch (err) {
+    const status = (err.code === 'ECONNREFUSED' || err.code === 'CIRCUIT_OPEN'
+                 || err.name === 'TimeoutError' || err.code === 'NO_COMPACT_PROMPT')
+                 ? 'skipped' : 'error';
+    insertPipelineRun(db, {
+      pipeline: 'knowledge_session_extract',
+      project_id: project.project_id,
+      model: model === 'local' ? (opts.ollamaModel || 'qwen2.5:7b') : model,
+      status,
+      error: err.message,
+      duration_ms: err.duration_ms || 0,
+    });
+    if (status === 'skipped') return { inserted: 0, updated: 0, skipped: true };
+    throw err;
+  }
+
+  const runId = insertPipelineRun(db, {
+    pipeline: 'knowledge_session_extract',
+    project_id: project.project_id,
+    model: llmResult.effectiveModel,
+    status: 'success',
+    input_tokens: llmResult.input_tokens,
+    output_tokens: llmResult.output_tokens,
+    duration_ms: llmResult.duration_ms,
+  });
+
+  const entries = parseJsonResponse(llmResult.output);
+  if (entries.length === 0) return { extracted: 0, inserted: 0, updated: 0 };
+
+  const { inserted, updated, skipped, rejectReasons } = mergeOrUpdate(db, project.project_id, entries);
+
+  if (rejectReasons && rejectReasons.length > 0) {
+    updatePipelineRun(db, runId, {
+      error: `${skipped}/${entries.length} entries rejected: ${summarizeRejects(rejectReasons)}`,
+    });
+  }
+
+  const { renderKnowledgeVault } = require('./vault');
+  renderKnowledgeVault(db, project.project_id);
+
+  return { extracted: entries.length, inserted, updated, skipped };
+}
+
 // ---------------------------------------------------------------------------
 // extractKnowledgeFromPrompt
 // ---------------------------------------------------------------------------
@@ -488,7 +801,6 @@ function mergeOrUpdate(db, projectId, newEntries) {
  * @param {number} [opts.maxEvents=50]
  * @returns {Promise<{extracted:number, inserted:number, updated:number}|{message:string}>}
  */
-const VALID_EXTRACT_MODELS = new Set(['local', 'haiku', 'sonnet', 'opus']);
 
 async function extractKnowledgeFromPrompt(db, promptId, opts = {}) {
   const maxEvents = opts.maxEvents ?? 50;
@@ -645,11 +957,16 @@ module.exports = {
   buildExistingEntriesBlock,
   buildExtractPrompt,
   buildCompactExtractPrompt,
+  buildSessionExtractPrompt,
+  buildSessionCompactExtractPrompt,
+  buildSessionContextBlock,
+  getSessionContext,
   callClaude,
   parseJsonResponse,
   validateKnowledgeEntry,
   mergeOrUpdate,
   extractKnowledgeFromPrompt,
+  extractKnowledgeFromSession,
   VALID_CATEGORIES,
   VALID_TAGS,
 };

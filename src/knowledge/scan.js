@@ -44,20 +44,23 @@ function buildScanPrompt(projectName, files, existingTitles = [], claudeMdConten
 
   const skillTemplate = loadSkillBody('knowledge-extractor');
 
+  // Stable-first ordering (see buildExtractPrompt for rationale): skill
+  // template + static framing before per-project file content enables Claude
+  // prompt caching on the common prefix across scan calls.
   if (skillTemplate) {
     return [
-      `Project: ${projectName}`,
-      '',
-      'Perform a comprehensive knowledge extraction from the following project files.',
-      claudeBlock,
-      existingBlock,
-      fileBlocks,
-      '',
       '--- ENTRY FORMAT AND RULES ---',
       '',
       skillTemplate,
       '',
       '--- END FORMAT AND RULES ---',
+      '',
+      'Perform a comprehensive knowledge extraction from the following project files.',
+      '',
+      `Project: ${projectName}`,
+      claudeBlock,
+      existingBlock,
+      fileBlocks,
       '',
       'Extract knowledge entries as a JSON array following the format above.',
       'Respond with a JSON array only. No explanation.',
@@ -66,13 +69,6 @@ function buildScanPrompt(projectName, files, existingTitles = [], claudeMdConten
 
   // Fallback if skill file missing
   return [
-    `Project: ${projectName}`,
-    '',
-    'Perform a comprehensive knowledge extraction from the following project files.',
-    claudeBlock,
-    existingBlock,
-    fileBlocks,
-    '',
     'Extract knowledge entries as a JSON array. Each entry:',
     '  { "category": "<category>", "title": "<short title>", "body": "<detailed explanation>",',
     '    "source_file": "<file path if relevant, else null>", "tags": ["<tag>", ...] }',
@@ -84,6 +80,13 @@ function buildScanPrompt(projectName, files, existingTitles = [], claudeMdConten
     '- Only extract knowledge that CANNOT be derived by reading the source code directly',
     '- Each entry must be ACTIONABLE',
     '- Return [] if nothing genuinely new is found',
+    '',
+    'Perform a comprehensive knowledge extraction from the following project files.',
+    '',
+    `Project: ${projectName}`,
+    claudeBlock,
+    existingBlock,
+    fileBlocks,
     '',
     'Respond with a JSON array only. No explanation.',
   ].join('\n');
