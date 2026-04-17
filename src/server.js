@@ -15,6 +15,7 @@ const { runRetention } = require('./retention');
 const { parseQualifiedName } = require('./lib/format');
 const { loadConfig } = require('./lib/config');
 const { runAutoEvolve } = require('./evolve/promote');
+const { runSynthesizeAll } = require('./knowledge/synthesize');
 const {
   syncComponentsWithDb,
 } = require('./ingest/sync');
@@ -133,6 +134,19 @@ function buildApp(opts = {}) {
     timers.push(setInterval(() => {
       try { runRetention(db, retentionOpts); } catch { /* non-critical */ }
     }, ONE_DAY_MS));
+
+    // Auto-synthesize (deterministic dedup): 5-min warmup run then interval.
+    // Opt-in via config.synthesize_enabled === true.
+    if (config.synthesize_enabled === true) {
+      const intervalMs = (config.synthesize_interval_hours || 24) * 3600_000;
+      const warmupTimer = setTimeout(() => {
+        try { runSynthesizeAll(db); } catch { /* non-critical */ }
+      }, 5 * 60_000);
+      warmupTimer.unref();
+      timers.push(setInterval(() => {
+        try { runSynthesizeAll(db); } catch { /* non-critical */ }
+      }, intervalMs));
+    }
 
   }
 

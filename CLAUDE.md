@@ -59,7 +59,7 @@ Hooks (Claude Code)          Server (Fastify)              Frontend (SPA)
 4. **Auto-Evolve**: Ollama patterns (`detect.js`) → `auto_evolves` table → auto-promote when confidence >= 0.85 (no rejections, blacklists agent/hook) → component files written to `~/.claude/`
 5. **Knowledge Extraction**: After each prompt is ingested, `src/knowledge/extract.js` invokes Opus to extract project-specific understanding from recent events. Entries stored in `knowledge_entries` table. Cold-start scan bootstraps from key project files (`README.md`, `package.json`, `CLAUDE.md`)
 6. **Pattern Detection**: After each prompt is ingested, `src/evolve/detect.js` invokes local Ollama model to detect reusable behavioral patterns from recent events. This is the primary source of auto-evolve patterns. Entries stored in `auto_evolves` table with status `draft`.
-7. **Synthesize**: `/synthesize` skill invokes Opus to consolidate knowledge entries and auto-evolve patterns, enabling manual promotion of high-quality patterns
+7. **Synthesize**: Two paths. (a) `/synthesize` skill invokes Opus for LLM-driven manual consolidation of knowledge entries and auto-evolve patterns. (b) `src/knowledge/synthesize.js` runs deterministic Jaccard-based dedup on a schedule (opt-in via `synthesize_enabled`) — marks near-duplicate `knowledge_entries` as `outdated` with an `auto_merged` history snapshot pointing at the kept entry
 8. **Knowledge Vault**: `src/knowledge/vault.js` renders `knowledge_entries` as markdown files in `<project>/.claude/knowledge/` — one file per category. Uses content hashing (`kg_vault_hashes` table) to skip unchanged content
 9. **Quality Scoring**: After each prompt is ingested (alongside knowledge + pattern extraction), `src/quality/score.js` invokes Ollama to score the interaction on 4 dimensions (efficiency, accuracy, cost, approach) 0-100. Scores stored in `prompt_scores` table. Skips prompts with < 3 events.
 10. **Session Retrospective**: When a `session_end` event is processed, `src/quality/review.js` aggregates prompt scores + notable events and invokes Ollama to generate a narrative review (summary, strengths, improvements, suggestions). Stored in `session_reviews` table.
@@ -319,7 +319,7 @@ open-pulse/
 | `knowledge_session_max_events` | 150 | Max events fed to session-level extract |
 | `knowledge_scan_files` | ["README.md","package.json","CLAUDE.md"] | Files read during cold-start scan |
 | `knowledge_scan_patterns` | [] | Additional glob patterns for cold-start scan |
-| `synthesize_enabled` | false | Enable scheduled auto-synthesize (Phase B.2, not wired yet) |
+| `synthesize_enabled` | false | Opt-in: enable the scheduled auto-synthesize timer. 5-min warmup run on boot, then every `synthesize_interval_hours`. Runs deterministic dedup (title + body Jaccard) across `knowledge_entries`, marking duplicates as `outdated` |
 | `synthesize_interval_hours` | 24 | Interval for auto-synthesize runs |
 | `auto_evolve_enabled` | true | Enable auto-evolve promotion timer |
 | `auto_evolve_blacklist` | ["agent","hook"] | Target types blocked from auto-promotion |
